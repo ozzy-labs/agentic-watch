@@ -1,3 +1,4 @@
+export * from "./config.js";
 export * from "./item.js";
 export * from "./research.js";
 export * from "./source.js";
