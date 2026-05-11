@@ -64,32 +64,51 @@ describe("core/feeds/rss — parser", () => {
     const items = parseFeedXml(RSS_FIXTURE, makeSource(), "2026-05-12T10:00:00.000Z");
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
-      id: "post-1",
       title: "Hello World",
       url: "https://example.com/posts/hello",
       summary: "First post body",
       sourceId: "example",
       fetchedAt: "2026-05-12T10:00:00.000Z",
     });
-    expect(items[0].publishedAt).toBe("2026-05-12T09:00:00.000Z");
-    expect(items[1].id).toBe("https://example.com/posts/second");
+    expect(items[0]?.id).toMatch(/^hello-world-[0-9a-f]{8}$/);
+    expect(items[0]?.publishedAt).toBe("2026-05-12T09:00:00.000Z");
+    expect(items[1]?.id).toMatch(/^second-post-[0-9a-f]{8}$/);
+    // Different entries must produce different ids even when slug similarity
+    // is possible — the stableKey-derived hash suffix guards against that.
+    expect(items[0]?.id).not.toBe(items[1]?.id);
   });
 
-  it("falls back to URL when guid is missing", () => {
+  it("falls back to URL when guid is missing (different id than guid path)", () => {
     const xml = RSS_FIXTURE.replace(/<guid[^>]*>[^<]*<\/guid>/g, "");
-    const items = parseFeedXml(xml, makeSource(), "2026-05-12T10:00:00.000Z");
-    expect(items[0].id).toBe("https://example.com/posts/hello");
+    const noGuid = parseFeedXml(xml, makeSource(), "2026-05-12T10:00:00.000Z");
+    const withGuid = parseFeedXml(RSS_FIXTURE, makeSource(), "2026-05-12T10:00:00.000Z");
+    expect(noGuid[0]?.id).toMatch(/^hello-world-[0-9a-f]{8}$/);
+    // stableKey is now the url instead of the guid, so the hash suffix changes.
+    expect(noGuid[0]?.id).not.toBe(withGuid[0]?.id);
+  });
+
+  it("derives the same id on repeated parses (stable across re-fetches)", () => {
+    const first = parseFeedXml(RSS_FIXTURE, makeSource(), "2026-05-12T10:00:00.000Z");
+    const second = parseFeedXml(RSS_FIXTURE, makeSource(), "2026-05-13T10:00:00.000Z");
+    expect(first[0]?.id).toBe(second[0]?.id);
+    expect(first[1]?.id).toBe(second[1]?.id);
   });
 
   it("parses Atom feeds", () => {
     const items = parseFeedXml(ATOM_FIXTURE, makeSource(), "2026-05-12T10:00:00.000Z");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
-      id: "tag:example.com,2026:atom-1",
       title: "Atom Entry",
       url: "https://example.com/atom/1",
       summary: "Atom summary",
     });
+    expect(items[0]?.id).toMatch(/^atom-entry-[0-9a-f]{8}$/);
+  });
+
+  it("falls back to hash-only id when the title has no slug characters", () => {
+    const xml = RSS_FIXTURE.replace("<title>Hello World</title>", "<title>???</title>");
+    const items = parseFeedXml(xml, makeSource(), "2026-05-12T10:00:00.000Z");
+    expect(items[0]?.id).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it("returns empty array for unrecognized XML envelopes", () => {

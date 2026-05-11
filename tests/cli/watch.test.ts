@@ -111,18 +111,25 @@ describe("cli/watch run", () => {
 
     const itemDir = join(workdir, "items", "blog");
     const itemFiles = await readdir(itemDir);
-    expect(itemFiles).toEqual(["a.yaml"]); // only the "agents" match
-    const itemBody = parseYaml(await readFile(join(itemDir, "a.yaml"), "utf8"));
+    expect(itemFiles).toHaveLength(1); // only the "agents" match
+    expect(itemFiles[0]).toMatch(/^claude-code-releases-agents-[0-9a-f]{8}\.yaml$/);
+    const itemBody = parseYaml(await readFile(join(itemDir, itemFiles[0]!), "utf8"));
     expect(itemBody).toMatchObject({
-      id: "a",
       sourceId: "blog",
       status: "detected",
       matchedKeywords: ["agents"],
     });
+    expect(itemBody.id).toMatch(/^claude-code-releases-agents-[0-9a-f]{8}$/);
 
     const state = parseYaml(await readFile(join(workdir, "state", "blog.yaml"), "utf8"));
     expect(state.lastEtag).toBe('"v1"');
-    expect(state.lastSeenIds.sort()).toEqual(["a", "b"]);
+    expect(state.lastSeenIds).toHaveLength(2);
+    expect(
+      state.lastSeenIds.some((id: string) => /^claude-code-releases-agents-[0-9a-f]{8}$/.test(id)),
+    ).toBe(true);
+    expect(state.lastSeenIds.some((id: string) => /^unrelated-post-[0-9a-f]{8}$/.test(id))).toBe(
+      true,
+    );
     expect(state.lastFetchedAt).toBeTypeOf("string");
 
     expect(captured.log.some((m) => m.includes("1 new item(s)"))).toBe(true);
@@ -149,7 +156,8 @@ describe("cli/watch run", () => {
 
     // Still only one item on disk (no duplicates).
     const files = await readdir(join(workdir, "items", "blog"));
-    expect(files).toEqual(["a.yaml"]);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^claude-code-releases-agents-[0-9a-f]{8}\.yaml$/);
   });
 
   it("bootstrap seeds lastSeenIds without creating item files", async () => {
@@ -172,7 +180,13 @@ describe("cli/watch run", () => {
     expect(itemFiles).toEqual([]);
 
     const state = parseYaml(await readFile(join(workdir, "state", "blog.yaml"), "utf8"));
-    expect(state.lastSeenIds.sort()).toEqual(["a", "b"]);
+    expect(state.lastSeenIds).toHaveLength(2);
+    expect(
+      state.lastSeenIds.some((id: string) => /^claude-code-releases-agents-[0-9a-f]{8}$/.test(id)),
+    ).toBe(true);
+    expect(state.lastSeenIds.some((id: string) => /^unrelated-post-[0-9a-f]{8}$/.test(id))).toBe(
+      true,
+    );
     expect(captured.log.some((m) => m.includes("bootstrap"))).toBe(true);
   });
 

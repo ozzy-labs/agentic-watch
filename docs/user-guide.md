@@ -103,7 +103,7 @@ agentic-watch research <item-id> --agent claude-code
 
 | 引数 | 説明 |
 |---|---|
-| `<item-id>` | `items/<sourceId>/<item-id>.yaml` の id |
+| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。形式は `<title-slug>-<8 hex>`（例: `claude-code-releases-agents-438eddad`）。元のフィード GUID は `items/<sourceId>/<item-id>.yaml` の `raw` 内に保持される |
 | `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
 | `--template` | テンプレ id（既定: `default`、`templates/<id>.md` を参照） |
 

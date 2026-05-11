@@ -82,15 +82,19 @@ function toIsoDate(value: string | undefined): string | undefined {
 }
 
 /**
- * Derive a stable identifier for an RSS/Atom entry.
+ * Derive a stable, filesystem- and CLI-friendly id for an RSS/Atom entry.
  *
- * Preference order:
- *   1. RSS `<guid>` / Atom `<id>` — explicit publisher id
- *   2. The entry URL — usually unique per article
- *   3. A SHA-1 of title + date — defensive fallback for misbehaving feeds
+ * Shape: `<title-slug>-<8 hex of sha256(stableKey)>` (or just the hash when
+ * the title contains no slug-friendly characters).
  *
- * The SHA-1 fallback is not cryptographic — we only need a stable string —
- * but it keeps duplicate detection working when publishers omit guids.
+ * The title slug keeps ids human-readable in shell args and log lines; the
+ * 8-char hash makes the id stable across re-fetches and avoids collisions
+ * between entries with identical titles. We hash the publisher's stable key
+ * (guid > url > sha1(title|pubDate)), not the raw title, so two posts with
+ * the same title still get distinct ids.
+ *
+ * The publisher's original guid is preserved in `Item.raw` (the full
+ * upstream entry is stored), so no information is lost. See issue #23.
  */
 function deriveId(
   guid: string | undefined,
@@ -98,11 +102,20 @@ function deriveId(
   title: string | undefined,
   pub: string | undefined,
 ): string {
-  if (guid) return guid;
-  if (url) return url;
-  const hash = createHash("sha1");
-  hash.update(`${title ?? ""}|${pub ?? ""}`);
-  return `sha1:${hash.digest("hex")}`;
+  const stableKey =
+    guid ??
+    url ??
+    `sha1:${createHash("sha1")
+      .update(`${title ?? ""}|${pub ?? ""}`)
+      .digest("hex")}`;
+  const hash = createHash("sha256").update(stableKey).digest("hex").slice(0, 8);
+  const slug = (title ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return slug ? `${slug}-${hash}` : hash;
 }
 
 /** Normalize one RSS 2.0 `<item>` into our `Item` shape. */
