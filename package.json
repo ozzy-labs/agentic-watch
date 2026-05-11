@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "fast-xml-parser": "^5.7.3",
+    "gray-matter": "^4.0.3",
     "yaml": "^2.8.4",
     "zod": "^4.4.3"
   },
