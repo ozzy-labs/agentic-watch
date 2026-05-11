@@ -207,9 +207,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
       const result = await run(prompt, { cwd: req.cwd, stdin });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
-        throw new Error(
-          `claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`,
-        );
+        throw new Error(`claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`);
       }
     },
   };

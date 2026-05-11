@@ -396,9 +396,7 @@ export async function runReview(
     return 1;
   }
   if (postFm.reviewedBy !== agent) {
-    error(
-      `review: adapter stamped reviewedBy='${postFm.reviewedBy}', expected '${agent}'`,
-    );
+    error(`review: adapter stamped reviewedBy='${postFm.reviewedBy}', expected '${agent}'`);
     await restoreSnapshot(snapshot);
     return 1;
   }
