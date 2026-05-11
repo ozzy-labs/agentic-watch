@@ -4,6 +4,7 @@ import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { getAgentAdapter } from "../agents/index.js";
+import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
@@ -215,15 +216,33 @@ export async function runReview(
     return 2;
   }
 
-  const agentArg = parsed.agent ?? "claude-code";
-  const agentResult = AgentIdSchema.safeParse(agentArg);
-  if (!agentResult.success) {
-    error(
-      `review: invalid --agent '${agentArg}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-    );
-    return 2;
+  // Resolve the agent honoring the priority chain:
+  //   explicit --agent > radar.config.yaml defaultReviewAgent > "claude-code"
+  // The explicit value is validated against AgentIdSchema first so a bogus
+  // --agent never reaches the config / fallback path. Mirrors runResearch's
+  // resolver so #29 (review) and #30 (radar.config) stay aligned.
+  let explicitAgent: AgentId | undefined;
+  if (parsed.agent !== undefined) {
+    const agentResult = AgentIdSchema.safeParse(parsed.agent);
+    if (!agentResult.success) {
+      error(
+        `review: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
+      );
+      return 2;
+    }
+    explicitAgent = agentResult.data;
   }
-  const agent: AgentId = agentResult.data;
+  let agent: AgentId;
+  try {
+    const config = await loadRadarConfig(cwd);
+    agent = await getDefaultAgent("review", { explicit: explicitAgent, configOverride: config });
+  } catch (e) {
+    if (e instanceof RadarConfigError) {
+      error(`review: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
   if (agent !== "claude-code") {
     // Phase 2 ships claude-code only. Other adapter stubs throw their own
     // "not implemented" error; this earlier rejection gives a friendlier

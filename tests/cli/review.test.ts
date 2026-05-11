@@ -280,6 +280,53 @@ describe("cli/review", () => {
     expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
   });
 
+  it("falls back to radar.config.yaml `defaultReviewAgent` when --agent is omitted", async () => {
+    const { workdir } = await setupWorkspace();
+    // Configure a default review agent that the CLI will refuse in Phase 2.
+    // We use codex-cli so the resolver picks it up from the config and the
+    // CLI then exits 2 with the unsupported-agent message — proving the
+    // config value took effect (vs. falling back to the hardcoded default).
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultReviewAgent: codex-cli\n",
+      "utf8",
+    );
+    const { io, captured } = captureIo();
+    const code = await runReview([RESEARCH_ID], { cwd: workdir, io });
+    expect(code).toBe(2);
+    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+  });
+
+  it("explicit --agent overrides radar.config.yaml `defaultReviewAgent`", async () => {
+    const { workdir } = await setupWorkspace();
+    // Config says codex-cli; CLI passes claude-code explicitly. Explicit wins.
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultReviewAgent: codex-cli\n",
+      "utf8",
+    );
+    const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+    previousAdapter = registerAgentAdapter(adapter);
+
+    const { io } = captureIo();
+    const code = await runReview([RESEARCH_ID, "--agent", "claude-code"], { cwd: workdir, io });
+    expect(code).toBe(0);
+    expect(calls[0].agent).toBe("claude-code");
+  });
+
+  it("surfaces radar.config.yaml schema violations", async () => {
+    const { workdir } = await setupWorkspace();
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultReviewAgent: not-an-agent\n",
+      "utf8",
+    );
+    const { io, captured } = captureIo();
+    const code = await runReview([RESEARCH_ID], { cwd: workdir, io });
+    expect(code).toBe(2);
+    expect(captured.error.some((m) => m.includes("radar.config.yaml schema violation"))).toBe(true);
+  });
+
   it("rejects an invalid --agent value", async () => {
     const { workdir } = await setupWorkspace();
     const { io, captured } = captureIo();
