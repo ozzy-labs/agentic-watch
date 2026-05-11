@@ -1,6 +1,24 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import matter from "gray-matter";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+/**
+ * gray-matter defaults to js-yaml, which auto-converts ISO 8601 strings to
+ * Date objects per the YAML 1.1 timestamp tag. That breaks
+ * `ResearchFrontmatterSchema`, which expects `createdAt` / `updatedAt` to be
+ * strings (ADR-0003). Swap in the `yaml` v2 engine (already a dep of this
+ * package) which keeps quoted/unquoted ISO 8601 as a plain string.
+ */
+const matterOptions = {
+  engines: {
+    yaml: {
+      parse: (s: string) => parseYaml(s) as object,
+      stringify: (data: object) => stringifyYaml(data),
+    },
+  },
+};
+
 import { getAgentAdapter } from "../agents/index.js";
 import { loadItems, saveItems } from "../core/items.js";
 import type { ResearchTemplate } from "../core/templates.js";
@@ -257,7 +275,7 @@ export async function runResearch(
   }
   let frontmatter: unknown;
   try {
-    frontmatter = matter(body).data;
+    frontmatter = matter(body, matterOptions).data;
   } catch (e) {
     error(`research: failed to parse frontmatter: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
@@ -276,12 +294,16 @@ export async function runResearch(
     warn(
       "research: agent populated reviewedAt/reviewedBy; resetting to null (Phase 1 contract — review handles this in Phase 2)",
     );
-    const parsed = matter(body);
-    const rewritten = matter.stringify(parsed.content, {
-      ...fmResult.data,
-      reviewedAt: null,
-      reviewedBy: null,
-    });
+    const parsed = matter(body, matterOptions);
+    const rewritten = matter.stringify(
+      parsed.content,
+      {
+        ...fmResult.data,
+        reviewedAt: null,
+        reviewedBy: null,
+      },
+      matterOptions,
+    );
     await writeFile(outputPath, rewritten, "utf8");
   }
 
