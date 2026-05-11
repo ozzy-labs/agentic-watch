@@ -1,3 +1,4 @@
+import { dismissCommand } from "./dismiss.js";
 import { initCommand } from "./init.js";
 import { researchCommand } from "./research.js";
 import { reviewCommand } from "./review.js";
@@ -16,6 +17,7 @@ const commands: Command[] = [
   sourceCommand,
   watchCommand,
   researchCommand,
+  dismissCommand,
   reviewCommand,
   updateCommand,
 ];
