@@ -89,6 +89,6 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 
 ## 関連
 
-- `init` 実装: Phase 1 で `src/cli/init.ts` を完成
-- 詳細プロンプト / 例: `docs/design/skill-design.md` を Phase 1 実装と並走で起こす（別 issue で追跡）
+- `init` 実装: [`src/cli/init.ts`](../../src/cli/init.ts)（Phase 1）
+- 詳細プロンプト / 例: [`docs/design/skill-design.md`](../design/skill-design.md)（research SKILL の本文プロンプト構造、`init` の copy 戦略、`allowed-tools` 推奨、`.agents/skills/` 単一配置の決定理由、`update` の差分検出戦略）
 - 関連: [`multi-agent-repo`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/multi-agent-repo.md)（共通 SKILL.md 仕様）

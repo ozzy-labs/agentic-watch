@@ -38,10 +38,10 @@
 |---|---|---|
 | `core/watcher` | `src/core/watcher.ts` | Source 配列を受け取り、各 source の kind に応じた Feed adapter で fetch、Item[] を返す |
 | `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）|
-| `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用 |
+| `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用（詳細仕様: [`design/filter-spec.md`](./design/filter-spec.md)）|
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |
-| `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装 |
+| `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装（skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md)）|
 | `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` の Zod スキーマ |
 | `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / review / update) |
 
@@ -135,3 +135,8 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 - [0006 Filter Specification](./adr/0006-filter-specification.md)
 - [0007 Skill Bundling and `init` Distribution](./adr/0007-skill-bundling-and-init-distribution.md)
 - [0008 Item Status State Machine](./adr/0008-status-state-machine.md)
+
+## 関連 Design Docs
+
+- [`design/filter-spec.md`](./design/filter-spec.md) — `core/filter` の評価順序・matchMode・matchFields・edge cases（ADR-0006 の実装寄り詳細）
+- [`design/skill-design.md`](./design/skill-design.md) — `.agents/skills/` バンドリング、`init` copy 戦略、SKILL 呼び出しプロトコル（ADR-0001 / ADR-0003 / ADR-0007 / ADR-0008 の実装寄り詳細）

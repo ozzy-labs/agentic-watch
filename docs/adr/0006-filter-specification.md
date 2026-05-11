@@ -83,6 +83,7 @@ source の `kind` によって利用可能なフィールドは異なる。adapt
 
 ## 関連
 
-- 実装: [`src/schemas/source.ts`](../../src/schemas/source.ts)（Phase 1 で本 ADR に合わせて拡張）
-- 詳細仕様 / 例集: `docs/design/filter-spec.md` を Phase 1 実装と並走で起こす（別 issue で追跡）
+- 実装: [`src/schemas/source.ts`](../../src/schemas/source.ts)（Phase 1 で本 ADR に合わせて拡張）/ [`src/core/filter.ts`](../../src/core/filter.ts)
+- 詳細仕様 / 例集: [`docs/design/filter-spec.md`](../design/filter-spec.md)（評価順序の疑似コード、`matchMode: regex` の ReDoS 取り扱い、adapter 別の `body` / `tags` 提供表、edge cases、YAML 例、単体テストパターン）
+- テスト: [`tests/core/filter.test.ts`](../../tests/core/filter.test.ts)
 - 参考: `writing-studio` の `filters` 構造（先行例）
