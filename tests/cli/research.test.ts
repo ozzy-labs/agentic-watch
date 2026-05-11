@@ -360,4 +360,66 @@ describe("cli/research", () => {
     expect(code).toBe(1);
     expect(captured.error.some((m) => m.includes("simulated agent crash"))).toBe(true);
   });
+
+  it("uses radar.config.yaml defaultResearchAgent when --agent is omitted", async () => {
+    // The config sets a non-default agent. Phase 1 only registers a
+    // claude-code adapter, so the CLI should refuse with the Phase 1
+    // not-supported message — proving that the config value WAS picked up.
+    const workdir = await setupWorkspace();
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultResearchAgent: codex-cli\n",
+      "utf8",
+    );
+    const { io, captured } = captureIo();
+    const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
+    expect(code).toBe(2);
+    expect(
+      captured.error.some((m) => m.includes("codex-cli") && m.includes("not supported in Phase 1")),
+    ).toBe(true);
+  });
+
+  it("prefers explicit --agent over radar.config.yaml default", async () => {
+    const workdir = await setupWorkspace();
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultResearchAgent: codex-cli\n",
+      "utf8",
+    );
+    const { adapter, calls } = buildMockAdapter(async (req) => {
+      const fm = {
+        id: "20260510_anthropic-news-claude-code-shiny-new-feature_v1",
+        itemIds: req.items.map((i) => i.id),
+        agent: req.agent,
+        templateId: req.templateId,
+        createdAt: "2026-05-10T03:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      };
+      await writeFile(req.outputPath, matter.stringify("body", fm), "utf8");
+    });
+    previousAdapter = registerAgentAdapter(adapter);
+
+    const { io } = captureIo();
+    const code = await runResearch([SAMPLE_ITEM.id, "--agent", "claude-code"], {
+      cwd: workdir,
+      io,
+    });
+    expect(code).toBe(0);
+    expect(calls[0].agent).toBe("claude-code");
+  });
+
+  it("exits with code 2 when radar.config.yaml is malformed", async () => {
+    const workdir = await setupWorkspace();
+    await writeFile(
+      join(workdir, "radar.config.yaml"),
+      "defaultResearchAgent: not-an-agent\n",
+      "utf8",
+    );
+    const { io, captured } = captureIo();
+    const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
+    expect(code).toBe(2);
+    expect(captured.error.some((m) => m.includes("radar.config.yaml"))).toBe(true);
+  });
 });
