@@ -40,6 +40,18 @@ function sourceFile(cwd: string, id: string): string {
   return join(sourcesDir(cwd), `${id}.yaml`);
 }
 
+/**
+ * Validate a source id as a safe filename component.
+ *
+ * Rejecting path separators, leading dots, and shell-unsafe characters keeps
+ * `sources/<id>.yaml` from escaping the sources/ directory or producing
+ * surprising paths. The CLI is single-user but ids may flow from copy-pasted
+ * URLs or scripted inputs, so a conservative regex avoids footguns.
+ */
+function isSafeSourceId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes("..");
+}
+
 /** Split a comma-separated CLI argument into trimmed, non-empty tokens. */
 function splitCsv(value: string): string[] {
   return value
@@ -217,6 +229,10 @@ export async function addSource(
   if (!parsed.id) {
     error("source add: missing <id>");
     printAddHelp(error);
+    return 2;
+  }
+  if (!isSafeSourceId(parsed.id)) {
+    error(`source add: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
     return 2;
   }
   if (!parsed.kind) {
@@ -427,6 +443,10 @@ export async function removeSource(
   if (!parsed.id) {
     error("source remove: missing <id>");
     printRemoveHelp(error);
+    return 2;
+  }
+  if (!isSafeSourceId(parsed.id)) {
+    error(`source remove: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
     return 2;
   }
 

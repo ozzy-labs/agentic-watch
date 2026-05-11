@@ -148,6 +148,23 @@ describe("cli/source", () => {
       expect(captured.error.some((m) => m.includes("missing <id>"))).toBe(true);
     });
 
+    it.each([
+      ["../escape"],
+      ["foo/bar"],
+      [".hidden"],
+      ["with space"],
+    ])("rejects an unsafe id %j", async (id) => {
+      const { io, captured } = captureIo();
+      const code = await addSource([id, "--kind", "rss", "--url", "https://example.com"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("invalid <id>"))).toBe(true);
+      // No file written, including no traversal escapes.
+      expect(await pathExists(join(workdir, "sources", `${id}.yaml`))).toBe(false);
+    });
+
     it("refuses to overwrite an existing source (no --force)", async () => {
       const { io: io1 } = captureIo();
       await addSource(["dup", "--kind", "rss", "--url", "https://example.com/a"], {
@@ -240,6 +257,13 @@ describe("cli/source", () => {
       const code = await removeSource([], { cwd: workdir, io });
       expect(code).toBe(2);
       expect(captured.error.some((m) => m.includes("missing <id>"))).toBe(true);
+    });
+
+    it("rejects an unsafe id (path traversal)", async () => {
+      const { io, captured } = captureIo();
+      const code = await removeSource(["../etc/passwd"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("invalid <id>"))).toBe(true);
     });
   });
 
