@@ -8,6 +8,7 @@
   },
   "files": [
     "dist",
+    "dist/skills",
     "LICENSE",
     "README.md"
   ],
@@ -15,7 +16,8 @@
     "agentic-watch": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && pnpm run build:skills",
+    "build:skills": "node scripts/copy-skills.mjs",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
