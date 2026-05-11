@@ -20,6 +20,7 @@ const matterOptions = {
 };
 
 import { getAgentAdapter } from "../agents/index.js";
+import { RadarConfigError, getDefaultAgent, loadRadarConfig } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
@@ -190,15 +191,32 @@ export async function runResearch(
     return 2;
   }
 
-  const agentArg = parsed.agent ?? "claude-code";
-  const agentResult = AgentIdSchema.safeParse(agentArg);
-  if (!agentResult.success) {
-    error(
-      `research: invalid --agent '${agentArg}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-    );
-    return 2;
+  // Resolve the agent honoring the priority chain:
+  //   explicit --agent > radar.config.yaml defaultResearchAgent > "claude-code"
+  // The explicit value is validated against AgentIdSchema first so a bogus
+  // --agent never reaches the config / fallback path.
+  let explicitAgent: AgentId | undefined;
+  if (parsed.agent !== undefined) {
+    const agentResult = AgentIdSchema.safeParse(parsed.agent);
+    if (!agentResult.success) {
+      error(
+        `research: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
+      );
+      return 2;
+    }
+    explicitAgent = agentResult.data;
   }
-  const agent: AgentId = agentResult.data;
+  let agent: AgentId;
+  try {
+    const config = await loadRadarConfig(cwd);
+    agent = await getDefaultAgent("research", { explicit: explicitAgent, configOverride: config });
+  } catch (e) {
+    if (e instanceof RadarConfigError) {
+      error(`research: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
   if (agent !== "claude-code") {
     // Phase 1 ships claude-code only. Other adapter stubs throw their own
     // "not implemented" error; this earlier rejection gives a friendlier
