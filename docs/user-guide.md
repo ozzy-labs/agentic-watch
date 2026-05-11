@@ -48,7 +48,14 @@ agentic-watch research <item-id> --agent claude-code
 └── .github/workflows/   # 定期実行ワークフロー（任意）
 ```
 
-`--with-routines` を指定すると `claude/routines/watch-daily.md` も生成。
+`--with-routines` を指定すると `claude/routines/watch-daily.md` も生成（**Phase 5 で実装予定**。Phase 1 では `--with-routines` を渡すと warning を表示してスキップする）。
+
+#### Phase 1 時点の挙動
+
+- `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
+- `.agents/skills/{research,review,update}/SKILL.md` を **bundled SKILL.md** からコピー（review / update は Phase 1 では stub プロンプト、本文は Phase 2/4 で確定）
+- 既存ファイルは warning + skip で保護。`--force` で上書き
+- Claude Code 側 (`.claude/skills/`) への配置は本 Phase では行わない（`@ozzylabs/skills` Renovate preset との衝突回避）
 
 ### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
 

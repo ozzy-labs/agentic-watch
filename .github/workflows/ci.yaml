@@ -65,3 +65,42 @@ jobs:
 
       - name: Test
         run: pnpm run test
+
+      # ADR-0005: ensure user data / skill bundle layout never leaks into the
+      # published tarball. Fails if the tarball contains anything outside
+      # `dist/`, `LICENSE`, `README.md`, or `package.json`.
+      - name: Verify pack contents (pnpm pack --dry-run)
+        run: |
+          set -euo pipefail
+          pnpm pack --dry-run --json > pack.json
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const data = JSON.parse(readFileSync('pack.json', 'utf8'));
+            const entry = Array.isArray(data) ? data[0] : data;
+            const files = (entry.files ?? []).map(f => f.path);
+            const allowed = (p) => (
+              p === 'package.json' ||
+              p === 'LICENSE' ||
+              p === 'README.md' ||
+              p.startsWith('dist/')
+            );
+            const unexpected = files.filter(p => !allowed(p));
+            if (unexpected.length > 0) {
+              console.error('Unexpected files in npm tarball:');
+              for (const p of unexpected) console.error('  - ' + p);
+              process.exit(1);
+            }
+            const required = [
+              'dist/index.js',
+              'dist/skills/research/SKILL.md',
+              'dist/skills/review/SKILL.md',
+              'dist/skills/update/SKILL.md',
+            ];
+            const missing = required.filter(p => !files.includes(p));
+            if (missing.length > 0) {
+              console.error('Missing required files in npm tarball:');
+              for (const p of missing) console.error('  - ' + p);
+              process.exit(1);
+            }
+            console.log('pack contents OK (' + files.length + ' files)');
+          "
