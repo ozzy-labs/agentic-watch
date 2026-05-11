@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -14,15 +15,38 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /**
+ * Sanitize an item id for use as a filename.
+ *
+ * RSS GUIDs are commonly URLs containing `/` `:` `?`, which `path.join` would
+ * interpret as path separators (or that fail outright on Windows / NTFS). The
+ * yaml body still carries the original `id`, so this is purely a filename
+ * concern — `loadItems` discovers items by directory scan, not by name lookup.
+ *
+ * Strategy: keep alphanumerics + `.` `-` `_`, replace everything else with `_`,
+ * and append a short content hash whenever sanitization changed the string or
+ * the id exceeds 100 chars. The hash keeps two ids that sanitize to the same
+ * string from overwriting each other.
+ */
+function safeFilename(itemId: string): string {
+  const sanitized = itemId.replace(/[^A-Za-z0-9._-]/g, "_");
+  if (sanitized === itemId && sanitized.length <= 100) {
+    return sanitized;
+  }
+  const hash = createHash("sha256").update(itemId).digest("hex").slice(0, 8);
+  return `${sanitized.slice(0, 90)}-${hash}`;
+}
+
+/**
  * Build the on-disk filename for an item.
  *
- * Each item is stored as `items/<sourceId>/<itemId>.yaml`. Grouping by source
+ * Each item is stored as `items/<sourceId>/<filename>.yaml`. Grouping by source
  * keeps the directory listing manageable for users running dozens of sources
  * and aligns with how `source remove` preserves history under
- * `items/<sourceId>/` (see issue #12).
+ * `items/<sourceId>/` (see issue #12). Filenames are sanitized via
+ * `safeFilename` to tolerate URL-shaped ids that real RSS feeds emit.
  */
 function itemFile(itemsDir: string, sourceId: string, itemId: string): string {
-  return join(itemsDir, sourceId, `${itemId}.yaml`);
+  return join(itemsDir, sourceId, `${safeFilename(itemId)}.yaml`);
 }
 
 /**
