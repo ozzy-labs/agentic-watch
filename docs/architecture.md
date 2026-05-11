@@ -75,15 +75,35 @@ research/<id>.md (新バージョン、immutable history)
 ## 状態遷移（Item）
 
 ```text
-detected ──► researched ──► reviewed ──► (updated → 新バージョン作成)
+detected ──► (dismissed | researched) ──► reviewed
+                         │
+                         └── update は research ファイルの v+1 を作る
+                            （item status は変えない）
 ```
 
 - `detected`: watcher が filter 通過後に出力した直後
-- `researched`: agent が研究レポートを書き終えた
+- `dismissed`: ユーザーが research しないと判断した terminal 状態
+- `researched`: agent が research レポートを書き終えた
 - `reviewed`: 別 agent または人がレビューを通した
-- `updated`: 既存 research に対し再実行され、新バージョンが作られた
 
-Status は `items/*.yaml` に保存され、CLI が遷移を駆動。
+Status は `items/*.yaml` に保存され、CLI が遷移を駆動。詳細・writing-studio との差異 / 簡略化の根拠は [ADR-0008](./adr/0008-status-state-machine.md) を参照。
+
+## クロスエージェント運用
+
+agentic-watch は 4 種の agent CLI を adapter で抽象化しているため、**研究 (research) と レビュー (review) を別 agent で実行**することを推奨する:
+
+```bash
+agentic-watch research <item> --agent codex-cli
+agentic-watch review <research> --agent claude-code
+```
+
+異なる agent によるクロスチェックにより:
+
+- 同一 agent の盲点（あるトピックでの偏り、特定情報源への依存）を相互補正できる
+- review が research を書いた agent と同じ「思い込み」を引きずらない
+- 4 プランを契約しているなら、リソースを分散できる
+
+agent 選択ロジックは CLI が強制しない（ユーザー判断）。`init` で生成される `radar.config.yaml`（仮）で default agent を指定可能（Phase 1）。
 
 ## 配布形態
 

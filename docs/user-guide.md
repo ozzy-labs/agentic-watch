@@ -97,7 +97,23 @@ Phase 1 では agent は `claude-code` 固定。Phase 2 で 4 agent 対応。
 
 既存 research に対し、指定 agent でレビューを生成。`research/<id>.md` の frontmatter に `reviewedAt` / `reviewedBy` を追記し、レビューコメントを末尾に追加。
 
-クロスエージェント運用を推奨: `research` は codex で書き、`review` は claude で行うなど。
+#### クロスエージェント運用（推奨）
+
+research を書いた agent と**別の agent** で review を実行することを推奨する:
+
+```bash
+# 例: codex で書いて claude にレビューさせる
+agentic-watch research <item-id> --agent codex-cli
+agentic-watch review <research-id> --agent claude-code
+```
+
+なぜクロスチェック:
+
+- 同一 agent の盲点（特定の情報源への偏り、用語の取りこぼし）を相互補正できる
+- review が research と同じ思い込みを引きずらない
+- 4 種類の agent プランを契約しているなら、利用枠を分散できる
+
+CLI 側で agent の組合せを強制はしない（ユーザー判断）。Phase 1 で `radar.config.yaml` に default `researchAgent` / `reviewAgent` を指定する仕組みを入れる予定。
 
 ### `agentic-watch update <research-id> --agent <agent-id>`
 
