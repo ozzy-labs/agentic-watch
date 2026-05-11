@@ -148,11 +148,56 @@ agentic-watch review <research-id> --agent claude-code
 - review が research と同じ思い込みを引きずらない
 - 4 種類の agent プランを契約しているなら、利用枠を分散できる
 
-CLI 側で agent の組合せを強制はしない（ユーザー判断）。Phase 1 で `radar.config.yaml` に default `researchAgent` / `reviewAgent` を指定する仕組みを入れる予定。
+CLI 側で agent の組合せを強制はしない（ユーザー判断）。`radar.config.yaml` で default agent を指定すれば、`--agent` を毎回付けずに済む（[後述](#radarconfigyaml)）。
 
 ### `agentic-watch update <research-id> --agent <agent-id>`
 
 既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history）。
+
+## radar.config.yaml
+
+ワークスペースルート（`sources/` と同じ階層）に `radar.config.yaml` を置くと、`research` / `review` コマンドの `--agent` 省略時に使う default agent を指定できる。設定ファイルは任意で、無ければハードコードされた `claude-code` がそのまま fallback として使われる。
+
+例:
+
+```yaml
+# radar.config.yaml
+defaultResearchAgent: codex-cli
+defaultReviewAgent: claude-code
+```
+
+### 設定可能フィールド
+
+| フィールド | 対応コマンド | 値 |
+|---|---|---|
+| `defaultResearchAgent` | `agentic-watch research` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot` |
+| `defaultReviewAgent` | `agentic-watch review` | 同上 |
+
+両フィールドとも optional。未指定のフィールドはハードコード default にフォールバックする。
+
+### Agent 解決の優先順位
+
+`research` / `review` コマンドが起動時に使う agent は、以下の優先順位で決定する:
+
+1. 明示 `--agent <id>` （CLI 引数）
+2. `radar.config.yaml` の対応フィールド（`defaultResearchAgent` / `defaultReviewAgent`）
+3. ハードコード default: `claude-code`
+
+たとえば `defaultResearchAgent: codex-cli` を設定したワークスペースで:
+
+```bash
+agentic-watch research <item-id>                      # codex-cli が使われる (config)
+agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われる (明示優先)
+```
+
+### エラー時の挙動
+
+`radar.config.yaml` が schema 違反（未知の agent id、不正な YAML 構文など）の場合、`research` / `review` は exit code `2` で終了し、違反箇所を stderr に出力する。typo を黙ってフォールバックで隠さないための仕様。
+
+### スコープ外
+
+- `update` コマンドの default agent: Phase 5 で `update` コマンド本体を実装する際に追加
+- agent 固有の設定（timeout / API key / モデル指定など）: 必要が出てから別 issue で追加
 
 ## スケジュール実行
 
