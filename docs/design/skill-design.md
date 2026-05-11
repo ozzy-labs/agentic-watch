@@ -123,10 +123,73 @@ For agent adapters that spawn the CLI as a subprocess (which is what Phase 1's `
 | `reviewedAt` / `reviewedBy` on first write | **always `null`** | this doc §1 + [ADR-0003](../adr/0003-output-format-and-versioning.md) |
 | Status transition | CLI sets `items/<id>.yaml` `status: detected → researched` after frontmatter validation | [ADR-0008](../adr/0008-status-state-machine.md) |
 
-## 7. Open questions deferred to later phases
+## 7. `review` skill body — Phase 2 direction
 
-- **`review` skill body**: stubbed in Phase 1; canonicalised in Phase 2 alongside cross-agent review UX.
-- **`update` skill body and diff strategy**: stubbed in Phase 1; canonicalised in Phase 4. See [#9 §2.7](https://github.com/ozzy-labs/agentic-watch/issues/9).
+[`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch review <research-id> --agent <agent-id>` (Phase 2). Phase 2 will pin down:
+
+- **Cross-agent recommendation.** The CLI does not enforce "different agent for review than research", but the skill body steers towards it (cross-agent blind-spot mitigation, see [`docs/architecture.md` §クロスエージェント運用](../architecture.md)).
+- **Atomic dual-update contract.** Reviews mutate **both** `research/<id>.md` (append review block, stamp `reviewedAt` / `reviewedBy` in frontmatter) and `items/<itemId>.yaml` (`status: researched → reviewed`). Partial-failure rollback is the CLI's responsibility — the skill body must instruct the agent to write a *single* canonical block at the end of the research file so the CLI can re-apply the status transition idempotently after agent retries.
+- **Review perspective set.** Phase 1 ships a free-form rubric (factual accuracy, missing points, speculation, sourcing). Phase 2 will fold in the perspectives schema described in [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) so the review block has a stable structure the `update` command can parse later.
+- **Re-review semantics.** ADR-0008 leaves "re-review after `update`" undefined. Phase 2 decides whether re-running `review` over `_v2.md` overwrites the v1 review block or appends a new one.
+
+These knobs are listed so a Phase 2 implementer can find them without re-deriving from the ADRs.
+
+## 8. `update` skill body and diff-detection strategy — Phase 4 direction
+
+[`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch update <research-id> --agent <agent-id>` (Phase 4). Phase 4 will pin down:
+
+### 8.1 What counts as "new information"
+
+| Signal | Source of truth | Likely heuristic |
+|---|---|---|
+| Original article was edited | `<url>` re-fetch + `etag` / `lastModified` from `state/*.yaml` | If etag / lastModified moved → fetch and diff |
+| Related item appeared in same source | `items/<itemId>.yaml` with matching `sourceId` and overlapping `matchedKeywords` | Phase 4 may walk `items/` listing |
+| Time elapsed since `createdAt` | research frontmatter `createdAt` | Threshold is user-configurable (default: 30 days)|
+| Linked release / docs page updated | URLs in v1 `## 出典` block | WebFetch + content hash compare |
+
+The skill body will surface these signals to the agent rather than have the CLI compute a diff itself — the agent's strength is judging *whether* a textual change is materially new vs trivial copy-edits.
+
+### 8.2 Old version handling: rewrite vs diff-only
+
+Two strategies are on the table:
+
+- **Strategy A (rewrite-and-supersede):** generate a complete new `_v(N+1).md` that stands alone. `supersedes: <previous filename>` in frontmatter links back to v1. v1 is immutable per [ADR-0003](../adr/0003-output-format-and-versioning.md). Pros: each file is self-contained, easy to read in isolation. Cons: redundant text across versions.
+- **Strategy B (diff-only block):** v(N+1) contains only a "Changes since v\<N\>" block plus updated metadata. Cons: requires readers to chase the v1 file for context; breaks "self-contained" reading.
+
+**Phase 4 default: Strategy A.** Self-contained files match user expectation when reading from a static-site generator or grep. A diff block (`## v<N+1> での変更点`) is also added at the top of v(N+1) to make the delta visible — but the rest of the report is regenerated, not redacted from v1.
+
+### 8.3 Frontmatter relationship to predecessors
+
+The new file's frontmatter records the lineage explicitly:
+
+```yaml
+---
+id: <new id>           # e.g. 20260612_anthropic-claude-3-7_v2
+itemIds: [...]
+agent: <agent-id>
+templateId: <id>
+createdAt: <ISO 8601 of v1 createdAt>     # preserved, NOT bumped
+updatedAt: <ISO 8601 now>                  # set on update
+reviewedAt: null                           # reset; new version needs new review
+reviewedBy: null
+supersedes: 20260512_anthropic-claude-3-7_v1.md   # filename (relative to research/)
+---
+```
+
+Note that `createdAt` is **preserved** from v1 so the original detection timeline is not lost. `updatedAt` is the new write time. `reviewedAt` / `reviewedBy` reset to `null` because a v1 review does not automatically transfer to v2 (Phase 2 may revisit; see §7).
+
+### 8.4 Item status interaction
+
+`update` does **not** change `items/<itemId>.yaml` `status`. Per [ADR-0008](../adr/0008-status-state-machine.md), `status` tracks the **item lifecycle**, not the research version. The CLI updates `items/<itemId>.yaml` `researchPath` to point at the new file but leaves `status` untouched (an item already at `reviewed` remains `reviewed` even though the linked research is now v2; the user must re-run `review` to refresh the review stamp).
+
+### 8.5 No-op suppression
+
+If the post-fetch comparison shows no material change, the skill must **skip creating a new file** and report "no update needed" rather than emit a v(N+1) that is byte-identical to v1. The exact materiality threshold (whitespace-only? typo-fix only?) is a Phase 4 decision; the v1 contract is simply "do not write an empty diff".
+
+## 9. Open questions deferred to later phases
+
 - **CLI-specific companion files**: scaffolded in §4 above; not exercised until Phase 2 surfaces a concrete need.
 - **Three-way merge on `init --force`**: deferred; `git diff` is the workspace-side fallback.
 - **`.claude/skills/` automation**: revisit when user feedback demands it.
+- **Re-review after `update`**: see §7 final bullet.
+- **Materiality threshold in `update`**: see §8.5.

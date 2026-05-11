@@ -77,4 +77,5 @@ export interface AgentAdapter {
 ## 関連
 
 - 実装: [`src/agents/types.ts`](../../src/agents/types.ts)
+- 詳細仕様: [`docs/design/skill-design.md`](../design/skill-design.md)（Skill 呼び出しプロトコル、stdin JSON フォーマット、`ResearchRequest.templateBody` の責務分離）
 - handbook ADR: [0018 agent-adapter-architecture](https://github.com/ozzy-labs/handbook/blob/main/adr/0018-agent-adapter-architecture.md)（org-wide adapter 思想）

@@ -91,5 +91,6 @@ session で言及した `triaged` は**明示状態として持たない**。理
 
 ## 関連
 
-- 実装: Phase 1 で `src/schemas/item.ts` に `status` フィールド追加
+- 実装: [`src/schemas/item.ts`](../../src/schemas/item.ts) の `status` フィールド（Phase 1）
+- 詳細仕様: [`docs/design/skill-design.md`](../design/skill-design.md) §6 / §7 / §8（`research` / `review` / `update` 各 skill による status 遷移の駆動、`update` の `items.status` 不変ポリシー）
 - architecture.md の「状態遷移（Item）」セクションを本 ADR で正式化
