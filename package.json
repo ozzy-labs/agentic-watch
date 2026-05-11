@@ -1,0 +1,61 @@
+{
+  "name": "@ozzylabs/agentic-watch",
+  "version": "0.0.0",
+  "description": "Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "agentic-watch": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ozzy-labs/agentic-watch.git"
+  },
+  "homepage": "https://github.com/ozzy-labs/agentic-watch#readme",
+  "bugs": {
+    "url": "https://github.com/ozzy-labs/agentic-watch/issues"
+  },
+  "keywords": [
+    "agentic",
+    "ai",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "gemini",
+    "copilot",
+    "cli",
+    "multi-agent",
+    "rss",
+    "release-notes",
+    "research",
+    "markdown"
+  ],
+  "author": "ozzy-labs",
+  "engines": {
+    "node": ">=22"
+  }
+}
