@@ -31,11 +31,17 @@ agent: claude-code
 templateId: default
 createdAt: "2026-05-11T00:00:00Z"
 updatedAt: null
+reviewedAt: null      # review 実行時に ISO8601 で記録
+reviewedBy: null      # review を行った AgentId
 ---
 # Anthropic: Claude Code Update
 
 （本文 Markdown）
+
+<!-- review コメントは本文末尾に追記される -->
 ```
+
+`reviewedAt` / `reviewedBy` は `agentic-watch review` 実行時に書き込まれる。レビューコメントは本文末尾に追記する（frontmatter には summary を持たない）。
 
 ### ファイル命名
 
@@ -54,9 +60,19 @@ research/<YYYYMMDD>_<slug>_v<n>.md
 - frontmatter `updatedAt` は **当該ファイル**の更新時刻（マイナー編集）に使う。バージョン作成は新ファイル
 - 同一 source item に対する research は frontmatter `itemIds` で紐づけ
 
-### Status 表現
+### Status 表現と review の二重更新
 
-`Research` schema にも明示的な `status` フィールドは持たず、items YAML の `status` で管理（[architecture.md の状態遷移節](../architecture.md#状態遷移item)）。
+`Research` schema 自体には `status` フィールドを持たない。**ライフサイクル状態は item.yaml の `status` で管理**（[ADR-0008](./0008-status-state-machine.md)）。
+
+`agentic-watch review` 実行時の更新先は**二箇所**:
+
+| 更新先 | 内容 |
+|---|---|
+| `items/<item-id>.yaml` | `status: researched → reviewed` |
+| `research/<id>.md` frontmatter | `reviewedAt` / `reviewedBy` |
+| `research/<id>.md` 本文末尾 | レビューコメント本文 |
+
+両方の更新は同一 review コマンド実行内でアトミックに行う（部分失敗時は両方ロールバック）。詳細実装は `docs/design/skill-design.md`（[issue #9](https://github.com/ozzy-labs/agentic-watch/issues/9)）で固める。
 
 ## Consequences
 

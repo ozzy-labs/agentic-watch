@@ -95,7 +95,15 @@ Phase 1 では agent は `claude-code` 固定。Phase 2 で 4 agent 対応。
 
 ### `agentic-watch review <research-id> --agent <agent-id>`
 
-既存 research に対し、指定 agent でレビューを生成。`research/<id>.md` の frontmatter に `reviewedAt` / `reviewedBy` を追記し、レビューコメントを末尾に追加。
+既存 research に対し、指定 agent でレビューを生成。**更新先は 2 箇所**:
+
+| 更新先 | 内容 |
+|---|---|
+| `items/<item-id>.yaml` | `status: researched → reviewed` |
+| `research/<id>.md` frontmatter | `reviewedAt` / `reviewedBy` |
+| `research/<id>.md` 本文末尾 | レビューコメント本文 |
+
+両者は同一コマンド内でアトミックに更新される（部分失敗時はロールバック）。詳細は [ADR-0003](./adr/0003-output-format-and-versioning.md) / [ADR-0008](./adr/0008-status-state-machine.md)。
 
 #### クロスエージェント運用（推奨）
 

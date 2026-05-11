@@ -33,6 +33,16 @@ detected ──► (dismissed | researched) ──► reviewed
 
 `agentic-watch update <research-id>` は **research ファイルの v+1 を作る**操作。item status は変えない（既に `researched` または `reviewed`）。
 
+### Review の二重更新
+
+`agentic-watch review` 実行時、**item.yaml と research.md の両方**を更新する:
+
+- `items/<item-id>.yaml`: `status: researched → reviewed`
+- `research/<id>.md` frontmatter: `reviewedAt` / `reviewedBy` を記録（[ADR-0003](./0003-output-format-and-versioning.md)）
+- `research/<id>.md` 本文末尾: レビューコメントを追記
+
+両更新は同一コマンド実行内でアトミックに行う（部分失敗時は両方ロールバック）。
+
 ### Triage の扱い
 
 session で言及した `triaged` は**明示状態として持たない**。理由:
