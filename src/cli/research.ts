@@ -20,7 +20,7 @@ const matterOptions = {
 };
 
 import { getAgentAdapter } from "../agents/index.js";
-import { RadarConfigError, getDefaultAgent, loadRadarConfig } from "../core/config.js";
+import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";

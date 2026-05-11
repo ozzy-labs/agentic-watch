@@ -125,10 +125,7 @@ export async function getDefaultAgent(
   return HARDCODED_DEFAULT_AGENT;
 }
 
-function pickConfigDefault(
-  command: ConfigurableCommand,
-  config: RadarConfig,
-): AgentId | undefined {
+function pickConfigDefault(command: ConfigurableCommand, config: RadarConfig): AgentId | undefined {
   switch (command) {
     case "research":
       return config.defaultResearchAgent;
