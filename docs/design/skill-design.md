@@ -178,6 +178,8 @@ supersedes: 20260512_anthropic-claude-3-7_v1.md   # filename (relative to resear
 
 Note that `createdAt` is **preserved** from v1 so the original detection timeline is not lost. `updatedAt` is the new write time. `reviewedAt` / `reviewedBy` reset to `null` because a v1 review does not automatically transfer to v2 (Phase 2 may revisit; see §7).
 
+`supersedes` is **not in `ResearchFrontmatterSchema` today** (see [`src/schemas/research.ts`](../../src/schemas/research.ts)). Phase 4 will extend the schema with `supersedes: z.string().optional()` when `update` lands; the field is documented here so the lineage contract is reviewable before code arrives.
+
 ### 8.4 Item status interaction
 
 `update` does **not** change `items/<itemId>.yaml` `status`. Per [ADR-0008](../adr/0008-status-state-machine.md), `status` tracks the **item lifecycle**, not the research version. The CLI updates `items/<itemId>.yaml` `researchPath` to point at the new file but leaves `status` untouched (an item already at `reviewed` remains `reviewed` even though the linked research is now v2; the user must re-run `review` to refresh the review stamp).
