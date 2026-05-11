@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { AgentAdapter, ResearchRequest } from "./types.js";
+import type { AgentAdapter, ResearchRequest, ReviewRequest } from "./types.js";
 
 /**
  * Build the prompt handed to `claude -p`.
@@ -19,7 +19,7 @@ import type { AgentAdapter, ResearchRequest } from "./types.js";
  *     "outputPath":   string
  *   }
  */
-function buildPrompt(req: ResearchRequest): string {
+function buildResearchPrompt(req: ResearchRequest): string {
   const itemIds = req.items.map((i) => i.id).join(", ");
   return [
     "Run the `.agents/skills/research/SKILL.md` skill to produce a Markdown",
@@ -42,6 +42,58 @@ function buildPrompt(req: ResearchRequest): string {
     "  - Set frontmatter fields `reviewedAt: null` and `reviewedBy: null`.",
     "    The `review` command (Phase 2) stamps those later.",
     "  - Do not modify items/*.yaml — the CLI handles the status transition.",
+  ].join("\n");
+}
+
+/**
+ * Build the prompt handed to `claude -p` for review.
+ *
+ * Same shape as the research prompt: thin wrapper that points the agent at
+ * `.agents/skills/review/SKILL.md` and re-states the critical filesystem
+ * invariants. The procedural detail (review perspectives, where the review
+ * block lands inside the file, frontmatter stamp format) lives in the SKILL
+ * body, not here, so behavioural changes ship via SKILL.md updates without
+ * recompiling the CLI.
+ *
+ * Stdin payload schema (JSON):
+ *   {
+ *     "agent":               AgentId,
+ *     "templateId":          string,
+ *     "templateBody":        string,  // empty => use SKILL's built-in rubric
+ *     "researchPath":        string,
+ *     "researchFrontmatter": ResearchFrontmatter,
+ *     "researchBody":        string
+ *   }
+ */
+function buildReviewPrompt(req: ReviewRequest): string {
+  return [
+    "Run the `.agents/skills/review/SKILL.md` skill to cross-check the",
+    "existing research report and append a review block.",
+    "",
+    "Inputs (one JSON document on stdin):",
+    "  - agent:               the agent id you are running as",
+    "  - templateId:          review template id (e.g. `default`)",
+    "  - templateBody:        contents of templates/<templateId>.md, or empty",
+    "                         string if the workspace did not provide one",
+    "  - researchPath:        absolute path to the research file you MUST modify",
+    "  - researchFrontmatter: parsed frontmatter object (pre-review state)",
+    "  - researchBody:        full file body including frontmatter at adapter",
+    "                         invocation (the CLI re-reads after you return)",
+    "",
+    `Research file to review: ${req.researchPath}`,
+    `Reviewing agent id (stamp this into reviewedBy): ${req.agent}`,
+    "",
+    "Constraints:",
+    "  - Follow `.agents/skills/review/SKILL.md` exactly for the review block",
+    "    layout and frontmatter stamp; ADR-0003 / ADR-0008 are the canonical",
+    "    contract specs.",
+    "  - Set frontmatter `reviewedAt` to the current ISO 8601 timestamp (UTC)",
+    "    and `reviewedBy` to the agent id above.",
+    "  - Append a single `## レビュー (<agent-id>, <ISO 8601>)` section at the",
+    "    end of the body. Do not rewrite the existing research content.",
+    "  - Do not modify items/*.yaml — the CLI handles the status transition",
+    "    and the atomic rollback if anything fails.",
+    "  - Write to `researchPath` only. Do not create new files.",
   ].join("\n");
 }
 
@@ -111,15 +163,16 @@ interface ClaudeCodeAdapterOptions {
  * Construct the Claude Code agent adapter.
  *
  * The default adapter shells out to the real `claude` CLI. The override hook
- * exists so the CLI test (`tests/cli/research.test.ts`) can register a mock
- * adapter through the registry without touching the user's installed CLI.
+ * exists so the CLI test (`tests/cli/research.test.ts` /
+ * `tests/cli/review.test.ts`) can register a mock adapter through the
+ * registry without touching the user's installed CLI.
  */
 export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}): AgentAdapter {
   const run = options.run ?? runClaudeCli;
   return {
     id: "claude-code",
     research: async (req) => {
-      const prompt = buildPrompt(req);
+      const prompt = buildResearchPrompt(req);
       const stdin = `${JSON.stringify(
         {
           agent: req.agent,
@@ -135,6 +188,28 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         throw new Error(`claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`);
+      }
+    },
+    review: async (req) => {
+      const prompt = buildReviewPrompt(req);
+      const stdin = `${JSON.stringify(
+        {
+          agent: req.agent,
+          templateId: req.templateId,
+          templateBody: req.templateBody,
+          researchPath: req.researchPath,
+          researchFrontmatter: req.researchFrontmatter,
+          researchBody: req.researchBody,
+        },
+        null,
+        2,
+      )}\n`;
+      const result = await run(prompt, { cwd: req.cwd, stdin });
+      if (result.code !== 0) {
+        const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
+        throw new Error(
+          `claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`,
+        );
       }
     },
   };
