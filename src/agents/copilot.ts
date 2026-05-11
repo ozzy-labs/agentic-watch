@@ -5,4 +5,7 @@ export const copilotAdapter: AgentAdapter = {
   research: async (_req) => {
     throw new Error("copilot adapter: not implemented yet (Phase 2)");
   },
+  review: async (_req) => {
+    throw new Error("copilot adapter: review not implemented yet (Phase 2)");
+  },
 };

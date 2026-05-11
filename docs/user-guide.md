@@ -137,24 +137,48 @@ Phase 1 では agent は `claude-code` のみ対応。Phase 2 で 4 agent 対応
 
 復元 (`undismiss`) や 1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
 
-### `agentic-watch review <research-id> --agent <agent-id>`
+### `agentic-watch review <research-id> [--agent <agent-id>] [--template <id>]`
 
-既存 research に対し、指定 agent でレビューを生成。**更新先は 2 箇所**:
+既存 research に対し、指定 agent でレビューを生成。
+
+| 引数 | 説明 |
+|---|---|
+| `<research-id>` | `research/<id>.md` の id（拡張子 `.md` は省略可。例: `20260510_anthropic-news-claude-code_v1`） |
+| `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
+| `--template` | レビュー観点テンプレ id（既定: `default`、`templates/<id>.md` を参照） |
+
+**更新先は 2 箇所**（厳密にはファイル 2 つ、フィールド 3 箇所）:
 
 | 更新先 | 内容 |
 |---|---|
-| `items/<item-id>.yaml` | `status: researched → reviewed` |
+| `items/<sourceId>/<item-id>.yaml` | `status: researched → reviewed` |
 | `research/<id>.md` frontmatter | `reviewedAt` / `reviewedBy` |
-| `research/<id>.md` 本文末尾 | レビューコメント本文 |
+| `research/<id>.md` 本文末尾 | `## レビュー (<agent>, <ISO 8601>)` セクションを追記 |
 
-両者は同一コマンド内でアトミックに更新される（部分失敗時はロールバック）。詳細は [ADR-0003](./adr/0003-output-format-and-versioning.md) / [ADR-0008](./adr/0008-status-state-machine.md)。
+両者は同一コマンド内でアトミックに更新される（部分失敗時は両方ロールバック）。CLI は agent 起動前にスナップショットを取り、以下のいずれかで失敗するとリストアする:
+
+- adapter が非ゼロ終了 / 例外を投げた
+- 書き換え後の frontmatter が `ResearchFrontmatterSchema` に違反
+- `reviewedAt` / `reviewedBy` が未スタンプ、または `reviewedBy` が起動 agent と不一致
+- immutable フィールド（`id` / `itemIds` / `agent` / `templateId` / `createdAt`）が改変された
+- `items/*.yaml` の書き込みが失敗
+
+rollback 自体が失敗した場合（同じファイルシステム障害が継続している等）は「workspace may be in an inconsistent state」を出力して exit 1 する。ユーザーは `git status` / `git diff` で復旧する。
+
+詳細は [ADR-0003](./adr/0003-output-format-and-versioning.md) / [ADR-0008](./adr/0008-status-state-machine.md) / [`docs/design/skill-design.md` §7](./design/skill-design.md)。
+
+#### 再レビュー (re-review)
+
+同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す（Phase 4）。
+
+Phase 2 では agent は `claude-code` のみ対応。`codex-cli` / `gemini-cli` / `copilot` は adapter stub のみ（呼び出し時 friendly error で exit 2）。各 agent の本実装は別 sub-issue で追加される。
 
 #### クロスエージェント運用（推奨）
 
 research を書いた agent と**別の agent** で review を実行することを推奨する:
 
 ```bash
-# 例: codex で書いて claude にレビューさせる
+# 例: codex で書いて claude にレビューさせる（Phase 2 完了後）
 agentic-watch research <item-id> --agent codex-cli
 agentic-watch review <research-id> --agent claude-code
 ```

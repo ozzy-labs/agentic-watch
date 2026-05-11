@@ -1,9 +1,9 @@
 # Skill Design — `.agents/skills/` Bundling and Agent Invocation
 
-Status: **draft v1** (Phase 1 — `research` command implementation, [#14](https://github.com/ozzy-labs/agentic-watch/issues/14))
+Status: **draft v2** (Phase 2 — `review` command implementation, [#29](https://github.com/ozzy-labs/agentic-watch/issues/29))
 Tracks: [#9](https://github.com/ozzy-labs/agentic-watch/issues/9) §2 / §3 (subset)
 
-This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 covers `research`; `review` and `update` are stubbed and will be normalised in Phase 2 / Phase 4.
+This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pins `review` (this revision); `update` remains a stub and will be normalised in Phase 4.
 
 ## 1. Research SKILL.md — prompt body
 
@@ -123,16 +123,101 @@ For agent adapters that spawn the CLI as a subprocess (which is what Phase 1's `
 | `reviewedAt` / `reviewedBy` on first write | **always `null`** | this doc §1 + [ADR-0003](../adr/0003-output-format-and-versioning.md) |
 | Status transition | CLI sets `items/<id>.yaml` `status: detected → researched` after frontmatter validation | [ADR-0008](../adr/0008-status-state-machine.md) |
 
-## 7. `review` skill body — Phase 2 direction
+## 7. `review` skill body and CLI contract
 
-[`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch review <research-id> --agent <agent-id>` (Phase 2). Phase 2 will pin down:
+[`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) is the canonical procedure for the `review` command and ships to workspaces under `.agents/skills/review/SKILL.md` (Phase 2, [#29](https://github.com/ozzy-labs/agentic-watch/issues/29)). The CLI-side wrapper prompt — emitted by [`src/agents/claude-code.ts`](../../src/agents/claude-code.ts) — mirrors `research`'s thin-wrapper style: it points the agent at the SKILL, names the file the agent must modify, and re-states the filesystem invariants.
 
-- **Cross-agent recommendation.** The CLI does not enforce "different agent for review than research", but the skill body steers towards it (cross-agent blind-spot mitigation, see [`docs/architecture.md` §クロスエージェント運用](../architecture.md)).
-- **Atomic dual-update contract.** Reviews mutate **both** `research/<id>.md` (append review block, stamp `reviewedAt` / `reviewedBy` in frontmatter) and `items/<itemId>.yaml` (`status: researched → reviewed`). Partial-failure rollback is the CLI's responsibility — the skill body must instruct the agent to write a *single* canonical block at the end of the research file so the CLI can re-apply the status transition idempotently after agent retries.
-- **Review perspective set.** Phase 1 ships a free-form rubric (factual accuracy, missing points, speculation, sourcing). Phase 2 will fold in the perspectives schema described in [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) so the review block has a stable structure the `update` command can parse later.
-- **Re-review semantics.** ADR-0008 leaves "re-review after `update`" undefined. Phase 2 decides whether re-running `review` over `_v2.md` overwrites the v1 review block or appends a new one.
+### 7.1 Prompt body and stdin contract
 
-These knobs are listed so a Phase 2 implementer can find them without re-deriving from the ADRs.
+```text
+Run the `.agents/skills/review/SKILL.md` skill to cross-check the
+existing research report and append a review block.
+
+Inputs (one JSON document on stdin):
+  - agent:               the agent id you are running as
+  - templateId:          review template id (e.g. `default`)
+  - templateBody:        contents of templates/<templateId>.md, or empty
+                         string if the workspace did not provide one
+  - researchPath:        absolute path to the research file you MUST modify
+  - researchFrontmatter: parsed frontmatter object (pre-review state)
+  - researchBody:        full file body including frontmatter at adapter
+                         invocation (the CLI re-reads after you return)
+
+Research file to review: <researchPath>
+Reviewing agent id (stamp this into reviewedBy): <agent>
+
+Constraints:
+  - Follow `.agents/skills/review/SKILL.md` exactly for the review block
+    layout and frontmatter stamp; ADR-0003 / ADR-0008 are the canonical
+    contract specs.
+  - Set frontmatter `reviewedAt` to the current ISO 8601 timestamp (UTC)
+    and `reviewedBy` to the agent id above.
+  - Append a single `## レビュー (<agent-id>, <ISO 8601>)` section at the
+    end of the body. Do not rewrite the existing research content.
+  - Do not modify items/*.yaml — the CLI handles the status transition
+    and the atomic rollback if anything fails.
+  - Write to `researchPath` only. Do not create new files.
+```
+
+The stdin JSON also carries `researchFrontmatter` (the parsed pre-review frontmatter) and `researchBody` (the full file content). Re-`Read`ing `researchPath` inside the agent is allowed, but the stdin snapshot is the canonical "pre-state" reference — the CLI uses it to detect drift on the way out.
+
+### 7.2 Atomic dual-update contract
+
+Reviews mutate **two artifacts** in a single CLI invocation:
+
+| Artifact | Owner | Mutation |
+|---|---|---|
+| `research/<id>.md` body | Agent (SKILL) | Append a single `## レビュー (<agent>, <ts>)` section at end of body |
+| `research/<id>.md` frontmatter | Agent (SKILL) | Stamp `reviewedAt` (ISO 8601 UTC) + `reviewedBy` (agent id) |
+| `items/<sourceId>/<itemId>.yaml` `status` | CLI | `researched → reviewed` |
+
+[`src/cli/review.ts`](../../src/cli/review.ts) takes an in-memory snapshot of the research file body and each linked item payload before invoking the adapter, then runs the snapshot's `restoreSnapshot` if any of the following fails:
+
+1. The adapter throws or exits non-zero (`runReview` catches and rolls back).
+2. The post-adapter frontmatter does not parse against `ResearchFrontmatterSchema`.
+3. The agent did not stamp `reviewedAt`, or stamped `reviewedBy` with a value other than the invoked agent id.
+4. The agent mutated any immutable field (`id` / `itemIds` / `agent` / `templateId` / `createdAt`).
+5. `saveItems` fails when writing the `researched → reviewed` transition.
+
+Rollback is **best-effort**: if `restoreSnapshot` itself fails (e.g. the filesystem fault that broke the original write is still active), the CLI emits a `workspace may be in an inconsistent state` notice and exits non-zero so the user knows manual recovery is needed. The snapshot stays in process memory only — persisting backups to disk would just trade one partial-failure window for another.
+
+### 7.3 Cross-agent recommendation (not enforced)
+
+The CLI does **not** enforce "different agent for review than research". The SKILL body and [`docs/user-guide.md`](../user-guide.md) steer towards a cross-agent flow (write with `codex-cli`, review with `claude-code`, etc.) because the blind-spot-mitigation value comes from a different model running the second pass. We keep enforcement out of code for two reasons:
+
+- Single-account workspaces may only have one agent configured. Hard-erroring on same-agent review would block legitimate solo use.
+- `radar.config.yaml` will land a `researchAgent` / `reviewAgent` default in a separate Phase 2 sub-issue ([#25](https://github.com/ozzy-labs/agentic-watch/issues/25) tracks the parent epic). Once that lands, the default config can suggest the cross-agent pairing without making it a hard rule.
+
+### 7.4 Review perspective set
+
+The Phase 2 SKILL ships a **four-axis rubric**:
+
+1. 事実関係 (factual accuracy) — primary-source cross-checks
+2. 抜け (missing points) — required topics not covered
+3. 憶測 / 主観の混入 (speculation / opinion creep)
+4. 出典の妥当性 (source quality)
+
+Workspaces that need a different rubric can drop a `templates/<id>.md` and call `review --template <id>`. The CLI passes `templateBody` through stdin unchanged; an empty string means "use the SKILL's built-in rubric".
+
+We do **not** adopt the [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) multi-perspective Schema v1 yet. The handbook ADR targets *code* review (correctness, security, architecture etc.), whereas the `agentic-watch` review is a *content* review of an existing Markdown report. Phase 4 (`update`) may need a stable parse-able structure inside the review block; until then the free-form Japanese-heading layout in §3 of the SKILL is the contract.
+
+### 7.5 Re-review semantics
+
+ADR-0008 leaves "re-review after `update`" undefined. Phase 2 makes the following concrete decisions, scoped to a single research file version:
+
+- **Same-version re-review is refused.** Running `agentic-watch review` on a research file whose frontmatter already has `reviewedAt != null` exits non-zero with `review: research '<id>' is already reviewed`. This guarantees a single canonical review block per file and avoids appending stale critiques.
+- **Cross-version re-review is deferred to Phase 4.** When `update` lands and produces `_v2.md`, the new file's frontmatter resets `reviewedAt` / `reviewedBy` to `null` (per [skill-design §8.3](#83-frontmatter-relationship-to-predecessors)). A fresh `review` over `_v2.md` is allowed and treated as a brand-new review pass.
+
+### 7.6 Implementation pointers
+
+| Decision | Value | Source |
+|---|---|---|
+| Wrapper prompt | thin, points at SKILL.md | this doc §7.1 |
+| Input transport | JSON on stdin (`agent` / `templateId` / `templateBody` / `researchPath` / `researchFrontmatter` / `researchBody`) | [`src/agents/claude-code.ts`](../../src/agents/claude-code.ts) |
+| Output validation | CLI re-reads file, parses frontmatter against `ResearchFrontmatterSchema`, asserts `reviewedAt != null`, `reviewedBy == agent`, immutable fields unchanged | [`src/cli/review.ts`](../../src/cli/review.ts) |
+| Rollback target | in-memory snapshot of research body + linked item payloads | this doc §7.2 |
+| Status transition | CLI sets each linked `items/<sourceId>/<itemId>.yaml` `status: researched → reviewed` after frontmatter validation | [ADR-0008](../adr/0008-status-state-machine.md) |
+| Re-review | refused at the CLI when `reviewedAt != null`; cross-version handled by Phase 4 `update` | this doc §7.5 |
 
 ## 8. `update` skill body and diff-detection strategy — Phase 4 direction
 

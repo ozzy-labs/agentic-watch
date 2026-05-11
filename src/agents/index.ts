@@ -36,4 +36,4 @@ export function registerAgentAdapter(adapter: AgentAdapter): AgentAdapter | unde
   return previous;
 }
 
-export type { AgentAdapter, ResearchRequest } from "./types.js";
+export type { AgentAdapter, ResearchRequest, ReviewRequest } from "./types.js";
