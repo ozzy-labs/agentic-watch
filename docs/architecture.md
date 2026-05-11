@@ -132,3 +132,6 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 - [0003 Output Format and Versioning](./adr/0003-output-format-and-versioning.md)
 - [0004 Schedule Strategy](./adr/0004-schedule-strategy.md)
 - [0005 User Data Separation](./adr/0005-user-data-separation.md)
+- [0006 Filter Specification](./adr/0006-filter-specification.md)
+- [0007 Skill Bundling and `init` Distribution](./adr/0007-skill-bundling-and-init-distribution.md)
+- [0008 Item Status State Machine](./adr/0008-status-state-machine.md)

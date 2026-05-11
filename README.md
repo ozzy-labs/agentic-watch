@@ -71,7 +71,7 @@ src/
 
 - [docs/architecture.md](./docs/architecture.md) — システム全体図 / モジュール責務 / データフロー / Phase 別スコープ
 - [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様（Phase 1 完了時点を先取り）
-- [docs/adr/](./docs/adr/README.md) — agentic-watch 内部の設計判断記録（Agent / Source / Output / Schedule / User Data）
+- [docs/adr/](./docs/adr/README.md) — agentic-watch 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine）
 
 ## 規約
 
