@@ -3,15 +3,22 @@ import type { Item, MatchField, MatchMode, Source, SourceFilters } from "../sche
 /**
  * Evaluate a single keyword against a haystack per the configured match mode.
  *
- * - `word`: whole-word match anchored on regex `\b` boundaries.
+ * - `word`: whole-word match anchored on regex `\b` boundaries (keyword auto-escaped).
  * - `substring`: plain `indexOf`-style match.
- * - `regex`: treat the keyword as a JavaScript regular expression source.
+ * - `regex`: treat the keyword as a JavaScript regular expression source. The
+ *   `i` flag is added when `caseInsensitive` is true so character classes such
+ *   as `\d` / `\W` retain their meaning (lowercasing the pattern source would
+ *   silently corrupt them).
  *
- * Callers are expected to lowercase both arguments beforehand when
- * `caseSensitive` is false. `caseSensitive` is honored at the call site to
- * avoid recompiling regexes for every item.
+ * For `word` and `substring` modes the caller is expected to have lowercased
+ * both haystack and keyword when matching is case-insensitive.
  */
-function matchKeyword(haystack: string, keyword: string, mode: MatchMode): boolean {
+function matchKeyword(
+  haystack: string,
+  keyword: string,
+  mode: MatchMode,
+  caseInsensitive: boolean,
+): boolean {
   if (keyword.length === 0) return false;
   if (mode === "substring") {
     return haystack.includes(keyword);
@@ -25,7 +32,10 @@ function matchKeyword(haystack: string, keyword: string, mode: MatchMode): boole
   }
   // regex mode: compile the keyword as-is. Invalid regexes throw RegExp errors,
   // which we let propagate so the caller surfaces a clear validation failure.
-  const re = new RegExp(keyword);
+  // Use the `i` flag for case-insensitive runs rather than lowercasing the
+  // pattern source — `\d` / `\D` / `\w` / `\W` flip meaning when lowercased,
+  // which would silently break user patterns.
+  const re = new RegExp(keyword, caseInsensitive ? "i" : "");
   return re.test(haystack);
 }
 
@@ -58,7 +68,9 @@ function buildHaystack(item: Item, fields: MatchField[]): string {
  *
  * Evaluation order:
  *   1. Concatenate matchFields into a haystack.
- *   2. If `caseSensitive` is false, lowercase haystack and keywords.
+ *   2. If `caseSensitive` is false, lowercase haystack and keywords (word /
+ *      substring modes). For regex mode, the `i` flag is used instead of
+ *      lowercasing the pattern source.
  *   3. If any `excludeKeywords` hits → reject (exclude wins over include).
  *   4. If any `keywords` hits → accept, recording the hits in `matchedKeywords`.
  *   5. Otherwise → reject.
@@ -68,13 +80,17 @@ function buildHaystack(item: Item, fields: MatchField[]): string {
  */
 export function evaluateFilter(item: Item, filters: SourceFilters): Item | null {
   const haystackRaw = buildHaystack(item, filters.matchFields);
-  const haystack = filters.caseSensitive ? haystackRaw : haystackRaw.toLowerCase();
-
-  const normalize = (s: string) => (filters.caseSensitive ? s : s.toLowerCase());
+  const isRegex = filters.matchMode === "regex";
+  const caseInsensitive = !filters.caseSensitive;
+  // For regex mode the haystack is not lowercased — we rely on the `i` flag
+  // applied to the compiled pattern (see matchKeyword). For word / substring
+  // modes we lowercase both haystack and keywords up front.
+  const haystack = caseInsensitive && !isRegex ? haystackRaw.toLowerCase() : haystackRaw;
+  const normalizeKeyword = (s: string) => (caseInsensitive && !isRegex ? s.toLowerCase() : s);
 
   // Exclude has priority over include (ADR-0006 §評価順序 step 3).
   for (const kw of filters.excludeKeywords) {
-    if (matchKeyword(haystack, normalize(kw), filters.matchMode)) {
+    if (matchKeyword(haystack, normalizeKeyword(kw), filters.matchMode, caseInsensitive)) {
       return null;
     }
   }
@@ -88,7 +104,7 @@ export function evaluateFilter(item: Item, filters: SourceFilters): Item | null 
 
   const hits: string[] = [];
   for (const kw of filters.keywords) {
-    if (matchKeyword(haystack, normalize(kw), filters.matchMode)) {
+    if (matchKeyword(haystack, normalizeKeyword(kw), filters.matchMode, caseInsensitive)) {
       hits.push(kw);
     }
   }

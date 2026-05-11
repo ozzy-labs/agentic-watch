@@ -106,6 +106,36 @@ describe("core/filter — matchMode", () => {
     expect(out).not.toBeNull();
   });
 
+  it("regex: case-insensitive uses /i flag, preserving character classes", () => {
+    // Lowercasing the pattern source would flip `\D` (non-digit) to `\d` (digit)
+    // and silently change semantics. The implementation must use the `i` flag
+    // rather than mutating the pattern.
+    const out = evaluateFilter(
+      makeItem({ title: "release abc ships", summary: "" }),
+      // \D+ matches any non-digit chars. If the source was lowercased to \d+
+      // it would only match digits, and "abc" would not be detected.
+      makeFilters({ keywords: ["\\D+"], matchMode: "regex", caseSensitive: false }),
+    );
+    expect(out).not.toBeNull();
+  });
+
+  it("regex: case-insensitive matches mixed-case haystack", () => {
+    const out = evaluateFilter(
+      makeItem({ title: "RELEASE NOTES", summary: "" }),
+      makeFilters({ keywords: ["release"], matchMode: "regex", caseSensitive: false }),
+    );
+    expect(out).not.toBeNull();
+  });
+
+  it("regex: case-sensitive respects user pattern", () => {
+    expect(
+      evaluateFilter(
+        makeItem({ title: "RELEASE NOTES", summary: "" }),
+        makeFilters({ keywords: ["release"], matchMode: "regex", caseSensitive: true }),
+      ),
+    ).toBeNull();
+  });
+
   it("regex: invalid pattern throws (ReDoS responsibility on caller)", () => {
     expect(() =>
       evaluateFilter(makeItem(), makeFilters({ keywords: ["[invalid"], matchMode: "regex" })),
