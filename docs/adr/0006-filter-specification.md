@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed（2026-05-11）— 実装は Phase 1 で行う。実装と乖離が出た場合は本 ADR を更新する。
+Accepted（2026-05-12）— Phase 1 で `src/schemas/source.ts` と `src/core/filter.ts` に実装済み。本 ADR の評価順序・matchMode・matchFields・caseSensitive 仕様と乖離なし。詳細仕様と例は [`docs/design/filter-spec.md`](../design/filter-spec.md)。
 
 ## Context
 

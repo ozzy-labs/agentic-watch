@@ -81,10 +81,21 @@ agentic-watch research <item-id> --agent claude-code
 
 ### `agentic-watch watch run [--source <id>] [--bootstrap]`
 
-すべての source（または `--source` で指定）を fetch、filter を適用、新規 item を `items/` に追加。
+すべての source（または `--source` で指定）を fetch、filter を適用、新規 item を `items/<sourceId>/<item-id>.yaml` に追加。
 
-- `--bootstrap`: 既存記事を全て **検出済み (seen)** として state に取り込み、items は作らない。初回導入時のノイズ抑制用
-- 実行後、`state/<id>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
+| オプション | 説明 |
+|---|---|
+| `--source <id>` | 単一 source のみ fetch する。未指定なら `sources/*.yaml` 全件 |
+| `--bootstrap` | 既存記事を全て **検出済み (seen)** として state に取り込み、items は作らない。初回導入時のノイズ抑制用 |
+
+挙動:
+
+- 各 source の `kind` に応じた feed adapter（Phase 1 では `rss` のみ）を呼び出す
+- adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する
+- fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
+- 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
+- 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
+- Phase 1 では `kind: rss` のみ対応。他 kind の source は warning を出してスキップする
 
 ### `agentic-watch research <item-id> --agent <agent-id> [--template <id>]`
 

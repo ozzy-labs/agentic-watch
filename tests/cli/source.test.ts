@@ -70,6 +70,9 @@ describe("cli/source", () => {
       expect(await pathExists(file)).toBe(true);
       const body = await readFile(file, "utf8");
       const parsed = parseYaml(body);
+      // Schema now applies ADR-0006 defaults (matchMode / matchFields /
+      // caseSensitive) when the user does not provide them; the YAML on disk
+      // therefore includes the normalized full filter block.
       expect(parsed).toEqual({
         id: "anthropic-news",
         kind: "rss",
@@ -79,6 +82,9 @@ describe("cli/source", () => {
         filters: {
           keywords: ["Claude", "agents"],
           excludeKeywords: ["deprecated"],
+          matchMode: "word",
+          matchFields: ["title", "summary"],
+          caseSensitive: false,
         },
       });
       expect(captured.log.some((m) => m.includes("created sources/anthropic-news.yaml"))).toBe(
