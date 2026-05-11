@@ -20,4 +20,4 @@ export function getFeedAdapter(kind: Source["kind"]): FeedAdapter {
   return adapter;
 }
 
-export type { FeedAdapter } from "./types.js";
+export type { FeedAdapter, FeedAdapterOptions, FeedFetchResult, FetchLike } from "./types.js";
