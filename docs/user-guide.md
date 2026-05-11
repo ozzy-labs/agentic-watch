@@ -120,6 +120,23 @@ agentic-watch research <item-id> --agent claude-code
 
 Phase 1 では agent は `claude-code` のみ対応。Phase 2 で 4 agent 対応。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
 
+### `agentic-watch dismiss <item-id>`
+
+検出 (`detected`) 状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。
+
+| 引数 | 説明 |
+|---|---|
+| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド |
+
+挙動:
+
+- 対象 item を `items/` 配下から探索し、`status` を `detected → dismissed` に更新する
+- `status` が `detected` 以外（`researched` / `reviewed` / `dismissed`）の item に対してはエラーで終了する（dismiss は detected からのみ有効。ADR-0008）
+- item が見つからない場合は exit code `1` で user-friendly なエラーを返す
+- agent を起動しないため、tokens は消費しない
+
+復元 (`undismiss`) や 1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
+
 ### `agentic-watch review <research-id> --agent <agent-id>`
 
 既存 research に対し、指定 agent でレビューを生成。**更新先は 2 箇所**:
