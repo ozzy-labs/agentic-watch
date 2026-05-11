@@ -97,19 +97,28 @@ agentic-watch research <item-id> --agent claude-code
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
 - Phase 1 では `kind: rss` のみ対応。他 kind の source は warning を出してスキップする
 
-### `agentic-watch research <item-id> --agent <agent-id> [--template <id>]`
+### `agentic-watch research <item-id> [--agent <agent-id>] [--template <id>]`
 
 指定 item に対して、指定 agent で調査レポートを生成。
 
 | 引数 | 説明 |
 |---|---|
-| `<item-id>` | `items/<id>.yaml` の id |
-| `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot` |
-| `--template` | テンプレ id（既定: `default`） |
+| `<item-id>` | `items/<sourceId>/<item-id>.yaml` の id |
+| `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
+| `--template` | テンプレ id（既定: `default`、`templates/<id>.md` を参照） |
 
-出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。
+挙動:
 
-Phase 1 では agent は `claude-code` 固定。Phase 2 で 4 agent 対応。
+- `items/<sourceId>/<item-id>.yaml` を読み込み、`agent` adapter に渡す
+- adapter は `<agent> -p "<prompt>"` を子プロセスで起動し、`.agents/skills/research/SKILL.md` を実行する
+- adapter が `research/<YYYYMMDD>_<slug>_v1.md` を書き出す
+- CLI 側で frontmatter を `ResearchFrontmatter` schema で検証する。違反時は exit code 1
+- 検証が通れば `items/<sourceId>/<item-id>.yaml` の `status` を `researched` に遷移
+- 既存ファイルが既にある場合は上書きせずエラー終了する（再実行は `agentic-watch update` 経由）
+
+出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。
+
+Phase 1 では agent は `claude-code` のみ対応。Phase 2 で 4 agent 対応。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
 
 ### `agentic-watch review <research-id> --agent <agent-id>`
 

@@ -5,6 +5,10 @@ import { copilotAdapter } from "./copilot.js";
 import { geminiCliAdapter } from "./gemini-cli.js";
 import type { AgentAdapter } from "./types.js";
 
+/**
+ * Internal registry. Mutable to allow tests (and future runtime extension
+ * points) to swap adapters without rebuilding the module.
+ */
 const adapters = new Map<AgentId, AgentAdapter>([
   [claudeCodeAdapter.id, claudeCodeAdapter],
   [codexCliAdapter.id, codexCliAdapter],
@@ -18,6 +22,18 @@ export function getAgentAdapter(id: AgentId): AgentAdapter {
     throw new Error(`No agent adapter registered for id: ${id}`);
   }
   return adapter;
+}
+
+/**
+ * Replace the adapter for an agent id. Tests use this to inject a mock
+ * adapter so end-to-end CLI flow can be exercised without spawning the real
+ * `claude` CLI. Returns the previous adapter so the test can restore it in
+ * afterEach.
+ */
+export function registerAgentAdapter(adapter: AgentAdapter): AgentAdapter | undefined {
+  const previous = adapters.get(adapter.id);
+  adapters.set(adapter.id, adapter);
+  return previous;
 }
 
 export type { AgentAdapter, ResearchRequest } from "./types.js";
