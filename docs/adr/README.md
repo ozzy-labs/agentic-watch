@@ -1,0 +1,35 @@
+# Architecture Decision Records (agentic-watch)
+
+agentic-watch プロジェクト**内部の**設計判断を記録する。OzzyLabs 横断の方針は [handbook/adr/](https://github.com/ozzy-labs/handbook/tree/main/adr) を参照（2 階層 ADR 構成）。
+
+## ファイル命名
+
+- `NNNN-<slug>.md` — ゼロ詰め 4 桁連番 + kebab-case slug
+- 例: `0001-agent-adapter-interface.md`
+
+## フォーマット
+
+各 ADR は以下のセクションを持つ:
+
+1. **Status** — `Proposed` / `Accepted` / `Superseded by #N` / `Deprecated`
+2. **Context** — 背景・制約・問題
+3. **Decision** — 採用する設計
+4. **Consequences** — 採用結果のメリット・デメリット
+5. **Alternatives** — 検討した代替案と却下理由（任意）
+
+## 一覧
+
+| # | Title | Status |
+|---|---|---|
+| [0001](./0001-agent-adapter-interface.md) | Agent Adapter Interface | Accepted |
+| [0002](./0002-source-adapter-plugin-pattern.md) | Source Adapter Plug-in Pattern | Accepted |
+| [0003](./0003-output-format-and-versioning.md) | Output Format and Versioning | Accepted |
+| [0004](./0004-schedule-strategy.md) | Schedule Strategy | Accepted |
+| [0005](./0005-user-data-separation.md) | User Data Separation | Accepted |
+
+## 新規 ADR の追加
+
+1. `0000-template.md` を雛形にコピー（無ければ既存 ADR から）
+2. 番号は **次の連番**を採る（status が `Superseded` でも欠番にしない）
+3. 本 README の一覧テーブルに追加
+4. 既存 ADR を superseded する場合、旧 ADR の Status を更新し、新 ADR から参照
