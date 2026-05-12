@@ -111,7 +111,7 @@ agentic-watch source add anthropic-sdk \
 | `id` | `<title-slug>-<8 hex of sha256(<tag_name>#<release.id>)>`（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)） |
 | `raw` | API レスポンス全体 |
 
-`tag_name` と GitHub 側 `release.id` を組み合わせて stable id を作るため、再タグ付け（`tag_name` 不変・`release.id` 変化）と削除→再作成（`tag_name` 不変・`release.id` 変化）のどちらでも別 item として検出される。
+`tag_name` と GitHub 側 `release.id` を組み合わせて stable id を作るため、再タグ付け（`tag_name` 変化・`release.id` 不変）と削除→再作成（`tag_name` 不変・`release.id` 変化）のどちらでも別 item として検出される。
 
 ##### `GITHUB_TOKEN` で rate limit を上げる
 
