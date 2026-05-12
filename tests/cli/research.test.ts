@@ -324,12 +324,23 @@ describe("cli/research", () => {
     expect(captured.error.some((m) => m.includes("not found"))).toBe(true);
   });
 
-  it("rejects unsupported agents in Phase 2", async () => {
+  it("accepts gemini-cli as a valid agent (adapter is now implemented)", async () => {
+    // Phase 2 sub-issue D wires the gemini-cli adapter. The CLI gating used to
+    // reject this with a "not supported" message; now the request reaches the
+    // adapter, which (with the mock writer) succeeds end-to-end.
     const workdir = await setupWorkspace();
-    const { io, captured } = captureIo();
-    const code = await runResearch([SAMPLE_ITEM.id, "--agent", "codex-cli"], { cwd: workdir, io });
-    expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+    const { adapter, calls } = buildMockAdapter(async (req) => {
+      await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+    });
+    // The mock is registered under "claude-code"; rewrite the id so the same
+    // factory serves gemini-cli for this test.
+    const geminiAdapter: AgentAdapter = { ...adapter, id: "gemini-cli" };
+    previousAdapter = registerAgentAdapter(geminiAdapter);
+
+    const { io } = captureIo();
+    const code = await runResearch([SAMPLE_ITEM.id, "--agent", "gemini-cli"], { cwd: workdir, io });
+    expect(code).toBe(0);
+    expect(calls[0].agent).toBe("gemini-cli");
   });
 
   it("rejects an invalid --agent value", async () => {
@@ -362,28 +373,34 @@ describe("cli/research", () => {
   });
 
   it("uses radar.config.yaml defaultResearchAgent when --agent is omitted", async () => {
-    // The config sets a non-default agent. Phase 1 only registers a
-    // claude-code adapter, so the CLI should refuse with the Phase 1
-    // not-supported message — proving that the config value WAS picked up.
+    // The config sets a non-default agent (gemini-cli). Register a mock
+    // adapter for gemini-cli and verify it (not claude-code) was invoked,
+    // proving the config value was picked up vs. falling back to the hardcoded
+    // claude-code default.
     const workdir = await setupWorkspace();
     await writeFile(
       join(workdir, "radar.config.yaml"),
-      "defaultResearchAgent: codex-cli\n",
+      "defaultResearchAgent: gemini-cli\n",
       "utf8",
     );
-    const { io, captured } = captureIo();
+    const { adapter, calls } = buildMockAdapter(async (req) => {
+      await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+    });
+    const geminiAdapter: AgentAdapter = { ...adapter, id: "gemini-cli" };
+    previousAdapter = registerAgentAdapter(geminiAdapter);
+
+    const { io } = captureIo();
     const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
-    expect(code).toBe(2);
-    expect(
-      captured.error.some((m) => m.includes("codex-cli") && m.includes("not supported in Phase 2")),
-    ).toBe(true);
+    expect(code).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].agent).toBe("gemini-cli");
   });
 
   it("prefers explicit --agent over radar.config.yaml default", async () => {
     const workdir = await setupWorkspace();
     await writeFile(
       join(workdir, "radar.config.yaml"),
-      "defaultResearchAgent: codex-cli\n",
+      "defaultResearchAgent: gemini-cli\n",
       "utf8",
     );
     const { adapter, calls } = buildMockAdapter(async (req) => {

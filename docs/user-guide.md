@@ -19,12 +19,16 @@ npx @ozzylabs/agentic-watch <command>
 
 エージェント CLI は **ユーザー側で別途インストール・認証**しておく必要がある。`agentic-watch` 自体はこれらの CLI を子プロセスとして起動する。
 
-| agent id | CLI コマンド | 起動形式 | 認証 | 実装状況 |
+### 対応 agent CLI 一覧
+
+| `--agent` 値 | 実装状況 | 必要な CLI | 認証方法 | 起動コマンド（非対話） |
 |---|---|---|---|---|
-| `claude-code` | `claude` | `claude -p "<prompt>" --output-format text --permission-mode bypassPermissions` | `claude login` | research / review 実装済み (Phase 1 + Phase 2 A) |
-| `gemini-cli` | `gemini` | `gemini -p "<prompt>" -y --output-format text` (`-y` で承認スキップ) | `gemini` を一度対話起動して OAuth、または `GEMINI_API_KEY` 環境変数 | research / review 実装済み (Phase 2 D) |
-| `codex-cli` | `codex` | (未実装) | — | adapter stub のみ (Phase 2 C で実装予定) |
-| `copilot` | `copilot` | (未実装) | — | adapter stub のみ (Phase 2 E で実装予定) |
+| `claude-code` | 実装済み | [Claude Code](https://docs.claude.com/en/docs/claude-code) | `claude` 内で対話ログイン | `claude -p "<prompt>" --output-format text --permission-mode bypassPermissions` |
+| `codex-cli` | 実装済み | [Codex CLI](https://github.com/openai/codex) | `codex login` | `codex exec "<prompt>" --cd <workspace> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox` |
+| `gemini-cli` | 実装済み | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` 内で対話ログイン（OAuth）または `GEMINI_API_KEY` 環境変数 | `gemini -p "<prompt>" -y --output-format text` |
+| `copilot` | 実装済み | [GitHub Copilot CLI](https://docs.github.com/copilot/github-copilot-in-the-cli) | `copilot auth login` | `copilot -p "<prompt>" --allow-all-paths --allow-all-tools --no-color` |
+
+Phase 2 で 4 agent 全てが本実装済み。
 
 ## クイックスタート
 
@@ -125,7 +129,11 @@ agentic-watch research <item-id> --agent claude-code
 
 出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。
 
-Phase 2 時点で `claude-code` と `gemini-cli` が利用可能。`codex-cli` / `copilot` は adapter stub のみで、指定すると friendly error で exit 2 する。各 agent CLI は **ユーザー側で別途インストール・認証** が必要 (`claude` / `gemini`)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+Phase 2 で 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが利用可能になった (#19, #44, #45, #32 本 PR, #46)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+
+Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
+
+Gemini CLI は非対話モード `gemini -p "<prompt>" -y` で起動する (`-y` は YOLO mode で承認をスキップ。Claude Code の `--permission-mode bypassPermissions` 相当)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
 
 ### `agentic-watch dismiss <item-id>`
 
@@ -178,15 +186,15 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 
 同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す（Phase 4）。
 
-Phase 2 時点で review に使える agent は `claude-code` と `gemini-cli`。`codex-cli` / `copilot` は adapter stub のみ（呼び出し時 friendly error で exit 2）。各 agent の本実装は別 sub-issue で追加される。
+Phase 2 で 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが review に対応する。
 
 #### クロスエージェント運用（推奨）
 
 research を書いた agent と**別の agent** で review を実行することを推奨する:
 
 ```bash
-# 例: codex で書いて claude にレビューさせる（Phase 2 完了後）
-agentic-watch research <item-id> --agent codex-cli
+# 例: copilot で書いて claude にレビューさせる
+agentic-watch research <item-id> --agent copilot
 agentic-watch review <research-id> --agent claude-code
 ```
 

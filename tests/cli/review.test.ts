@@ -272,39 +272,45 @@ describe("cli/review", () => {
     expect(captured.error.some((m) => m.includes("no items/<id>.yaml found"))).toBe(true);
   });
 
-  it("rejects unsupported agents in Phase 2", async () => {
+  it("accepts gemini-cli as a valid review agent (adapter is now implemented)", async () => {
+    // Phase 2 sub-issue D wires the gemini-cli adapter for review. The CLI
+    // used to reject this with "not supported yet"; now the request reaches
+    // the adapter, which (with the mock writer) succeeds end-to-end.
     const { workdir } = await setupWorkspace();
-    const { io, captured } = captureIo();
-    const code = await runReview([RESEARCH_ID, "--agent", "codex-cli"], { cwd: workdir, io });
-    expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+    const { adapter, calls } = buildMockAdapter({
+      id: "gemini-cli",
+      writer: wellBehavedWriter(),
+    });
+    previousAdapter = registerAgentAdapter(adapter);
+    const { io } = captureIo();
+    const code = await runReview([RESEARCH_ID, "--agent", "gemini-cli"], { cwd: workdir, io });
+    expect(code).toBe(0);
+    expect(calls[0].agent).toBe("gemini-cli");
   });
 
   it("falls back to radar.config.yaml `defaultReviewAgent` when --agent is omitted", async () => {
     const { workdir } = await setupWorkspace();
-    // Configure a default review agent that the CLI will refuse in Phase 2.
-    // We use codex-cli so the resolver picks it up from the config and the
-    // CLI then exits 2 with the unsupported-agent message — proving the
-    // config value took effect (vs. falling back to the hardcoded default).
-    await writeFile(
-      join(workdir, "radar.config.yaml"),
-      "defaultReviewAgent: codex-cli\n",
-      "utf8",
-    );
-    const { io, captured } = captureIo();
+    // Set a non-default agent (gemini-cli) in the config and register a mock
+    // adapter for it. The CLI should invoke that adapter, proving the config
+    // value took effect (vs. falling back to the hardcoded claude-code
+    // default).
+    await writeFile(join(workdir, "radar.config.yaml"), "defaultReviewAgent: gemini-cli\n", "utf8");
+    const { adapter, calls } = buildMockAdapter({
+      id: "gemini-cli",
+      writer: wellBehavedWriter(),
+    });
+    previousAdapter = registerAgentAdapter(adapter);
+    const { io } = captureIo();
     const code = await runReview([RESEARCH_ID], { cwd: workdir, io });
-    expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+    expect(code).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].agent).toBe("gemini-cli");
   });
 
   it("explicit --agent overrides radar.config.yaml `defaultReviewAgent`", async () => {
     const { workdir } = await setupWorkspace();
-    // Config says codex-cli; CLI passes claude-code explicitly. Explicit wins.
-    await writeFile(
-      join(workdir, "radar.config.yaml"),
-      "defaultReviewAgent: codex-cli\n",
-      "utf8",
-    );
+    // Config says gemini-cli; CLI passes claude-code explicitly. Explicit wins.
+    await writeFile(join(workdir, "radar.config.yaml"), "defaultReviewAgent: gemini-cli\n", "utf8");
     const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
     previousAdapter = registerAgentAdapter(adapter);
 
