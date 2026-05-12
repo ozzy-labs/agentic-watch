@@ -217,11 +217,14 @@ export async function runResearch(
     }
     throw e;
   }
-  if (agent !== "claude-code") {
-    // Phase 1 ships claude-code only. Other adapter stubs throw their own
-    // "not implemented" error; this earlier rejection gives a friendlier
-    // message and avoids leaking adapter-level wording.
-    error(`research: agent '${agent}' is not supported in Phase 1 (claude-code only)`);
+  if (agent !== "claude-code" && agent !== "gemini-cli") {
+    // Phase 1 shipped claude-code; Phase 2 adds gemini-cli (#32). codex-cli
+    // and copilot adapter stubs still throw their own "not implemented"
+    // error; this earlier rejection gives a friendlier message and avoids
+    // leaking adapter-level wording.
+    error(
+      `research: agent '${agent}' is not supported in Phase 2 (claude-code | gemini-cli only)`,
+    );
     return 2;
   }
 

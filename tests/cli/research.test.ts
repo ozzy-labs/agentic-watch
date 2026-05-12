@@ -324,12 +324,12 @@ describe("cli/research", () => {
     expect(captured.error.some((m) => m.includes("not found"))).toBe(true);
   });
 
-  it("rejects unsupported agents in Phase 1", async () => {
+  it("rejects unsupported agents in Phase 2", async () => {
     const workdir = await setupWorkspace();
     const { io, captured } = captureIo();
     const code = await runResearch([SAMPLE_ITEM.id, "--agent", "codex-cli"], { cwd: workdir, io });
     expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 1"))).toBe(true);
+    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
   });
 
   it("rejects an invalid --agent value", async () => {
@@ -375,7 +375,7 @@ describe("cli/research", () => {
     const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
     expect(code).toBe(2);
     expect(
-      captured.error.some((m) => m.includes("codex-cli") && m.includes("not supported in Phase 1")),
+      captured.error.some((m) => m.includes("codex-cli") && m.includes("not supported in Phase 2")),
     ).toBe(true);
   });
 
