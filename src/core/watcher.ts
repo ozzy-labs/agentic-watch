@@ -142,13 +142,6 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
   const result: WatchRunResult = { detected: {}, states: {}, errors: [] };
 
   for (const source of filtered) {
-    if (source.kind !== "rss") {
-      // Phase 1 ships RSS only. Non-RSS adapters throw their own
-      // "not implemented" error; we surface that uniformly here so users
-      // see the same actionable message for every unsupported kind.
-      warn(`watch run: '${source.id}' kind '${source.kind}' is not supported in Phase 1; skipping`);
-      continue;
-    }
     const previousState = await loadSourceState(paths.stateDir, source.id);
     let adapter: FeedAdapter;
     try {

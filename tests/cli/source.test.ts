@@ -176,6 +176,39 @@ describe("cli/source", () => {
       expect(await pathExists(join(workdir, "sources", "bad.yaml"))).toBe(false);
     });
 
+    it("accepts a bare package name for --kind npm-registry", async () => {
+      // npm-registry relaxes the URL validation (see ADR-0002 / #38) so the
+      // user-guide-documented bare-package form succeeds. The adapter will
+      // canonicalize `@anthropic-ai/sdk` into the registry URL at fetch time.
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["sdk", "--kind", "npm-registry", "--url", "@anthropic-ai/sdk"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "sdk.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        id: "sdk",
+        kind: "npm-registry",
+        url: "@anthropic-ai/sdk",
+      });
+      expect(captured.log.some((m) => m.includes("created sources/sdk.yaml"))).toBe(true);
+    });
+
+    it("accepts the public npmjs.com URL form for --kind npm-registry", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        ["react", "--kind", "npm-registry", "--url", "https://www.npmjs.com/package/react"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "react.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        kind: "npm-registry",
+        url: "https://www.npmjs.com/package/react",
+      });
+    });
+
     it("errors when --url is missing", async () => {
       const { io, captured } = captureIo();
       const code = await addSource(["bad", "--kind", "rss"], { cwd: workdir, io });

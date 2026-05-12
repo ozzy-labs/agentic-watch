@@ -59,11 +59,29 @@ export const SourceSelectorsSchema = z.object({
 });
 export type SourceSelectors = z.infer<typeof SourceSelectorsSchema>;
 
+/**
+ * Validate `Source.url` per kind.
+ *
+ * Every kind except `npm-registry` requires a fully-qualified `http(s)` URL.
+ * The npm adapter accepts both the bare-package form (`@scope/pkg` or `pkg`)
+ * and the `https://www.npmjs.com/package/<pkg>` URL — see ADR-0002 — so we
+ * only enforce non-empty for that kind and let the adapter
+ * (`extractPackageName()`) canonicalize.
+ */
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export const SourceSchema = z
   .object({
     id: z.string().min(1),
     kind: SourceKindSchema,
-    url: z.string().url(),
+    url: z.string().min(1),
     name: z.string().optional(),
     tags: z.array(z.string()).default([]),
     // Default `filters` to a fully-populated object so a source missing the
@@ -82,8 +100,20 @@ export const SourceSchema = z
     // serializes cleanly for both cases.
     selectors: SourceSelectorsSchema.optional(),
   })
-  .refine((s) => s.kind !== "html" || s.selectors !== undefined, {
-    message: "selectors is required when kind is 'html'",
-    path: ["selectors"],
+  .superRefine((value, ctx) => {
+    if (value.kind !== "npm-registry" && !isValidHttpUrl(value.url)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "Invalid url",
+      });
+    }
+    if (value.kind === "html" && value.selectors === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["selectors"],
+        message: "selectors is required when kind is 'html'",
+      });
+    }
   });
 export type Source = z.infer<typeof SourceSchema>;
