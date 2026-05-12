@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGeminiCliAdapter, type GeminiRunner } from "../../src/agents/gemini-cli.js";
 import type { ResearchRequest, ReviewRequest } from "../../src/agents/types.js";
 import type { Item, ResearchFrontmatter } from "../../src/schemas/index.js";
 import { ItemSchema } from "../../src/schemas/index.js";
+
+// Spawn-args tests rely on a vi.mock of node:child_process. We hoist the mock
+// so it is applied before `src/agents/gemini-cli.ts` imports `spawn`.
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: spawnMock };
+});
 
 const SAMPLE_ITEM: Item = ItemSchema.parse({
   id: "anthropic-news-2026-05-10-claude-code",
@@ -229,6 +238,74 @@ describe("agents/gemini-cli", () => {
     it("has id 'gemini-cli'", () => {
       const adapter = createGeminiCliAdapter({ run: buildMockRunner().runner });
       expect(adapter.id).toBe("gemini-cli");
+    });
+  });
+
+  // The real `runGeminiCli` (used when the adapter is constructed without a
+  // runner override) is responsible for shaping the spawn argv handed to the
+  // `gemini` CLI. The folder-trust bypass lives at this boundary, so we
+  // exercise it by intercepting `node:child_process.spawn` and asserting
+  // the argv we hand to it. See JSDoc on `runGeminiCli` for the rationale
+  // behind `--skip-trust` — without it, Gemini CLI silently downgrades `-y`
+  // to default approval mode in untrusted folders, breaking headless usage.
+  describe("spawn args (folder trust bypass)", () => {
+    afterEach(() => {
+      spawnMock.mockReset();
+    });
+
+    function buildFakeChild(): EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: { write: () => void; end: () => void };
+    } {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        stdin: { write: () => void; end: () => void };
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = { write: () => {}, end: () => {} };
+      return child;
+    }
+
+    it("passes --skip-trust to the gemini CLI on research()", async () => {
+      const child = buildFakeChild();
+      spawnMock.mockReturnValue(child);
+      // Default adapter (no `run` override) goes through runGeminiCli ->
+      // node:child_process.spawn, which we've mocked above.
+      const adapter = createGeminiCliAdapter();
+      const promise = adapter.research(buildResearchRequest());
+      // The real implementation listens for `close` to resolve; fire it
+      // immediately with a clean exit code.
+      child.emit("close", 0);
+      await promise;
+
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      const [bin, argv] = spawnMock.mock.calls[0] as [string, string[], unknown];
+      expect(bin).toBe("gemini");
+      // The folder-trust bypass restores parity with the other 3 adapters
+      // (claude-code / codex-cli / copilot), all of which launch in
+      // equivalent full-permission modes. Without `--skip-trust`, recent
+      // Gemini CLI versions override `-y` back to default approval in
+      // untrusted folders.
+      expect(argv).toContain("--skip-trust");
+      // `-y` (YOLO) is retained alongside `--skip-trust`.
+      expect(argv).toContain("-y");
+    });
+
+    it("passes --skip-trust to the gemini CLI on review()", async () => {
+      const child = buildFakeChild();
+      spawnMock.mockReturnValue(child);
+      const adapter = createGeminiCliAdapter();
+      const promise = adapter.review(buildReviewRequest());
+      child.emit("close", 0);
+      await promise;
+
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      const [, argv] = spawnMock.mock.calls[0] as [string, string[], unknown];
+      expect(argv).toContain("--skip-trust");
+      expect(argv).toContain("-y");
     });
   });
 });
