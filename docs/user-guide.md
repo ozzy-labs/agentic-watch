@@ -118,7 +118,9 @@ agentic-watch research <item-id> --agent claude-code
 
 出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。
 
-Phase 1 では agent は `claude-code` のみ対応。Phase 2 で 4 agent 対応。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+Phase 1 では agent は `claude-code` のみ対応。Phase 2 で 4 agent 対応（実装状況: `claude-code` ✅ / `codex-cli` ✅ / `gemini-cli` ⏳ / `copilot` ⏳）。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+
+Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
 ### `agentic-watch dismiss <item-id>`
 
@@ -171,7 +173,7 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 
 同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す（Phase 4）。
 
-Phase 2 では agent は `claude-code` のみ対応。`codex-cli` / `gemini-cli` / `copilot` は adapter stub のみ（呼び出し時 friendly error で exit 2）。各 agent の本実装は別 sub-issue で追加される。
+Phase 2 の review コマンドは `claude-code` と `codex-cli` を本実装済み。`gemini-cli` / `copilot` は adapter stub のみ（呼び出し時 friendly error で exit 2）。各 agent の本実装は別 sub-issue で追加される。
 
 #### クロスエージェント運用（推奨）
 
