@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Copies src/skills/**/*.md to dist/skills/ preserving directory structure.
-// tsc does not copy non-TS assets, so we run this after `tsc` build.
+// Copies bundled assets that tsc does not handle:
+//   - src/skills/**/*.md  -> dist/skills/
+//   - src/templates/**    -> dist/templates/  (schedule scaffolds for init)
 
 import { cp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -8,27 +9,30 @@ import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
-const srcSkills = resolve(repoRoot, "src/skills");
-const distSkills = resolve(repoRoot, "dist/skills");
 
-async function main() {
-  await rm(distSkills, { recursive: true, force: true });
-  await mkdir(distSkills, { recursive: true });
-  // Recursive copy; filter to only include .md files.
-  await cp(srcSkills, distSkills, {
+async function copyMdTree(srcRel, distRel, label) {
+  const src = resolve(repoRoot, srcRel);
+  const dist = resolve(repoRoot, distRel);
+  await rm(dist, { recursive: true, force: true });
+  await mkdir(dist, { recursive: true });
+  await cp(src, dist, {
     recursive: true,
-    filter: (src) => {
-      // Always allow directories so cp can recurse into them.
-      // Files are filtered to .md only.
+    // Allow directories so cp can recurse; otherwise restrict to .md / .yaml.
+    filter: (p) => {
       try {
-        // Use the path-based heuristic: directories have no extension marker.
-        return !/\.[^./\\]+$/.test(src) || src.endsWith(".md");
+        if (!/\.[^./\\]+$/.test(p)) return true;
+        return p.endsWith(".md") || p.endsWith(".yaml");
       } catch {
         return false;
       }
     },
   });
-  console.log(`copy-skills: copied src/skills -> dist/skills`);
+  console.log(`copy-skills: copied ${srcRel} -> ${distRel} (${label})`);
+}
+
+async function main() {
+  await copyMdTree("src/skills", "dist/skills", "skills");
+  await copyMdTree("src/templates", "dist/templates", "init templates");
 }
 
 main().catch((err) => {

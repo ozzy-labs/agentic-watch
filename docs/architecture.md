@@ -105,6 +105,29 @@ agentic-watch review <research> --agent claude-code
 
 agent 選択ロジックは CLI が強制しない（ユーザー判断）。`init` で生成される `radar.config.yaml`（仮）で default agent を指定可能（Phase 1）。
 
+## Schedule（定期実行）
+
+`agentic-watch` 本体は **scheduler を内蔵しない**（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグで、ユーザーが選んだクラウド scheduler 向けの **接続点（雛形）** だけを workspace に書き出す。
+
+| フラグ | 生成先 | 想定 scheduler |
+|---|---|---|
+| `agentic-watch init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `agentic-watch init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions |
+
+両 scheduler は実行ごとに **fresh clone** を行うため、`sources/` / `items/` / `state/` は **git にコミット済み**である必要がある。生成された雛形は `items/` / `state/` の commit + push 手順を含んでいる（fresh clone でも前回の `lastSeenIds` を引き継げるようにするため）。
+
+雛形は **`watch run` のみを自動化**する。`research` / `review` / `update` は人が triage する設計（ADR-0004）。
+
+### 認証ポリシー
+
+CI 自動化では **`ANTHROPIC_API_KEY` 等の API キー**を使う。OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）は Anthropic の利用ポリシー上 "ordinary individual use" の範囲外のため雛形では使わない（ADR-0004）。
+
+GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため、`watch.yaml` 雛形は `secrets.GITHUB_TOKEN` を `GITHUB_TOKEN` env として forward する。
+
+### 既存ファイル保護
+
+雛形生成は既存ファイルを上書きしない（warning + skip）。再生成したい場合は `--force` を指定する（bundled skills と同じ挙動）。
+
 ## 配布形態
 
 - npm パッケージ `@ozzylabs/agentic-watch`、`bin: agentic-watch`
@@ -120,8 +143,8 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 | Phase 1 (MVP) | `init` / `source add\|list\|remove` / `watch run` (RSS のみ) / `research` (Claude Code 単独で固定) |
 | Phase 2 | 4 agent adapters + `review` |
 | Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 |
-| Phase 4 | `update` コマンド（既存 research の差分更新） |
-| Phase 5 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init` で吐く |
+| Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く |
+| Phase 5 | `update` コマンド（既存 research の差分更新） |
 | Phase 6 | npm publish 初版 + Trusted Publisher 登録 |
 | Phase 7 | VS Code extension |
 

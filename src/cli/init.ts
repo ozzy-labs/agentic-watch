@@ -23,6 +23,16 @@ async function resolveSkillsRoot(): Promise<string> {
   return source;
 }
 
+/** Same resolution strategy as `resolveSkillsRoot`, but for `src|dist/templates`. */
+async function resolveTemplatesRoot(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const compiled = resolve(here, "../templates");
+  if (await pathExists(compiled)) {
+    return compiled;
+  }
+  return resolve(here, "../templates");
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await access(p);
@@ -37,6 +47,17 @@ interface InitOptions {
   force: boolean;
   /** Override the source location of bundled skills (used by tests). */
   skillsRoot?: string;
+  /** Override the source location of bundled init templates (used by tests). */
+  templatesRoot?: string;
+  /**
+   * Emit the Claude Routines schedule template
+   * (`claude/routines/watch-daily.md`).
+   */
+  withRoutines?: boolean;
+  /**
+   * Emit the GitHub Actions schedule template (`.github/workflows/watch.yaml`).
+   */
+  withActions?: boolean;
   /** Sink for warnings; defaults to console.warn. */
   warn?: (message: string) => void;
   /** Sink for info messages; defaults to console.log. */
@@ -51,6 +72,26 @@ interface InitResult {
 
 const WORKSPACE_DIRS = ["sources", "state", "items", "research", "templates"] as const;
 const BUNDLED_SKILLS = ["research", "review", "update"] as const;
+
+/**
+ * Schedule scaffolds that `init` may emit on opt-in flags.
+ *
+ * - `src`: bundled template path under `<templatesRoot>/`
+ * - `dest`: where the file lands in the user's workspace
+ *
+ * See ADR-0004 for the policy: `agentic-watch` does not run schedules
+ * itself; these scaffolds wire it into Claude Routines / GitHub Actions.
+ */
+const SCHEDULE_SCAFFOLDS = {
+  routines: {
+    src: "routines/watch-daily.md",
+    dest: ["claude", "routines", "watch-daily.md"] as const,
+  },
+  actions: {
+    src: "workflows/watch.yaml",
+    dest: [".github", "workflows", "watch.yaml"] as const,
+  },
+} as const;
 
 /**
  * Initialize the current directory as an agentic-watch workspace.
@@ -109,6 +150,30 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     copiedFiles.push(`.agents/skills/${skill}/SKILL.md`);
   }
 
+  if (options.withRoutines) {
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: SCHEDULE_SCAFFOLDS.routines,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
+  }
+
+  if (options.withActions) {
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: SCHEDULE_SCAFFOLDS.actions,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
+  }
+
   info(`init: workspace ready at ${cwd}`);
   info(`init: directories created: ${createdDirs.join(", ")}`);
   if (copiedFiles.length > 0) {
@@ -121,44 +186,96 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   return { createdDirs, copiedFiles, skippedFiles };
 }
 
-function parseArgs(args: string[]): { force: boolean; withRoutines: boolean; help: boolean } {
+/**
+ * Copy one bundled schedule scaffold into `cwd`. Existing files are protected
+ * unless `force` is true (mirrors the bundled-skills path).
+ */
+async function emitScaffold(args: {
+  cwd: string;
+  force: boolean;
+  templatesRoot: string | undefined;
+  scaffold: { src: string; dest: readonly string[] };
+  copiedFiles: string[];
+  skippedFiles: string[];
+  warn: (message: string) => void;
+}): Promise<void> {
+  const { cwd, force, scaffold, copiedFiles, skippedFiles, warn } = args;
+  const templatesRoot = args.templatesRoot ?? (await resolveTemplatesRoot());
+  const src = join(templatesRoot, scaffold.src);
+  const dest = join(cwd, ...scaffold.dest);
+  const relDest = scaffold.dest.join("/");
+
+  if (!(await pathExists(src))) {
+    warn(`init: bundled template not found, skipped: ${src}`);
+    skippedFiles.push(relDest);
+    return;
+  }
+
+  await mkdir(dirname(dest), { recursive: true });
+
+  if ((await pathExists(dest)) && !force) {
+    warn(`init: skipped existing file (use --force to overwrite): ${relDest}`);
+    skippedFiles.push(relDest);
+    return;
+  }
+
+  await copyFile(src, dest);
+  copiedFiles.push(relDest);
+}
+
+interface ParsedArgs {
+  force: boolean;
+  withRoutines: boolean;
+  withActions: boolean;
+  help: boolean;
+}
+
+function parseArgs(args: string[]): ParsedArgs {
   let force = false;
   let withRoutines = false;
+  let withActions = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
       force = true;
     } else if (arg === "--with-routines") {
       withRoutines = true;
+    } else if (arg === "--with-actions") {
+      withActions = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, help };
+  return { force, withRoutines, withActions, help };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, help } = parseArgs(args);
+    const { force, withRoutines, withActions, help } = parseArgs(args);
     if (help) {
-      console.log("Usage: agentic-watch init [--force] [--with-routines]");
+      console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills");
       console.log("(research / review / update) into .agents/skills/.");
       console.log("");
       console.log("Options:");
-      console.log("  --force            Overwrite existing skill files");
-      console.log("  --with-routines    (Phase 5) Generate claude/routines/watch-daily.md");
+      console.log("  --force            Overwrite existing files");
+      console.log(
+        "  --with-routines    Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
+      );
+      console.log(
+        "  --with-actions     Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
+      );
       return 0;
     }
-    if (withRoutines) {
-      console.warn(
-        "init: --with-routines is scheduled for Phase 5 and is not implemented yet; continuing without it.",
-      );
-    }
-    await initWorkspace({ cwd: process.cwd(), force });
+    await initWorkspace({
+      cwd: process.cwd(),
+      force,
+      withRoutines,
+      withActions,
+    });
     return 0;
   },
 };
