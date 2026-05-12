@@ -59,7 +59,7 @@ agentic-watch research <item-id> --agent claude-code
 └── .github/workflows/   # 定期実行ワークフロー（任意）
 ```
 
-`--with-routines` を指定すると `claude/routines/watch-daily.md` も生成（**Phase 5 で実装予定**。Phase 1 では `--with-routines` を渡すと warning を表示してスキップする）。
+`--with-routines` / `--with-actions` を指定すると、定期実行 scheduler への接続用雛形が追加で生成される（詳細は本ドキュメントの「[スケジュール実行](#スケジュール実行)」セクション）。
 
 #### Phase 1 時点の挙動
 
@@ -384,10 +384,45 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ## スケジュール実行
 
-[ADR-0004](./adr/0004-schedule-strategy.md) を参照。`init` で生成されるワークフロー雛形は以下:
+`agentic-watch` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。
 
-- `.github/workflows/watch.yaml` — GitHub Actions、API キー認証
-- `claude/routines/watch-daily.md` — Claude Routines 用 routine（`--with-routines` 指定時）
+| フラグ | 生成先 | 用途 |
+|---|---|---|
+| `agentic-watch init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `agentic-watch init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch) |
+
+既存ファイル保護 + `--force` 上書きは bundled skills と同じ挙動。
+
+### 認証ポリシー
+
+- **`ANTHROPIC_API_KEY` を secret として登録する**。OAuth トークン (`CLAUDE_CODE_OAUTH_TOKEN`) は Anthropic 利用ポリシー上の制約により雛形では使わない（ADR-0004）
+- GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため、`watch.yaml` 雛形は `secrets.GITHUB_TOKEN` を `GITHUB_TOKEN` env として forward する
+
+### GitHub Actions 雛形の検証手順
+
+生成された `.github/workflows/watch.yaml` を実 cron で動かして items / state が更新されることを確認する手順:
+
+1. `agentic-watch init --with-actions` で workspace 直下に雛形が出来ていることを確認する
+2. workspace を GitHub に push する（`sources/` `items/` `state/` も含めて commit）
+3. リポジトリ設定で secret `ANTHROPIC_API_KEY` を登録する（[Settings → Secrets and variables → Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)）
+4. **Actions タブから `agentic-watch` workflow を `Run workflow` で手動実行**する（`workflow_dispatch` トリガー）
+5. ジョブが緑になり、`watch run` が新着 item を検出した場合は `items/` / `state/` の更新を含む commit が自動 push されることを確認する
+6. cron スケジュール (`"0 0 * * *"`) を必要に応じて編集する。次回 cron 起動時に同様に動くはず
+
+なお `permissions: contents: write` は新しい commit を push するために必須。Org level で `Workflow permissions` を `Read repository contents permission` に絞っている場合は workflow 単位の設定で override する必要がある。
+
+### Claude Routines 雛形の検証手順
+
+1. `agentic-watch init --with-routines` で `claude/routines/watch-daily.md` が生成される
+2. Claude Routines に routine を登録する（取り込み方法は Claude Routines 側の手順に従う）
+3. Routine 実行画面で API キー (`ANTHROPIC_API_KEY` 等) を secret として渡す
+4. 1 回手動実行（Routines UI から）して `watch run` が成功すること、`items/` / `state/` の commit が push されることを確認する
+
+### スコープ外（CLI 側）
+
+- 雛形 file が実 cron で動くかの自動テストは行わない（実機検証はユーザー側責務、ADR-0004）
+- `research` / `review` / `update` を cron で自動実行する雛形は提供しない（人が triage する設計）
+- desktop scheduled tasks（macOS launchd / Linux systemd timer 等）への対応は将来検討
 
 ## セキュリティ
 

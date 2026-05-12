@@ -28,6 +28,21 @@ CI 自動化では **`ANTHROPIC_API_KEY` 等の API キー**を使う。OAuth �
 
 Claude Routines 用 routine 定義 `claude/routines/watch-daily.md` を生成。Routines はクラウド VM で fresh clone するため、user data はリポにコミット済みである必要がある。生成テンプレートに「sources/ items/ state/ を commit すること」の注記を含める。
 
+### `init --with-actions` の挙動
+
+GitHub Actions workflow 雛形 `.github/workflows/watch.yaml` を生成。
+
+- `schedule.cron: "0 0 * * *"` を初期値とし、ユーザーが必要に応じて編集
+- `workflow_dispatch` も含め、cron を待たずに手動検証できる
+- `permissions: contents: write` + 最終ステップで `items/` / `state/` を commit + push（Routines と同じく fresh clone 前提のため state を git に残す必要がある）
+- `ANTHROPIC_API_KEY` を `secrets` から env として渡す
+- GitHub Releases adapter 用に `secrets.GITHUB_TOKEN` も `GITHUB_TOKEN` env として forward（rate limit を 60 → 5000 req/h に引き上げる、ADR-0002）
+- `concurrency.cancel-in-progress: false` で overlapping cron firing が partial commit を中断しないようにする
+
+### 既存ファイル保護
+
+`--with-routines` / `--with-actions` で生成されるファイルは bundled skills と同じ「既存ファイルは warning + skip、`--force` で上書き」プロトコルに従う。手動編集した routine / workflow が CLI 再実行で消えることはない。
+
 ### 対象外
 
 - `/loop`: セッションスコープ、7 日失効。長期 cron には不適
@@ -63,4 +78,4 @@ Claude Routines 用 routine 定義 `claude/routines/watch-daily.md` を生成。
 ## 関連
 
 - knowledge: [`ai/practice/scheduled-tasks`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/scheduled-tasks.md)
-- Phase 5 で `init` の schedule 雛形生成を実装
+- Phase 4 で `init --with-routines` / `init --with-actions` を実装 (#27 / #39)
