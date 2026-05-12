@@ -142,16 +142,6 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
   const result: WatchRunResult = { detected: {}, states: {}, errors: [] };
 
   for (const source of filtered) {
-    // Adapters self-report when they are not yet implemented by throwing from
-    // `.fetch()`. The watcher used to gate every non-rss kind during Phase 1
-    // to suppress those errors; now that `npm-registry` is wired up, the gate
-    // shrinks to the kinds whose adapters still throw `not implemented yet`
-    // (`html` / `github-releases`). The remaining branches drop as their
-    // dedicated Phase 3 sub-issues land.
-    if (source.kind === "html" || source.kind === "github-releases") {
-      warn(`watch run: '${source.id}' kind '${source.kind}' is not implemented yet; skipping`);
-      continue;
-    }
     const previousState = await loadSourceState(paths.stateDir, source.id);
     let adapter: FeedAdapter;
     try {

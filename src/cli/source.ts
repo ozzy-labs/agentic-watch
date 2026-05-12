@@ -2,7 +2,7 @@ import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Source } from "../schemas/source.js";
-import { SourceKindSchema, SourceSchema } from "../schemas/source.js";
+import { SourceKindSchema, SourceSchema, SourceSelectorsSchema } from "../schemas/source.js";
 import type { Command } from "./index.js";
 
 /**
@@ -68,6 +68,12 @@ interface AddArgs {
   tags?: string[];
   keywords?: string[];
   excludeKeywords?: string[];
+  /**
+   * `--selector-<field> <css>` accumulator. We collect raw key/value pairs
+   * here and let the SourceSelectorsSchema reject unknown fields, so the CLI
+   * stays in sync with the schema without a parallel allowlist.
+   */
+  selectors?: Record<string, string>;
   help?: boolean;
 }
 
@@ -107,6 +113,20 @@ function parseAddArgs(args: string[]): AddArgs {
     }
     if (a === "--exclude-keywords") {
       out.excludeKeywords = splitCsv(args[++i] ?? "");
+      continue;
+    }
+    if (a?.startsWith("--selector-")) {
+      // `--selector-<field> <css>` — e.g. `--selector-item "article.entry"`.
+      // Field validity (item / title / link / summary / publishedAt / body /
+      // tags) is enforced by SourceSelectorsSchema at parse time, so unknown
+      // fields surface as a normal validation error instead of being silently
+      // swallowed here.
+      const field = a.slice("--selector-".length);
+      if (!field) throw new Error(`unknown option: ${a}`);
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.selectors ??= {};
+      out.selectors[field] = value;
       continue;
     }
     if (a?.startsWith("--")) {
@@ -176,6 +196,8 @@ function printAddHelp(log: (m: string) => void): void {
   log("  --tags <a,b>             comma-separated tags");
   log("  --keywords <a,b>         comma-separated include keywords");
   log("  --exclude-keywords <a,b> comma-separated exclude keywords");
+  log("  --selector-<field> <css> CSS selector for kind=html (required: item, title, link)");
+  log("                           optional: summary, publishedAt, body, tags");
 }
 
 function printListHelp(log: (m: string) => void): void {
@@ -271,6 +293,23 @@ export async function addSource(
       filters.excludeKeywords = parsed.excludeKeywords;
     }
     candidate.filters = filters;
+  }
+  if (parsed.selectors) {
+    // Validate selector shape early so the user sees a single targeted error
+    // ("selectors.item: required") instead of the refinement-level "selectors
+    // is required when kind is 'html'" further down.
+    const selectorsResult = SourceSelectorsSchema.safeParse(parsed.selectors);
+    if (!selectorsResult.success) {
+      const issues = selectorsResult.error.issues.map(
+        (i) => `selectors.${i.path.join(".") || "<root>"}: ${i.message}`,
+      );
+      error(`source add: validation failed`);
+      for (const issue of issues) {
+        error(`  - ${issue}`);
+      }
+      return 2;
+    }
+    candidate.selectors = selectorsResult.data;
   }
 
   const validated = SourceSchema.safeParse(candidate);

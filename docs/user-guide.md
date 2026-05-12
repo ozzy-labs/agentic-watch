@@ -151,6 +151,42 @@ github-releases adapter: rate limit exhausted for anthropics/anthropic-sdk-pytho
 - GitHub Tags / Commits 監視（別 source kind で将来検討）
 - GitHub Enterprise (self-hosted) URL（public github.com のみ対応）
 
+#### `--kind html`
+
+任意の HTML ページから CSS セレクタで item 一覧を抽出する。RSS が無いブログや変更履歴ページ向け。
+
+```bash
+agentic-watch source add anthropic-changelog \
+  --kind html \
+  --url https://docs.anthropic.com/changelog \
+  --selector-item "article.changelog-entry" \
+  --selector-title "h2" \
+  --selector-link "h2 a" \
+  --selector-summary "p.summary" \
+  --selector-publishedAt "time"
+```
+
+`--selector-<field>` フラグでセレクタを指定する:
+
+| フィールド | 必須 | 説明 |
+|---|---|---|
+| `item` | ✅ | 各 item を囲む親要素のセレクタ。例: `article.post` |
+| `title` | ✅ | item 内の title 要素 |
+| `link` | ✅ | item 内の link 要素。`<a href>` を優先、なければ text を URL として扱う |
+| `summary` | | 概要要素（任意） |
+| `publishedAt` | | 公開日時要素（任意）。`<time datetime>` / `<meta content>` を優先、フォールバックで text |
+| `body` | | 本文要素（任意）。Item.raw に保存される |
+| `tags` | | タグ要素のセレクタ（任意）。複数一致を配列として収集する |
+
+挙動の要点:
+
+- 相対リンク (`href="/path"`) は source の `--url` を base として解決される
+- `Item.id` は `<title-slug>-<8 hex>`（ADR-0002 の id 派生コントラクト、stableKey は url）
+- ETag を返すサーバには `If-None-Match` で条件付き GET。返さないサーバには body の sha256 を `state.lastEtag` slot に `sha256:` プレフィックス付きで保存し、次回の dedup に使う
+- title / link が解決できない item は silent drop（RSS adapter 同様の fail-soft）
+
+詳細な設計判断 (parser 選定、selector contract) は [`docs/design/source-html.md`](./design/source-html.md) を参照。
+
 #### `--kind npm-registry`
 
 npm パッケージの新バージョン公開を監視する。`registry.npmjs.org/<package>` の packument を取得し、`versions` を Item として正規化する（認証不要 / rate limit 1000 req/h 程度）。
@@ -193,12 +229,11 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 
 挙動:
 
-- 各 source の `kind` に応じた feed adapter を呼び出す（現状 `rss` / `github-releases` / `npm-registry` を実装、`html` は今後の Phase 3 sub-issue で実装）
+- 各 source の `kind` に応じた feed adapter を呼び出す（4 種すべて `rss` / `html` / `github-releases` / `npm-registry` が実装済み）
 - adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
-- 未実装 kind (`html`) の source は warning を出してスキップする
 
 ### `agentic-watch research <item-id> [--agent <agent-id>] [--template <id>]`
 
