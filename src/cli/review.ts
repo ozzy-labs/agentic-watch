@@ -243,16 +243,9 @@ export async function runReview(
     }
     throw e;
   }
-  // Phase 2 sub-issues B / C / E ship claude-code, codex-cli, copilot.
-  // gemini-cli lands in sub-issue D; its adapter still throws "not
-  // implemented", so reject it here with a friendlier message and avoid
-  // leaking adapter-level wording.
-  if (agent !== "claude-code" && agent !== "codex-cli" && agent !== "copilot") {
-    error(
-      `review: agent '${agent}' is not supported yet (available: claude-code, codex-cli, copilot)`,
-    );
-    return 2;
-  }
+  // Phase 2 sub-issues B / C / D / E ship all four adapters. AgentIdSchema
+  // already rejected invalid `--agent` values upstream, so any value that
+  // reaches here is supported.
 
   const templateId = parsed.template ?? "default";
 
