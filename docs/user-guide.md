@@ -25,7 +25,7 @@ npx @ozzylabs/agentic-watch <command>
 |---|---|---|---|---|
 | `claude-code` | 実装済み | [Claude Code](https://docs.claude.com/en/docs/claude-code) | `claude` 内で対話ログイン | `claude -p "<prompt>" --output-format text --permission-mode bypassPermissions` |
 | `codex-cli` | 実装済み | [Codex CLI](https://github.com/openai/codex) | `codex login` | `codex exec "<prompt>" --cd <workspace> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox` |
-| `gemini-cli` | 実装済み | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` 内で対話ログイン（OAuth）または `GEMINI_API_KEY` 環境変数 | `gemini -p "<prompt>" -y --output-format text` |
+| `gemini-cli` | 実装済み | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` 内で対話ログイン（OAuth）または `GEMINI_API_KEY` 環境変数 | `gemini -p "<prompt>" -y --skip-trust --output-format text` |
 | `copilot` | 実装済み | [GitHub Copilot CLI](https://docs.github.com/copilot/github-copilot-in-the-cli) | `copilot auth login` | `copilot -p "<prompt>" --allow-all-paths --allow-all-tools --no-color` |
 
 Phase 2 で 4 agent 全てが本実装済み。
@@ -133,7 +133,7 @@ Phase 2 で 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全
 
 Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
-Gemini CLI は非対話モード `gemini -p "<prompt>" -y` で起動する (`-y` は YOLO mode で承認をスキップ。Claude Code の `--permission-mode bypassPermissions` 相当)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
+Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起動する (`-y` は YOLO mode で承認をスキップ、`--skip-trust` は folder trust チェックを bypass。Claude Code の `--permission-mode bypassPermissions` 相当)。`--skip-trust` は他 3 adapter (`claude-code` / `codex-cli` / `copilot`) と同じ「全権モード起動」の整合性回復であり、新たな権限付与ではない (folder trust は Gemini CLI 側の UI 制約)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
 
 ### `agentic-watch dismiss <item-id>`
 
@@ -261,6 +261,44 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 - `.github/workflows/watch.yaml` — GitHub Actions、API キー認証
 - `claude/routines/watch-daily.md` — Claude Routines 用 routine（`--with-routines` 指定時）
+
+## セキュリティ
+
+### 全 adapter は「全権モード」で起動する
+
+`agentic-watch research` / `agentic-watch review` が起動する 4 種類の agent CLI は、いずれも tool 承認なしで自動実行できるモードで spawn される（headless / 非対話実行を成立させるための前提）:
+
+| adapter | 起動モード |
+|---|---|
+| `claude-code` | `--permission-mode bypassPermissions` |
+| `codex-cli` | `--dangerously-bypass-approvals-and-sandbox` |
+| `gemini-cli` | `-y` (YOLO mode) + `--skip-trust` (folder trust bypass) |
+| `copilot` | `--allow-all-paths --allow-all-tools` |
+
+つまり、agent が読み込む **任意の文字列が tool execution の指示として解釈されうる**。RSS feed の item content や HTML 抽出結果に攻撃者が prompt injection を仕込むと、agent がワークスペース内のファイル読み書きや任意コマンド実行を承認なしで行ってしまう経路が成立する。
+
+### 信頼できる feed source のみ登録する
+
+現時点 (Phase 2) では agentic-watch 側に prompt injection sanitize レイヤーを持たないため、ユーザー側の運用で feed source を選別することが第一の防御線になる。
+
+**推奨される source**:
+
+- 公式ベンダーの blog / news feed（例: anthropic.com/news/rss.xml、openai.com/blog/rss.xml）
+- GitHub Releases feed（プロジェクト maintainer が release notes を直接書くもの）
+- npm registry / PyPI などの公式 registry feed
+- publisher が認証済みかつ信頼できる発信元
+
+**注意が必要な source**:
+
+- Hacker News / Reddit / Lobsters など、任意の third-party がコンテンツを投稿できるアグリゲータ
+- ユーザー投稿型のフォーラム / コメント欄を含む feed
+- 信頼境界が不明確な mirror / aggregator サイト
+
+これらを source として登録する場合、item content 内に「Ignore previous instructions and ...」「以下を実行してください: ...」といった prompt injection 文字列が混入する可能性を許容したうえで運用する必要がある。少なくとも `agentic-watch research` 実行時のワークスペースには機密情報（`.env`、認証 token、秘密鍵など）を置かないこと。
+
+### 包括的な sanitize 対策
+
+agentic-watch 全体での prompt injection 緩和レイヤー（item content の sanitize、agent prompt の分離、出力検証など）は別 Phase で取り組む予定（[#49](https://github.com/ozzy-labs/agentic-watch/issues/49)）。それまでは上記の運用ガイドラインで mitigate する。
 
 ## トラブルシューティング
 
