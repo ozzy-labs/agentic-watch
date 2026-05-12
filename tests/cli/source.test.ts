@@ -94,7 +94,7 @@ describe("cli/source", () => {
 
     it("creates a minimal source with only required flags", async () => {
       const { io } = captureIo();
-      const code = await addSource(["example", "--kind", "html", "--url", "https://example.com"], {
+      const code = await addSource(["example", "--kind", "rss", "--url", "https://example.com"], {
         cwd: workdir,
         io,
       });
@@ -102,10 +102,56 @@ describe("cli/source", () => {
       const parsed = parseYaml(await readFile(join(workdir, "sources", "example.yaml"), "utf8"));
       expect(parsed).toMatchObject({
         id: "example",
-        kind: "html",
+        kind: "rss",
         url: "https://example.com",
         tags: [],
       });
+    });
+
+    it("creates an html source with selectors", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "example",
+          "--kind",
+          "html",
+          "--url",
+          "https://example.com",
+          "--selector-item",
+          "article.entry",
+          "--selector-title",
+          "h2",
+          "--selector-link",
+          "a.permalink",
+          "--selector-summary",
+          "p.summary",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "example.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        id: "example",
+        kind: "html",
+        url: "https://example.com",
+        selectors: {
+          item: "article.entry",
+          title: "h2",
+          link: "a.permalink",
+          summary: "p.summary",
+        },
+      });
+    });
+
+    it("rejects an html source without selectors", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(["bad", "--kind", "html", "--url", "https://example.com"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("selectors"))).toBe(true);
+      expect(await pathExists(join(workdir, "sources", "bad.yaml"))).toBe(false);
     });
 
     it("rejects an unknown --kind value", async () => {
@@ -204,10 +250,22 @@ describe("cli/source", () => {
         ["alpha", "--kind", "rss", "--url", "https://alpha.example/feed.xml", "--tags", "a,b"],
         { cwd: workdir, io: captureIo().io },
       );
-      await addSource(["beta", "--kind", "html", "--url", "https://beta.example"], {
-        cwd: workdir,
-        io: captureIo().io,
-      });
+      await addSource(
+        [
+          "beta",
+          "--kind",
+          "html",
+          "--url",
+          "https://beta.example",
+          "--selector-item",
+          "article",
+          "--selector-title",
+          "h1",
+          "--selector-link",
+          "a",
+        ],
+        { cwd: workdir, io: captureIo().io },
+      );
 
       const { io, captured } = captureIo();
       const code = await listSources([], { cwd: workdir, io });
