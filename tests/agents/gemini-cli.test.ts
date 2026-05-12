@@ -1,0 +1,234 @@
+import { describe, expect, it } from "vitest";
+import { createGeminiCliAdapter, type GeminiRunner } from "../../src/agents/gemini-cli.js";
+import type { ResearchRequest, ReviewRequest } from "../../src/agents/types.js";
+import type { Item, ResearchFrontmatter } from "../../src/schemas/index.js";
+import { ItemSchema } from "../../src/schemas/index.js";
+
+const SAMPLE_ITEM: Item = ItemSchema.parse({
+  id: "anthropic-news-2026-05-10-claude-code",
+  sourceId: "anthropic-news",
+  title: "Claude Code: shiny new feature",
+  url: "https://anthropic.com/news/claude-code-shiny",
+  publishedAt: "2026-05-10T00:00:00.000Z",
+  fetchedAt: "2026-05-10T01:00:00.000Z",
+  summary: "New feature in Claude Code.",
+  matchedKeywords: ["Claude Code"],
+  status: "detected",
+});
+
+const SAMPLE_FRONTMATTER: ResearchFrontmatter = {
+  id: "20260510_anthropic-news-claude-code-shiny_v1",
+  itemIds: [SAMPLE_ITEM.id],
+  agent: "gemini-cli",
+  templateId: "default",
+  createdAt: "2026-05-10T03:00:00.000Z",
+  updatedAt: null,
+  reviewedAt: null,
+  reviewedBy: null,
+};
+
+function buildResearchRequest(): ResearchRequest {
+  return {
+    agent: "gemini-cli",
+    templateId: "default",
+    templateBody: "# Default template\n",
+    items: [SAMPLE_ITEM],
+    outputPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+    cwd: "/tmp/agentic-watch",
+  };
+}
+
+function buildReviewRequest(): ReviewRequest {
+  return {
+    agent: "gemini-cli",
+    templateId: "default",
+    templateBody: "",
+    researchPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+    researchFrontmatter: SAMPLE_FRONTMATTER,
+    researchBody: "---\nid: demo\n---\n\n# body\n",
+    cwd: "/tmp/agentic-watch",
+  };
+}
+
+interface CapturedCall {
+  prompt: string;
+  stdin: string;
+  cwd: string;
+}
+
+interface MockRunnerOptions {
+  code?: number;
+  stdout?: string;
+  stderr?: string;
+  /** If set, the runner rejects with this Error instead of resolving. */
+  rejectWith?: Error;
+}
+
+function buildMockRunner(opts: MockRunnerOptions = {}): {
+  runner: GeminiRunner;
+  calls: CapturedCall[];
+} {
+  const calls: CapturedCall[] = [];
+  const runner: GeminiRunner = async (prompt, options) => {
+    calls.push({ prompt, stdin: options.stdin, cwd: options.cwd });
+    if (opts.rejectWith) {
+      throw opts.rejectWith;
+    }
+    return {
+      code: opts.code ?? 0,
+      stdout: opts.stdout ?? "",
+      stderr: opts.stderr ?? "",
+    };
+  };
+  return { runner, calls };
+}
+
+describe("agents/gemini-cli", () => {
+  describe("research", () => {
+    it("invokes the runner with a SKILL prompt and JSON stdin", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.research(buildResearchRequest());
+
+      expect(calls).toHaveLength(1);
+      const call = calls[0];
+      // Prompt must point Gemini at the research SKILL and re-state the
+      // outputPath / itemId. We don't pin exact wording — the SKILL contract
+      // lives in `.agents/skills/research/SKILL.md`, not here.
+      expect(call.prompt).toContain(".agents/skills/research/SKILL.md");
+      expect(call.prompt).toContain(SAMPLE_ITEM.id);
+      expect(call.prompt).toContain("/tmp/agentic-watch/research/20260510_demo_v1.md");
+      // The cwd is forwarded so the spawned CLI sees workspace-relative paths.
+      expect(call.cwd).toBe("/tmp/agentic-watch");
+    });
+
+    it("forwards the structured payload as JSON on stdin", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.research(buildResearchRequest());
+
+      const payload = JSON.parse(calls[0].stdin);
+      expect(payload).toEqual({
+        agent: "gemini-cli",
+        templateId: "default",
+        templateBody: "# Default template\n",
+        items: [SAMPLE_ITEM],
+        outputPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+      });
+    });
+
+    it("resolves cleanly when the CLI exits 0", async () => {
+      const { runner } = buildMockRunner({ code: 0 });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.research(buildResearchRequest())).resolves.toBeUndefined();
+    });
+
+    it("throws a descriptive error when the CLI exits non-zero", async () => {
+      const { runner } = buildMockRunner({ code: 1, stderr: "boom" });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.research(buildResearchRequest())).rejects.toThrow(
+        /gemini-cli adapter: gemini CLI exited with code 1.*boom/,
+      );
+    });
+
+    it("surfaces a friendly message for auth-style errors", async () => {
+      const { runner } = buildMockRunner({
+        code: 1,
+        stderr: "Error: not authenticated. Run `gemini` to log in.",
+      });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.research(buildResearchRequest())).rejects.toThrow(
+        /authentication failed/i,
+      );
+    });
+
+    it("detects auth errors regardless of which stream printed them", async () => {
+      const { runner } = buildMockRunner({
+        code: 1,
+        stdout: "401 Unauthorized: missing API key",
+      });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.research(buildResearchRequest())).rejects.toThrow(
+        /authentication failed/i,
+      );
+    });
+
+    it("propagates runner-level errors (e.g. ENOENT for missing CLI)", async () => {
+      const { runner } = buildMockRunner({
+        rejectWith: new Error("gemini CLI not found in PATH — install Gemini CLI"),
+      });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.research(buildResearchRequest())).rejects.toThrow(/not found in PATH/);
+    });
+  });
+
+  describe("review", () => {
+    it("invokes the runner with a review SKILL prompt and stdin payload", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.review(buildReviewRequest());
+
+      expect(calls).toHaveLength(1);
+      const call = calls[0];
+      expect(call.prompt).toContain(".agents/skills/review/SKILL.md");
+      expect(call.prompt).toContain("/tmp/agentic-watch/research/20260510_demo_v1.md");
+      expect(call.prompt).toContain("gemini-cli");
+      // The review prompt should NOT re-trigger the research SKILL.
+      expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
+    });
+
+    it("forwards the full review payload as JSON on stdin", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.review(buildReviewRequest());
+
+      const payload = JSON.parse(calls[0].stdin);
+      expect(payload).toEqual({
+        agent: "gemini-cli",
+        templateId: "default",
+        templateBody: "",
+        researchPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+        researchFrontmatter: SAMPLE_FRONTMATTER,
+        researchBody: "---\nid: demo\n---\n\n# body\n",
+      });
+    });
+
+    it("resolves cleanly when the CLI exits 0", async () => {
+      const { runner } = buildMockRunner({ code: 0 });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.review(buildReviewRequest())).resolves.toBeUndefined();
+    });
+
+    it("throws a descriptive error when the CLI exits non-zero", async () => {
+      const { runner } = buildMockRunner({ code: 2, stderr: "review skill crashed" });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.review(buildReviewRequest())).rejects.toThrow(
+        /gemini-cli adapter: gemini CLI exited with code 2.*review skill crashed/,
+      );
+    });
+
+    it("surfaces a friendly message for auth-style errors during review", async () => {
+      const { runner } = buildMockRunner({
+        code: 1,
+        stderr: "Please log in to Gemini CLI",
+      });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.review(buildReviewRequest())).rejects.toThrow(/authentication failed/i);
+    });
+
+    it("uses '(no output)' when both streams are empty", async () => {
+      const { runner } = buildMockRunner({ code: 137 });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.review(buildReviewRequest())).rejects.toThrow(
+        /exited with code 137.*\(no output\)/,
+      );
+    });
+  });
+
+  describe("adapter shape", () => {
+    it("has id 'gemini-cli'", () => {
+      const adapter = createGeminiCliAdapter({ run: buildMockRunner().runner });
+      expect(adapter.id).toBe("gemini-cli");
+    });
+  });
+});
