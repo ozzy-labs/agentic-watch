@@ -324,12 +324,12 @@ describe("cli/research", () => {
     expect(captured.error.some((m) => m.includes("not found"))).toBe(true);
   });
 
-  it("rejects unsupported agents in Phase 1", async () => {
+  it("rejects unsupported agents (gemini-cli is still a stub)", async () => {
     const workdir = await setupWorkspace();
     const { io, captured } = captureIo();
-    const code = await runResearch([SAMPLE_ITEM.id, "--agent", "codex-cli"], { cwd: workdir, io });
+    const code = await runResearch([SAMPLE_ITEM.id, "--agent", "gemini-cli"], { cwd: workdir, io });
     expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 1"))).toBe(true);
+    expect(captured.error.some((m) => m.includes("not supported yet"))).toBe(true);
   });
 
   it("rejects an invalid --agent value", async () => {
@@ -362,20 +362,20 @@ describe("cli/research", () => {
   });
 
   it("uses radar.config.yaml defaultResearchAgent when --agent is omitted", async () => {
-    // The config sets a non-default agent. Phase 1 only registers a
-    // claude-code adapter, so the CLI should refuse with the Phase 1
-    // not-supported message — proving that the config value WAS picked up.
+    // The config sets a still-stubbed agent (gemini-cli). The CLI should refuse
+    // with the not-supported message — proving the config value WAS picked up
+    // (vs. falling back to the hardcoded claude-code default).
     const workdir = await setupWorkspace();
     await writeFile(
       join(workdir, "radar.config.yaml"),
-      "defaultResearchAgent: codex-cli\n",
+      "defaultResearchAgent: gemini-cli\n",
       "utf8",
     );
     const { io, captured } = captureIo();
     const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
     expect(code).toBe(2);
     expect(
-      captured.error.some((m) => m.includes("codex-cli") && m.includes("not supported in Phase 1")),
+      captured.error.some((m) => m.includes("gemini-cli") && m.includes("not supported yet")),
     ).toBe(true);
   });
 
@@ -383,7 +383,7 @@ describe("cli/research", () => {
     const workdir = await setupWorkspace();
     await writeFile(
       join(workdir, "radar.config.yaml"),
-      "defaultResearchAgent: codex-cli\n",
+      "defaultResearchAgent: gemini-cli\n",
       "utf8",
     );
     const { adapter, calls } = buildMockAdapter(async (req) => {
