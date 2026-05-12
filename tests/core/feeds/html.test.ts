@@ -81,7 +81,7 @@ describe("core/feeds/html — parser", () => {
   });
 
   it("drops items missing a required field", () => {
-    const html = HTML_FIXTURE.replace("<h2><a href=\"/changelog/hello\">Hello World</a></h2>", "");
+    const html = HTML_FIXTURE.replace('<h2><a href="/changelog/hello">Hello World</a></h2>', "");
     const items = parseHtmlDocument(html, makeSource(), "2026-05-12T10:00:00.000Z");
     // The first article has no title/link selector match; only the second survives.
     expect(items).toHaveLength(1);

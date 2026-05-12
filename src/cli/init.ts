@@ -255,9 +255,7 @@ export const initCommand: Command = {
   run: async (args) => {
     const { force, withRoutines, withActions, help } = parseArgs(args);
     if (help) {
-      console.log(
-        "Usage: agentic-watch init [--force] [--with-routines] [--with-actions]",
-      );
+      console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills");
       console.log("(research / review / update) into .agents/skills/.");
