@@ -137,7 +137,7 @@ function looksLikeAuthError(text: string): boolean {
 }
 
 /**
- * Run `gemini -p <prompt> -y --output-format text`.
+ * Run `gemini -p <prompt> -y --skip-trust --output-format text`.
  *
  * Stdin receives the structured request JSON. `-y` (YOLO mode) auto-approves
  * file-tool prompts so the agent can write the research file without blocking
@@ -145,13 +145,31 @@ function looksLikeAuthError(text: string): boolean {
  * function only verifies the child exits 0 and surfaces its stdout/stderr to
  * the caller for logging.
  *
+ * `--skip-trust` bypasses the Gemini CLI folder-trust check. Recent Gemini
+ * CLI versions silently downgrade `-y` (YOLO) to default approval mode when
+ * the working directory is not on the trusted-folders list, surfacing as:
+ *
+ *   "Approval mode overridden to 'default' because the current folder is
+ *    not trusted."
+ *
+ * This breaks headless invocation in arbitrary workspaces (`/tmp/...`, CI,
+ * etc.). The other three adapters (claude-code, codex-cli, copilot) already
+ * launch in equivalent full-permission modes (`--permission-mode
+ * bypassPermissions` / `--dangerously-bypass-approvals-and-sandbox` /
+ * `--allow-all-paths --allow-all-tools`), so adding `--skip-trust` is **not
+ * a new permission grant** — it restores parity with the rest of the adapter
+ * family so the `--agent` flag behaves consistently across CLIs. The
+ * `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable is an equivalent
+ * alternative; we use the explicit flag because it does not require
+ * `process.env` mutation and is easier to assert in tests.
+ *
  * On `ENOENT` we report a missing-CLI error pointing at the install + auth
  * step (`agentic-watch research` cannot proceed without an authenticated
  * Gemini CLI on PATH).
  */
 async function runGeminiCli(prompt: string, options: SpawnOptions): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("gemini", ["-p", prompt, "-y", "--output-format", "text"], {
+    const child = spawn("gemini", ["-p", prompt, "-y", "--skip-trust", "--output-format", "text"], {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
