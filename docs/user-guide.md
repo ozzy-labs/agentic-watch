@@ -24,11 +24,11 @@ npx @ozzylabs/agentic-watch <command>
 | `--agent` 値 | 実装状況 | 必要な CLI | 認証方法 | 起動コマンド（非対話） |
 |---|---|---|---|---|
 | `claude-code` | 実装済み | [Claude Code](https://docs.claude.com/en/docs/claude-code) | `claude` 内で対話ログイン | `claude -p "<prompt>" --output-format text --permission-mode bypassPermissions` |
+| `codex-cli` | 実装済み | [Codex CLI](https://github.com/openai/codex) | `codex login` | `codex exec "<prompt>" --cd <workspace> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox` |
 | `copilot` | 実装済み | [GitHub Copilot CLI](https://docs.github.com/copilot/github-copilot-in-the-cli) | `copilot auth login` | `copilot -p "<prompt>" --allow-all-paths --allow-all-tools --no-color` |
-| `codex-cli` | stub（呼び出すと exit 2） | [Codex CLI](https://github.com/openai/codex) | — | — |
 | `gemini-cli` | stub（呼び出すと exit 2） | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | — | — |
 
-stub の adapter は呼び出された時点で friendly error を返す。Phase 2 の sub-issue C / D で本実装が追加される。
+stub の adapter は呼び出された時点で friendly error を返す。Phase 2 の sub-issue D で本実装が追加される。
 
 ## クイックスタート
 
@@ -129,7 +129,9 @@ agentic-watch research <item-id> --agent claude-code
 
 出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。
 
-対応 agent は `claude-code` と `copilot`。`codex-cli` / `gemini-cli` は Phase 2 sub-issue C / D で追加予定（現状 stub）。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+対応 agent は `claude-code` / `codex-cli` / `copilot` の 3 種。`gemini-cli` は Phase 2 sub-issue D で追加予定（現状 stub）。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+
+Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
 ### `agentic-watch dismiss <item-id>`
 
@@ -182,7 +184,7 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 
 同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す（Phase 4）。
 
-対応 agent は `claude-code` と `copilot`。`codex-cli` / `gemini-cli` は Phase 2 sub-issue C / D で追加予定（現状 stub、呼び出し時 friendly error で exit 2）。
+対応 agent は `claude-code` / `codex-cli` / `copilot` の 3 種。`gemini-cli` は Phase 2 sub-issue D で追加予定（現状 stub、呼び出し時 friendly error で exit 2）。
 
 #### クロスエージェント運用（推奨）
 

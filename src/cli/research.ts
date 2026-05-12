@@ -217,12 +217,14 @@ export async function runResearch(
     }
     throw e;
   }
-  // Phase 2 (sub-issue E) adds copilot. codex-cli / gemini-cli land in
-  // their own Phase 2 sub-issues; until then their adapters throw their own
-  // "not implemented" error. This earlier rejection gives a friendlier
-  // message and avoids leaking adapter-level wording.
-  if (agent !== "claude-code" && agent !== "copilot") {
-    error(`research: agent '${agent}' is not supported yet (available: claude-code, copilot)`);
+  // Phase 2 sub-issues B / C / E ship claude-code, codex-cli, copilot.
+  // gemini-cli lands in sub-issue D; its adapter still throws "not
+  // implemented", so reject it here with a friendlier message and avoid
+  // leaking adapter-level wording.
+  if (agent !== "claude-code" && agent !== "codex-cli" && agent !== "copilot") {
+    error(
+      `research: agent '${agent}' is not supported yet (available: claude-code, codex-cli, copilot)`,
+    );
     return 2;
   }
 
