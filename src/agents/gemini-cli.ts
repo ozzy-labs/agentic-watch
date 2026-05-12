@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { AgentAdapter, ResearchRequest } from "./types.js";
+import type { AgentAdapter, ResearchRequest, ReviewRequest } from "./types.js";
 
 /**
  * Build the prompt handed to `gemini -p`.
@@ -47,6 +47,56 @@ function buildResearchPrompt(req: ResearchRequest): string {
     "  - Set frontmatter fields `reviewedAt: null` and `reviewedBy: null`.",
     "    The `review` command (Phase 2) stamps those later.",
     "  - Do not modify items/*.yaml — the CLI handles the status transition.",
+  ].join("\n");
+}
+
+/**
+ * Build the prompt handed to `gemini -p` for review.
+ *
+ * Symmetric with `buildResearchPrompt`: thin wrapper that points the agent
+ * at `.agents/skills/review/SKILL.md` and re-states the critical filesystem
+ * invariants. Procedural detail (review perspectives, where the review block
+ * lands inside the file, frontmatter stamp format) lives in the SKILL body.
+ *
+ * Stdin payload schema (JSON):
+ *   {
+ *     "agent":               AgentId,
+ *     "templateId":          string,
+ *     "templateBody":        string,  // empty => use SKILL's built-in rubric
+ *     "researchPath":        string,
+ *     "researchFrontmatter": ResearchFrontmatter,
+ *     "researchBody":        string
+ *   }
+ */
+function buildReviewPrompt(req: ReviewRequest): string {
+  return [
+    "Run the `.agents/skills/review/SKILL.md` skill to cross-check the",
+    "existing research report and append a review block.",
+    "",
+    "Inputs (one JSON document on stdin):",
+    "  - agent:               the agent id you are running as",
+    "  - templateId:          review template id (e.g. `default`)",
+    "  - templateBody:        contents of templates/<templateId>.md, or empty",
+    "                         string if the workspace did not provide one",
+    "  - researchPath:        absolute path to the research file you MUST modify",
+    "  - researchFrontmatter: parsed frontmatter object (pre-review state)",
+    "  - researchBody:        full file body including frontmatter at adapter",
+    "                         invocation (the CLI re-reads after you return)",
+    "",
+    `Research file to review: ${req.researchPath}`,
+    `Reviewing agent id (stamp this into reviewedBy): ${req.agent}`,
+    "",
+    "Constraints:",
+    "  - Follow `.agents/skills/review/SKILL.md` exactly for the review block",
+    "    layout and frontmatter stamp; ADR-0003 / ADR-0008 are the canonical",
+    "    contract specs.",
+    "  - Set frontmatter `reviewedAt` to the current ISO 8601 timestamp (UTC)",
+    "    and `reviewedBy` to the agent id above.",
+    "  - Append a single `## レビュー (<agent-id>, <ISO 8601>)` section at the",
+    "    end of the body. Do not rewrite the existing research content.",
+    "  - Do not modify items/*.yaml — the CLI handles the status transition",
+    "    and the atomic rollback if anything fails.",
+    "  - Write to `researchPath` only. Do not create new files.",
   ].join("\n");
 }
 
@@ -176,9 +226,30 @@ export function createGeminiCliAdapter(options: GeminiCliAdapterOptions = {}): A
         throw new Error(`gemini-cli adapter: gemini CLI exited with code ${result.code}: ${tail}`);
       }
     },
-    review: async (_req) => {
-      // Implemented in the next commit on this branch.
-      throw new Error("gemini-cli adapter: review not implemented yet (Phase 2)");
+    review: async (req) => {
+      const prompt = buildReviewPrompt(req);
+      const stdin = `${JSON.stringify(
+        {
+          agent: req.agent,
+          templateId: req.templateId,
+          templateBody: req.templateBody,
+          researchPath: req.researchPath,
+          researchFrontmatter: req.researchFrontmatter,
+          researchBody: req.researchBody,
+        },
+        null,
+        2,
+      )}\n`;
+      const result = await run(prompt, { cwd: req.cwd, stdin });
+      if (result.code !== 0) {
+        const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
+        if (looksLikeAuthError(`${result.stderr}\n${result.stdout}`)) {
+          throw new Error(
+            `gemini-cli adapter: Gemini CLI authentication failed. Run \`gemini\` interactively to log in, or set GEMINI_API_KEY, then retry. (CLI exit ${result.code}: ${tail})`,
+          );
+        }
+        throw new Error(`gemini-cli adapter: gemini CLI exited with code ${result.code}: ${tail}`);
+      }
     },
   };
 }
