@@ -82,6 +82,75 @@ agentic-watch research <item-id> --agent claude-code
 | `--keywords` | カンマ区切り、ヒット対象キーワード |
 | `--exclude-keywords` | カンマ区切り、除外キーワード |
 
+#### `--kind github-releases`
+
+GitHub の Releases API (`GET /repos/<owner>/<repo>/releases`) からリリースを取得する。
+
+```bash
+# 例: anthropic-sdk-python の releases を監視する
+agentic-watch source add anthropic-sdk \
+  --kind github-releases \
+  --url https://github.com/anthropics/anthropic-sdk-python
+```
+
+`--url` は以下のいずれの形式でも受け付ける（`<owner>/<repo>` を抽出する）:
+
+- `https://github.com/<owner>/<repo>`
+- `https://github.com/<owner>/<repo>.git`
+- `https://github.com/<owner>/<repo>/tree/<branch>` 等の末尾パスは無視される
+- `<owner>/<repo>` ショートハンド
+
+正規化マッピング:
+
+| Item フィールド | GitHub Release フィールド |
+|---|---|
+| `title` | `name`（空なら `tag_name` にフォールバック） |
+| `url` | `html_url` |
+| `summary` | `body` |
+| `publishedAt` | `published_at`（なければ `created_at`） |
+| `id` | `<title-slug>-<8 hex of sha256(<tag_name>#<release.id>)>`（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)） |
+| `raw` | API レスポンス全体 |
+
+`tag_name` と GitHub 側 `release.id` を組み合わせて stable id を作るため、再タグ付け（`tag_name` 変化・`release.id` 不変）と削除→再作成（`tag_name` 不変・`release.id` 変化）のどちらでも別 item として検出される。
+
+##### `GITHUB_TOKEN` で rate limit を上げる
+
+GitHub Releases API は環境変数 `GITHUB_TOKEN` で認証する:
+
+| 認証状態 | rate limit |
+|---|---|
+| 認証なし | 60 req/h（IP 単位） |
+| 認証あり (`GITHUB_TOKEN`) | 5000 req/h |
+
+設定例 (bash / zsh):
+
+```bash
+# Personal Access Token (classic) または Fine-grained PAT を発行し、
+# `repo` 権限（public のみなら不要）を付与する
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+agentic-watch watch run --source anthropic-sdk
+```
+
+GitHub Actions 上では自動注入される `GITHUB_TOKEN` (`secrets.GITHUB_TOKEN`) をそのまま使える。
+
+残量が 10 req を下回ると stderr に warning が出る:
+
+```text
+github-releases: rate limit low (5/60 remaining) for anthropics/anthropic-sdk-python (resets at 2026-05-12T13:00:00.000Z). Set GITHUB_TOKEN to raise the quota from 60 to 5000 req/h.
+```
+
+quota 枯渇時 (HTTP 403 + `X-RateLimit-Remaining: 0`) は user-friendly なエラーで終了する:
+
+```text
+github-releases adapter: rate limit exhausted for anthropics/anthropic-sdk-python (resets at 2026-05-12T13:00:00.000Z). Set GITHUB_TOKEN to raise the quota from 60 to 5000 req/h.
+```
+
+##### スコープ外（現時点）
+
+- `prerelease` / `draft` のフィルタ（必要なら filter 設計拡張で対応予定）
+- GitHub Tags / Commits 監視（別 source kind で将来検討）
+- GitHub Enterprise (self-hosted) URL（public github.com のみ対応）
+
 #### `--kind npm-registry`
 
 npm パッケージの新バージョン公開を監視する。`registry.npmjs.org/<package>` の packument を取得し、`versions` を Item として正規化する（認証不要 / rate limit 1000 req/h 程度）。
@@ -124,12 +193,12 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 
 挙動:
 
-- 各 source の `kind` に応じた feed adapter を呼び出す（現状 `rss` / `npm-registry` を実装、`html` / `github-releases` は今後の Phase 3 sub-issue で実装）
+- 各 source の `kind` に応じた feed adapter を呼び出す（現状 `rss` / `github-releases` / `npm-registry` を実装、`html` は今後の Phase 3 sub-issue で実装）
 - adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
-- 未実装 kind (`html` / `github-releases`) の source は warning を出してスキップする
+- 未実装 kind (`html`) の source は warning を出してスキップする
 
 ### `agentic-watch research <item-id> [--agent <agent-id>] [--template <id>]`
 
