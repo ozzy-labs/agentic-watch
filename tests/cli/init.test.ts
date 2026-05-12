@@ -6,6 +6,7 @@ import { initWorkspace } from "../../src/cli/init.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const BUNDLED_SKILLS_ROOT = join(REPO_ROOT, "src", "skills");
+const BUNDLED_TEMPLATES_ROOT = join(REPO_ROOT, "src", "templates");
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -124,5 +125,134 @@ describe("cli/init", () => {
     for (const dir of ["sources", "state", "items", "research", "templates"]) {
       expect(await pathExists(join(workdir, dir))).toBe(true);
     }
+  });
+
+  describe("schedule scaffolds (--with-routines / --with-actions)", () => {
+    it("does NOT emit either scaffold by default", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(false);
+      expect(await pathExists(join(workdir, ".github", "workflows", "watch.yaml"))).toBe(false);
+    });
+
+    it("--with-routines emits claude/routines/watch-daily.md", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      const dest = join(workdir, "claude", "routines", "watch-daily.md");
+      expect(await pathExists(dest)).toBe(true);
+      const body = await readFile(dest, "utf8");
+      // Sanity: scaffold is the bundled template (frontmatter + ADR-0004 link).
+      expect(body).toMatch(/^---/);
+      expect(body).toMatch(/schedule:/);
+      expect(body).toContain("ADR-0004");
+      expect(result.copiedFiles).toContain("claude/routines/watch-daily.md");
+    });
+
+    it("--with-actions emits .github/workflows/watch.yaml", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        withActions: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      const dest = join(workdir, ".github", "workflows", "watch.yaml");
+      expect(await pathExists(dest)).toBe(true);
+      const body = await readFile(dest, "utf8");
+      // Sanity: scaffold is the bundled template (uses ANTHROPIC_API_KEY, not OAuth).
+      expect(body).toContain("ANTHROPIC_API_KEY");
+      expect(body).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+      expect(body).toContain("cron:");
+      expect(result.copiedFiles).toContain(".github/workflows/watch.yaml");
+    });
+
+    it("emits both scaffolds when both flags are passed", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        withRoutines: true,
+        withActions: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(true);
+      expect(await pathExists(join(workdir, ".github", "workflows", "watch.yaml"))).toBe(true);
+      expect(result.copiedFiles).toContain("claude/routines/watch-daily.md");
+      expect(result.copiedFiles).toContain(".github/workflows/watch.yaml");
+    });
+
+    it("protects existing scaffold files without --force", async () => {
+      const dest = join(workdir, "claude", "routines", "watch-daily.md");
+      await mkdir(join(workdir, "claude", "routines"), { recursive: true });
+      await writeFile(dest, "user-edited routine", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited routine");
+      expect(result.skippedFiles).toContain("claude/routines/watch-daily.md");
+      expect(warnings.some((m) => m.includes("claude/routines/watch-daily.md"))).toBe(true);
+    });
+
+    it("overwrites existing scaffold files with --force", async () => {
+      const dest = join(workdir, ".github", "workflows", "watch.yaml");
+      await mkdir(join(workdir, ".github", "workflows"), { recursive: true });
+      await writeFile(dest, "user-edited workflow", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        withActions: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited workflow");
+      expect(body).toContain("ANTHROPIC_API_KEY");
+      expect(result.copiedFiles).toContain(".github/workflows/watch.yaml");
+    });
+
+    it("warns and records a skip when the bundled template is missing", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        // Point at a templates root that does not exist on disk.
+        templatesRoot: join(workdir, "__nope__"),
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(false);
+      expect(result.skippedFiles).toContain("claude/routines/watch-daily.md");
+      expect(warnings.some((m) => m.includes("bundled template not found"))).toBe(true);
+    });
   });
 });
