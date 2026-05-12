@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import type { Item, Source } from "../../schemas/index.js";
 import { ItemSchema } from "../../schemas/index.js";
+import { deriveItemId, deriveStableKey } from "./derive-id.js";
 import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
 
 const USER_AGENT = "agentic-watch/0.0.0 (+https://github.com/ozzy-labs/agentic-watch)";
@@ -84,14 +84,10 @@ function toIsoDate(value: string | undefined): string | undefined {
 /**
  * Derive a stable, filesystem- and CLI-friendly id for an RSS/Atom entry.
  *
- * Shape: `<title-slug>-<8 hex of sha256(stableKey)>` (or just the hash when
- * the title contains no slug-friendly characters).
- *
- * The title slug keeps ids human-readable in shell args and log lines; the
- * 8-char hash makes the id stable across re-fetches and avoids collisions
- * between entries with identical titles. We hash the publisher's stable key
- * (guid > url > sha1(title|pubDate)), not the raw title, so two posts with
- * the same title still get distinct ids.
+ * Delegates the actual format (`<title-slug>-<8 hex of sha256(stableKey)>`)
+ * and the publisher-id-first fallback ladder (guid > url > sha1(title|pub))
+ * to the shared helpers in `./derive-id.ts`, which all feed adapters use so
+ * that ids stay byte-stable across adapter kinds (see ADR-0002).
  *
  * The publisher's original guid is preserved in `Item.raw` (the full
  * upstream entry is stored), so no information is lost. See issue #23.
@@ -102,20 +98,12 @@ function deriveId(
   title: string | undefined,
   pub: string | undefined,
 ): string {
-  const stableKey =
-    guid ??
-    url ??
-    `sha1:${createHash("sha1")
-      .update(`${title ?? ""}|${pub ?? ""}`)
-      .digest("hex")}`;
-  const hash = createHash("sha256").update(stableKey).digest("hex").slice(0, 8);
-  const slug = (title ?? "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
-  return slug ? `${slug}-${hash}` : hash;
+  const stableKey = deriveStableKey({
+    publisherId: guid,
+    url,
+    fallbackHashInputs: [title, pub],
+  });
+  return deriveItemId(title, stableKey);
 }
 
 /** Normalize one RSS 2.0 `<item>` into our `Item` shape. */
