@@ -272,39 +272,31 @@ describe("cli/review", () => {
     expect(captured.error.some((m) => m.includes("no items/<id>.yaml found"))).toBe(true);
   });
 
-  it("rejects unsupported agents in Phase 2", async () => {
+  it("rejects unsupported agents (codex-cli, gemini-cli are still stubs)", async () => {
     const { workdir } = await setupWorkspace();
     const { io, captured } = captureIo();
     const code = await runReview([RESEARCH_ID, "--agent", "codex-cli"], { cwd: workdir, io });
     expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+    expect(captured.error.some((m) => m.includes("not supported yet"))).toBe(true);
   });
 
   it("falls back to radar.config.yaml `defaultReviewAgent` when --agent is omitted", async () => {
     const { workdir } = await setupWorkspace();
-    // Configure a default review agent that the CLI will refuse in Phase 2.
-    // We use codex-cli so the resolver picks it up from the config and the
-    // CLI then exits 2 with the unsupported-agent message — proving the
-    // config value took effect (vs. falling back to the hardcoded default).
-    await writeFile(
-      join(workdir, "radar.config.yaml"),
-      "defaultReviewAgent: codex-cli\n",
-      "utf8",
-    );
+    // Configure a still-stubbed agent (codex-cli) so the resolver picks it
+    // up from the config and the CLI then exits 2 with the unsupported-agent
+    // message — proving the config value took effect (vs. falling back to
+    // the hardcoded default).
+    await writeFile(join(workdir, "radar.config.yaml"), "defaultReviewAgent: codex-cli\n", "utf8");
     const { io, captured } = captureIo();
     const code = await runReview([RESEARCH_ID], { cwd: workdir, io });
     expect(code).toBe(2);
-    expect(captured.error.some((m) => m.includes("not supported in Phase 2"))).toBe(true);
+    expect(captured.error.some((m) => m.includes("not supported yet"))).toBe(true);
   });
 
   it("explicit --agent overrides radar.config.yaml `defaultReviewAgent`", async () => {
     const { workdir } = await setupWorkspace();
     // Config says codex-cli; CLI passes claude-code explicitly. Explicit wins.
-    await writeFile(
-      join(workdir, "radar.config.yaml"),
-      "defaultReviewAgent: codex-cli\n",
-      "utf8",
-    );
+    await writeFile(join(workdir, "radar.config.yaml"), "defaultReviewAgent: codex-cli\n", "utf8");
     const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
     previousAdapter = registerAgentAdapter(adapter);
 
