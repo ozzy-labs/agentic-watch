@@ -509,6 +509,64 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 agentic-watch 全体での prompt injection 緩和レイヤー（item content の sanitize、agent prompt の分離、出力検証など）は別 Phase で取り組む予定（[#49](https://github.com/ozzy-labs/agentic-watch/issues/49)）。それまでは上記の運用ガイドラインで mitigate する。
 
+### prompt injection の audit ログ (`injectionFlags`)
+
+`agentic-watch watch run` 実行時、各 item の `title` / `summary` / `raw` に対し best-effort の regex pre-filter を走らせる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a / M5a — Adopt）。検出された pattern label の一覧は `items/<sourceId>/<item-id>.yaml` の `injectionFlags` フィールドに記録される。
+
+検出対象 (8 種類):
+
+- `system-tag` — `[SYSTEM]` 形式の偽システムタグ
+- `chatml-token` — `<|im_start|>` / `<|im_end|>` (OpenAI ChatML special token)
+- `ignore-previous` — `Ignore previous instructions` 系（語形ゆれ吸収）
+- `disregard-above` — `Disregard the above` 系
+- `system-override` — `SYSTEM OVERRIDE` / `SYSTEM PROMPT OVERRIDE`
+- `role-reassignment` — `You are now ...` 形式の役割再付与
+- `instruction-fence` — `BEGIN/END INSTRUCTIONS` フェンス
+- `endoftext-token` — `<|endoftext|>` (GPT family special token)
+
+**重要**: あくまで auditability のための観察層であり、検出されたからといって item は変更されない（status は `detected` のまま、本文も sanitize しない）。判断は user に委ねる（ADR-0009 M5b — Reject: auto-dismiss しない）。
+
+**既知の限界 (false negative)**:
+
+- zero-width / 同型字 (homoglyph) による難読化（例: `i​gnore`）
+- base64 / hex などの encoding 経由のペイロード
+- 文字どおりの marker を含まない自然言語ジェイルブレイク（例: "Forget what you were told"）
+- 英語以外の言語による paraphrase
+
+これらは pre-filter では検出できないため、引き続き「信頼できる source のみ登録する」運用ルールが第一の防御線になる。
+
+#### injection flag が立った item の手動 dismiss 手順
+
+`watch run` 後に warn ログ `watch run: '<sourceId>' N item(s) tripped the prompt-injection pre-filter` が出た場合、または `research` / `review` / `update` 実行時に `item 'X' has N injection flag(s): ...` が表示された場合、以下のいずれかで運用する:
+
+1. **内容を確認したうえで dismiss する** (推奨):
+
+   ```bash
+   # 該当 item の id と flags を確認
+   grep -lE '^injectionFlags:' items/*/*.yaml
+   cat items/<sourceId>/<item-id>.yaml
+
+   # 攻撃ペイロードだと判断したら dismiss (detected → dismissed)
+   agentic-watch dismiss <item-id>
+   ```
+
+2. **誤検知 (false positive) だと判断したらそのまま research を進める**:
+
+   ```bash
+   # flag が立っていても research は普通に動作する（audit-only）
+   agentic-watch research <item-id>
+   ```
+
+   `injectionFlags` は `items/<id>.yaml` に残るので、後から `grep injectionFlags items/` で監査ログを追える。
+
+3. **source 自体が信頼できないと判断したら source を外す**:
+
+   ```bash
+   agentic-watch source remove <sourceId>
+   ```
+
+   `items/<sourceId>/` 配下は履歴として残る（ADR-0008）。
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
