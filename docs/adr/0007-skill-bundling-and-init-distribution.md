@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/agentic-watch/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/agentic-watch/issues/77))。
+Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026-05-17 c）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/agentic-watch/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/agentic-watch/issues/77))。**Revision (c)** で `.gemini/commands/` への Gemini CLI slash command TOMLs 配置 (default-on、`--no-gemini-commands` で opt-out) を追加し、engine SKILL を adapter spawn / interactive 両対応の **dual-mode** に拡張、**5 層構成** に到達 ([#78](https://github.com/ozzy-labs/agentic-watch/issues/78))。
 
 ## Context
 
@@ -154,6 +154,96 @@ bundle される `AGENTS.md` は user workspace 向けに簡潔で実用的な�
 
 - Revision (a) と同じく、ユーザー編集後の sync 問題は引き続き発生 (`--force` または手 merge で対処)
 - 個別 agent 設定ファイル (`.gemini/settings.json` 等) の bundling は本改訂のスコープ外 (別 issue で検討)
+
+## Revision (2026-05-17 c, [#78](https://github.com/ozzy-labs/agentic-watch/issues/78))
+
+### 動機 (Revision c)
+
+Revision (a) で Claude Code、Revision (b) で Codex / Gemini / Copilot の **auto-read** ファイル (`AGENTS.md`) を埋めたが、**slash command 発火** の対応は agent ごとに非対称だった:
+
+| Agent | discovery 経路 | slash 発火 | Revision (b) 時点の状態 |
+|---|---|---|---|
+| Claude Code | `.claude/skills/` | `/<name>` | ✅ Revision (a) で対応 |
+| Copilot CLI | `.claude/skills/` 等を auto-read | `/<name>` | ✅ Revision (a) で free (Copilot は `.claude/skills/` を auto-read) |
+| **Codex CLI** | `.agents/skills/` を auto-read | `/skills` panel or `$<name>` mention | ❌ engine SKILL は adapter spawn (stdin JSON) 専用 |
+| **Gemini CLI** | `.gemini/skills/` or `.agents/skills/`、+ `.gemini/commands/*.toml` で `/<name>` slash | `/<name>` (commands) or `$<name>` mention (skills) | ❌ engine SKILL は slash 不向き、`.gemini/commands/` 雛形なし |
+
+このギャップを 2 つのアプローチで同時に埋めて 4 agent 完全 parity に到達する。
+
+### 改訂後の方針 (5 層構成)
+
+| 層 | 配置先 | 役割 | bundle 元 | opt-out |
+|---|---|---|---|---|
+| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体。**冒頭に "Invocation modes" セクション** を持ち、(1) adapter spawn 時は procedure を実行、(2) interactive 起動時 (stdin JSON なし、`$ARGUMENTS` 等あり) は `agentic-watch <subcommand>` に shell out する dual-mode 化 | `src/skills/` | (なし、SSoT) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`agentic-watch <subcommand>` を呼ぶだけ | `src/claude-skills/` | `--no-claude-skills` |
+| **Gemini commands (新規)** | `<cwd>/.gemini/commands/<name>.toml` | Gemini CLI interactive で `/research` 等の slash command として発火、TOML の `prompt` キーから `agentic-watch <subcommand> {{args}}` を呼ぶ | `src/gemini-commands/` | `--no-gemini-commands` |
+| **AGENTS.md** | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
+| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+
+#### B1: engine SKILL の dual-mode 化
+
+`src/skills/{research,review,update}/SKILL.md` の **冒頭** に "Invocation modes" セクションを追加し、adapter spawn / interactive の判定を agent 側に明示する:
+
+```markdown
+## Invocation modes
+
+This SKILL serves two invocation modes:
+
+1. **Adapter spawn (default)**: The `agentic-watch` CLI spawns the agent as a
+   subprocess and pipes a JSON payload to stdin (...). Follow the procedure below.
+
+2. **Interactive invocation (slash / mention)**: If invoked from an interactive
+   session (no stdin JSON payload, `$ARGUMENTS` or equivalent argument string
+   present), do NOT attempt the full procedure. Instead, shell out to the
+   `agentic-watch` CLI verbatim:
+
+   - For research: `agentic-watch research $ARGUMENTS`
+```
+
+adapter spawn 時の挙動は **完全に保持** (procedure 本体は不変、stdin JSON contract も不変、`tests/agents/*.test.ts` の prompt assert もそのまま通る)。interactive で発火した場合のみ、agent は CLI に shell out して adapter spawn path 経由に戻る (二重 fan-out にならない)。
+
+これで Codex CLI は `.agents/skills/` の auto-discovery 経由で `$research` 等の mention に正しく応答できるようになる (Codex CLI は独自の `.gemini/commands/` 相当を持たないため、engine SKILL の dual-mode 化が唯一の interactive 経路)。
+
+#### B2: Gemini commands bundle (新規)
+
+`src/gemini-commands/{research,review,update,dismiss}.toml` を新規追加 (4 ファイル):
+
+```toml
+# src/gemini-commands/research.toml
+prompt = "Run `agentic-watch research {{args}}` to generate a research report ..."
+description = "Generate a research report for a detected item via agentic-watch."
+```
+
+`init` は `<cwd>/.gemini/commands/<name>.toml` に default-on で配置。`scripts/copy-skills.mjs` の filter は `.toml` も許可するよう拡張 (既存の `.md` / `.yaml` 許可に追加)。
+
+Gemini CLI の slash command は TOML 形式が canonical (`.gemini/commands/<name>.toml`)。`{{args}}` は Gemini CLI が `/research foo bar` を引数に展開する placeholder。procedure 本体は engine SKILL (`.agents/skills/<name>/SKILL.md`) に残し、TOML は **薄い wrapper** に徹する (drift 防止)。
+
+`dismiss` は engine SKILL を持たない (no LLM) が、UX 上 slash command として提供する価値があるため commands 層には含める (Claude discovery 層と同じ非対称性パターン)。
+
+#### opt-out (Revision c)
+
+`agentic-watch init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip。engine SKILL / `.claude/skills/` / `AGENTS.md` は影響を受けない。`--no-gemini-commands` 指定時も Gemini CLI interactive session は engine SKILL の dual-mode procedure で正しく動作する (`.agents/skills/` を Gemini CLI が auto-read してくれるため、slash の `/research` ではなく `$research` mention 経由になる)。
+
+#### 既存ファイル保護 (Revision c)
+
+`<cwd>/.gemini/commands/<name>.toml` が既に存在すれば skip + warning。`--force` で上書き (engine / discovery / agents 層と同じパターン)。
+
+#### CI 同梱検証
+
+`.github/workflows/ci.yaml` の pack:dry-run `required` リストに 4 toml ファイルを追加:
+
+- `dist/gemini-commands/research.toml`
+- `dist/gemini-commands/review.toml`
+- `dist/gemini-commands/update.toml`
+- `dist/gemini-commands/dismiss.toml`
+
+`scripts/copy-skills.mjs` の filter regression や `package.json#files` の漏れを CI が即座に検出する。
+
+### 改訂 (c) が解消しない事項
+
+- Revision (a) / (b) と同じく、ユーザー編集後の sync 問題は引き続き発生 (`--force` または手 merge で対処)
+- `.gemini/settings.json` 等の **agent 設定ファイル** の bundling は本改訂のスコープ外 (別 Phase)
+- 本リポ自身の `.gemini/settings.json` / `.agents/skills/` は **触らない** (本 issue は user workspace 向け bundle の改訂のみ)
 
 ## Consequences
 
