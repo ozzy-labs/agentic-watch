@@ -86,6 +86,10 @@ describe("cli/source", () => {
           matchFields: ["title", "summary"],
           caseSensitive: false,
         },
+        // ADR-0009 M4: schema defaults all sources to `"untrusted"` so existing
+        // YAML on disk (and freshly generated ones like this test asserts)
+        // includes the field after the schema lands.
+        trustLevel: "untrusted",
       });
       expect(captured.log.some((m) => m.includes("created sources/anthropic-news.yaml"))).toBe(
         true,

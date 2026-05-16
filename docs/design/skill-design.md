@@ -56,6 +56,10 @@ Rules:
 - **No silent merge.** If we ever need three-way merge of user edits with upstream changes, we would add it as a separate `init --merge-skills` flow rather than smuggling it into the default `init`.
 - **Diff display is not implemented in Phase 1.** When users disagree with `--force` overwriting, they can rely on `git diff` (workspaces are expected to be git-managed). Adding a built-in diff is a Phase 2 nice-to-have.
 
+### Untrusted content boundary (ADR-0009)
+
+All three shipped SKILL bodies (`research`, `review`, `update`) carry an **Untrusted content boundary** section that instructs the agent to treat `<untrusted_item>...</untrusted_item>` contents, prior research bodies, and `WebFetch` results as data only — never as instructions — and to refuse writes outside the workspace (M2a / M2b / M3b in [ADR-0009](../adr/0009-untrusted-external-content-handling.md)). The boundary marker injection itself (M1c) ships in a separate prompt-builder change and pairs with this skill-side guidance; the SKILL text is harmless when the marker is absent because it still steers agents away from following external instructions in any form. Because the SKILL bodies are bundled into the workspace by `init` (and re-bundled by `init --force`), updating the boundary guidance is a SKILL.md edit, not a CLI release — the same distribution channel as every other procedure change.
+
 ## 3. `allowed-tools` recommendations
 
 Every bundled SKILL.md declares the tools it needs in its frontmatter. The Phase 1 baseline is:

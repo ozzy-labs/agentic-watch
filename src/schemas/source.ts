@@ -18,6 +18,22 @@ export type MatchMode = z.infer<typeof MatchModeSchema>;
 export const MatchFieldSchema = z.enum(["title", "summary", "body", "tags"]);
 export type MatchField = z.infer<typeof MatchFieldSchema>;
 
+/**
+ * Trust level for a Source (ADR-0009 M4).
+ *
+ * Tags whether the content returned by this source's adapter should be treated
+ * as agent-controllable. The default is `"untrusted"` so omitting the field
+ * (the only state existing source YAMLs are in) preserves the current
+ * defense-in-depth posture: every external feed is treated as adversarial
+ * until the user explicitly opts in.
+ *
+ * This issue only adds the field. Downstream policy branches (regex detection
+ * sensitivity, boundary marker strength, prompt builder behavior) land in a
+ * separate sub-issue so the schema change is reviewable in isolation.
+ */
+export const TrustLevelSchema = z.enum(["trusted", "untrusted"]);
+export type TrustLevel = z.infer<typeof TrustLevelSchema>;
+
 export const SourceFiltersSchema = z.object({
   keywords: z.array(z.string()).default([]),
   excludeKeywords: z.array(z.string()).default([]),
@@ -99,6 +115,11 @@ export const SourceSchema = z
     // "required when html" rule via a refinement so the same Source type
     // serializes cleanly for both cases.
     selectors: SourceSelectorsSchema.optional(),
+    // `trustLevel` defaults to `"untrusted"` so existing source YAMLs (which
+    // omit the field entirely) keep their current treatment. Per ADR-0009 M4
+    // this is schema-only; policy branches that read `trustLevel` arrive in a
+    // separate sub-issue.
+    trustLevel: TrustLevelSchema.default("untrusted"),
   })
   .superRefine((value, ctx) => {
     if (value.kind !== "npm-registry" && !isValidHttpUrl(value.url)) {

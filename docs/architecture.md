@@ -42,7 +42,7 @@
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |
 | `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装（skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md)）|
-| `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` の Zod スキーマ |
+| `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) |
 | `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / review / update) |
 
 ## データフロー
