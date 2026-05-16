@@ -542,8 +542,9 @@ agentic-watch 全体での prompt injection 緩和レイヤー（item content �
 1. **内容を確認したうえで dismiss する** (推奨):
 
    ```bash
-   # 該当 item の id と flags を確認
-   grep -lE '^injectionFlags:' items/*/*.yaml
+   # flag が立っている item のみを列挙する
+   # (空の `injectionFlags: []` は除外し、配列要素がある形式だけ match させる)
+   grep -lE '^injectionFlags:$' items/*/*.yaml
    cat items/<sourceId>/<item-id>.yaml
 
    # 攻撃ペイロードだと判断したら dismiss (detected → dismissed)
@@ -557,7 +558,7 @@ agentic-watch 全体での prompt injection 緩和レイヤー（item content �
    agentic-watch research <item-id>
    ```
 
-   `injectionFlags` は `items/<id>.yaml` に残るので、後から `grep injectionFlags items/` で監査ログを追える。
+   `injectionFlags` は `items/<id>.yaml` に残るので、後から `grep -rE '^injectionFlags:$' items/` で監査ログを追える。
 
 3. **source 自体が信頼できないと判断したら source を外す**:
 
