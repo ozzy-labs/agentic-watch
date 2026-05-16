@@ -58,6 +58,30 @@ async function resolveClaudeSkillsRoot(): Promise<string> {
   return resolve(here, "../claude-skills");
 }
 
+/**
+ * Resolve the directory holding the bundled Gemini CLI slash command TOMLs
+ * (`dist/gemini-commands/`).
+ *
+ * These are distinct from the engine SKILLs at `dist/skills/` and the Claude
+ * Code discovery wrappers at `dist/claude-skills/`. Gemini CLI surfaces slash
+ * commands from `.gemini/commands/<name>.toml` (TOML format with `prompt` and
+ * `description` keys). The bundled TOMLs are thin wrappers — they tell Gemini
+ * to shell out to the `agentic-watch` CLI with `{{args}}` interpolation; the
+ * canonical procedure stays in the engine SKILLs (SSoT) under
+ * `.agents/skills/`.
+ *
+ * See ADR-0007 (revised 2026-05-17 c) for the five-layer init bundle and the
+ * cross-agent slash-command parity rationale.
+ */
+async function resolveGeminiCommandsRoot(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const compiled = resolve(here, "../gemini-commands");
+  if (await pathExists(compiled)) {
+    return compiled;
+  }
+  return resolve(here, "../gemini-commands");
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await access(p);
@@ -76,6 +100,8 @@ interface InitOptions {
   templatesRoot?: string;
   /** Override the source location of bundled Claude discovery skills (used by tests). */
   claudeSkillsRoot?: string;
+  /** Override the source location of bundled Gemini CLI command TOMLs (used by tests). */
+  geminiCommandsRoot?: string;
   /**
    * Skip writing Claude Code slash-command wrappers to
    * `<cwd>/.claude/skills/`. Useful for workspaces that already manage that
@@ -87,6 +113,18 @@ interface InitOptions {
    * this flag; they are the SSoT.
    */
   noClaudeSkills?: boolean;
+  /**
+   * Skip writing Gemini CLI slash-command TOMLs to
+   * `<cwd>/.gemini/commands/`. Useful for workspaces that already manage
+   * that directory via another mechanism, or that don't use Gemini CLI.
+   *
+   * The engine SKILLs at `<cwd>/.agents/skills/` are always written
+   * regardless of this flag; they are the SSoT. Codex CLI / Gemini CLI
+   * interactive sessions also fall back to the engine SKILLs via the
+   * "Invocation modes" dual-mode procedure when no slash command is
+   * configured.
+   */
+  noGeminiCommands?: boolean;
   /**
    * Skip writing `<cwd>/AGENTS.md`. By default `init` copies the bundled
    * AGENTS.md template into the workspace so that agent CLIs which auto-read
@@ -149,6 +187,22 @@ const BUNDLED_SKILLS = ["research", "review", "update"] as const;
 const CLAUDE_DISCOVERY_SKILLS = ["research", "review", "update", "dismiss"] as const;
 
 /**
+ * Gemini CLI slash commands: thin TOML wrappers that surface `/research` /
+ * `/review` / `/update` / `/dismiss` inside Gemini CLI interactive sessions
+ * opened in the workspace. They land at `<cwd>/.gemini/commands/<name>.toml`
+ * and delegate to the `agentic-watch` CLI via `{{args}}` interpolation; they
+ * do not duplicate the engine procedure.
+ *
+ * Note `dismiss` is here but NOT in `BUNDLED_SKILLS` — the dismiss command
+ * does not invoke an agent (no LLM call), so there is no engine SKILL for
+ * it. The TOML is purely a UX affordance for Gemini CLI users.
+ *
+ * See ADR-0007 (revised 2026-05-17 c) for the five-layer init bundle and the
+ * cross-agent slash-command parity rationale (#78).
+ */
+const GEMINI_COMMANDS = ["research", "review", "update", "dismiss"] as const;
+
+/**
  * Schedule scaffolds that `init` may emit on opt-in flags.
  *
  * - `src`: bundled template path under `<templatesRoot>/`
@@ -207,6 +261,16 @@ const AGENTS_MD_SCAFFOLD = {
  * available commands, typical workflow, and docs pointers without any
  * extra setup. Opt out via `--no-agents-md` (workspaces that already have
  * their own AGENTS.md).
+ *
+ * Gemini CLI slash commands (ADR-0007, revised 2026-05-17 c via #78):
+ * `init` writes Gemini CLI's native slash command TOMLs at
+ * `<cwd>/.gemini/commands/{research,review,update,dismiss}.toml`. These
+ * thin wrappers shell out to the `agentic-watch` CLI through Gemini's
+ * `{{args}}` interpolation, surfacing `/research` etc. inside Gemini CLI
+ * interactive sessions. Opt out via `--no-gemini-commands` (engine SKILLs
+ * remain in place via the dual-mode "Invocation modes" fallback). This
+ * closes the slash-command UX gap for Gemini CLI (Codex CLI is covered by
+ * the engine SKILL dual-mode procedure itself).
  */
 export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   const { cwd, force } = options;
@@ -274,6 +338,34 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
 
       await copyFile(src, dest);
       copiedFiles.push(`.claude/skills/${skill}/SKILL.md`);
+    }
+  }
+
+  if (!options.noGeminiCommands) {
+    const geminiCommandsRoot = options.geminiCommandsRoot ?? (await resolveGeminiCommandsRoot());
+
+    for (const command of GEMINI_COMMANDS) {
+      const src = join(geminiCommandsRoot, `${command}.toml`);
+      const destDir = join(cwd, ".gemini", "commands");
+      const dest = join(destDir, `${command}.toml`);
+      await mkdir(destDir, { recursive: true });
+
+      if (!(await pathExists(src))) {
+        warn(`init: bundled gemini command not found, skipped: ${src}`);
+        skippedFiles.push(`.gemini/commands/${command}.toml`);
+        continue;
+      }
+
+      if ((await pathExists(dest)) && !force) {
+        warn(
+          `init: skipped existing file (use --force to overwrite): .gemini/commands/${command}.toml`,
+        );
+        skippedFiles.push(`.gemini/commands/${command}.toml`);
+        continue;
+      }
+
+      await copyFile(src, dest);
+      copiedFiles.push(`.gemini/commands/${command}.toml`);
     }
   }
 
@@ -367,6 +459,7 @@ interface ParsedArgs {
   withRoutines: boolean;
   withActions: boolean;
   noClaudeSkills: boolean;
+  noGeminiCommands: boolean;
   noAgentsMd: boolean;
   help: boolean;
 }
@@ -376,6 +469,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let withRoutines = false;
   let withActions = false;
   let noClaudeSkills = false;
+  let noGeminiCommands = false;
   let noAgentsMd = false;
   let help = false;
   for (const arg of args) {
@@ -387,23 +481,27 @@ function parseArgs(args: string[]): ParsedArgs {
       withActions = true;
     } else if (arg === "--no-claude-skills") {
       noClaudeSkills = true;
+    } else if (arg === "--no-gemini-commands") {
+      noGeminiCommands = true;
     } else if (arg === "--no-agents-md") {
       noAgentsMd = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, withActions, noClaudeSkills, noAgentsMd, help };
+  return { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, withActions, noClaudeSkills, noAgentsMd, help } = parseArgs(args);
+    const { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help } =
+      parseArgs(args);
     if (help) {
+      console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
       console.log(
-        "Usage: agentic-watch init [--force] [--with-routines] [--with-actions] [--no-claude-skills] [--no-agents-md]",
+        "                          [--no-claude-skills] [--no-gemini-commands] [--no-agents-md]",
       );
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
@@ -412,24 +510,35 @@ export const initCommand: Command = {
         "  - Claude Code slash-command wrappers: .claude/skills/{research,review,update,dismiss}/SKILL.md",
       );
       console.log(
+        "  - Gemini CLI slash commands: .gemini/commands/{research,review,update,dismiss}.toml",
+      );
+      console.log(
         "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
       );
       console.log("");
       console.log("Options:");
-      console.log("  --force              Overwrite existing files");
+      console.log("  --force                Overwrite existing files");
       console.log(
-        "  --with-routines      Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
+        "  --with-routines        Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
       );
       console.log(
-        "  --with-actions       Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
+        "  --with-actions         Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
       );
-      console.log("  --no-claude-skills   Skip writing slash-command wrappers to .claude/skills/");
       console.log(
-        "                       (useful if @ozzylabs/skills Renovate preset manages that directory)",
+        "  --no-claude-skills     Skip writing slash-command wrappers to .claude/skills/",
       );
-      console.log("  --no-agents-md       Skip writing AGENTS.md at the workspace root");
       console.log(
-        "                       (useful if the workspace already has its own AGENTS.md)",
+        "                         (useful if @ozzylabs/skills Renovate preset manages that directory)",
+      );
+      console.log(
+        "  --no-gemini-commands   Skip writing Gemini CLI slash commands to .gemini/commands/",
+      );
+      console.log(
+        "                         (engine SKILLs still serve interactive Gemini via dual-mode)",
+      );
+      console.log("  --no-agents-md         Skip writing AGENTS.md at the workspace root");
+      console.log(
+        "                         (useful if the workspace already has its own AGENTS.md)",
       );
       return 0;
     }
@@ -439,6 +548,7 @@ export const initCommand: Command = {
       withRoutines,
       withActions,
       noClaudeSkills,
+      noGeminiCommands,
       noAgentsMd,
     });
     return 0;
