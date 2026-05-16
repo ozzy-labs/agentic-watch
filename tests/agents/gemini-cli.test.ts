@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGeminiCliAdapter, type GeminiRunner } from "../../src/agents/gemini-cli.js";
-import type { ResearchRequest, ReviewRequest } from "../../src/agents/types.js";
+import type { ResearchRequest, ReviewRequest, UpdateRequest } from "../../src/agents/types.js";
 import type { Item, ResearchFrontmatter } from "../../src/schemas/index.js";
 import { ItemSchema } from "../../src/schemas/index.js";
 
@@ -55,6 +55,21 @@ function buildReviewRequest(): ReviewRequest {
     researchPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
     researchFrontmatter: SAMPLE_FRONTMATTER,
     researchBody: "---\nid: demo\n---\n\n# body\n",
+    cwd: "/tmp/agentic-watch",
+  };
+}
+
+function buildUpdateRequest(): UpdateRequest {
+  return {
+    agent: "gemini-cli",
+    templateId: "default",
+    templateBody: "# Default template\n",
+    prevResearch: {
+      frontmatter: SAMPLE_FRONTMATTER,
+      body: "---\nid: demo\n---\n\n# v1 body\n",
+    },
+    items: [SAMPLE_ITEM],
+    outputPath: "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
     cwd: "/tmp/agentic-watch",
   };
 }
@@ -231,6 +246,68 @@ describe("agents/gemini-cli", () => {
       await expect(adapter.review(buildReviewRequest())).rejects.toThrow(
         /exited with code 137.*\(no output\)/,
       );
+    });
+  });
+
+  describe("update", () => {
+    it("invokes the runner with the update SKILL prompt and predecessor id", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.update(buildUpdateRequest());
+
+      expect(calls).toHaveLength(1);
+      const call = calls[0];
+      expect(call.prompt).toContain(".agents/skills/update/SKILL.md");
+      expect(call.prompt).toContain(SAMPLE_FRONTMATTER.id);
+      expect(call.prompt).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
+      expect(call.prompt).toContain(
+        "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
+      );
+      expect(call.cwd).toBe("/tmp/agentic-watch");
+      // update prompt must NOT re-trigger the research SKILL (would generate v1, not v2).
+      expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
+    });
+
+    it("forwards prevResearch + items + outputPath as JSON on stdin", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.update(buildUpdateRequest());
+
+      const payload = JSON.parse(calls[0].stdin);
+      expect(payload).toEqual({
+        agent: "gemini-cli",
+        templateId: "default",
+        templateBody: "# Default template\n",
+        prevResearch: {
+          frontmatter: SAMPLE_FRONTMATTER,
+          body: "---\nid: demo\n---\n\n# v1 body\n",
+        },
+        items: [SAMPLE_ITEM],
+        outputPath: "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
+      });
+    });
+
+    it("resolves cleanly when the CLI exits 0", async () => {
+      const { runner } = buildMockRunner({ code: 0 });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.update(buildUpdateRequest())).resolves.toBeUndefined();
+    });
+
+    it("throws a descriptive error when the CLI exits non-zero", async () => {
+      const { runner } = buildMockRunner({ code: 5, stderr: "update prompt rejected" });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.update(buildUpdateRequest())).rejects.toThrow(
+        /gemini-cli adapter: gemini CLI exited with code 5.*update prompt rejected/,
+      );
+    });
+
+    it("surfaces a friendly message for auth-style errors during update", async () => {
+      const { runner } = buildMockRunner({
+        code: 1,
+        stderr: "Please log in to Gemini CLI",
+      });
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await expect(adapter.update(buildUpdateRequest())).rejects.toThrow(/authentication failed/i);
     });
   });
 
