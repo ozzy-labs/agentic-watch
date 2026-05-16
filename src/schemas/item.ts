@@ -24,5 +24,14 @@ export const ItemSchema = z.object({
   raw: z.unknown().optional(),
   matchedKeywords: z.array(z.string()).default([]),
   status: ItemStatusSchema.default("detected"),
+  /**
+   * Prompt-injection pattern labels that fired when the watcher scanned
+   * `title` / `summary` / `raw` (ADR-0009 M1a — Adopt). Audit-only: a
+   * non-empty value does NOT change `status`, sanitize content, or block
+   * downstream commands. Existing items written before this field landed
+   * default to `[]` thanks to the schema default, so load-side compat is
+   * automatic.
+   */
+  injectionFlags: z.array(z.string()).default([]),
 });
 export type Item = z.infer<typeof ItemSchema>;

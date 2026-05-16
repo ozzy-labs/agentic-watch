@@ -6,6 +6,7 @@ import { SourceSchema } from "../schemas/index.js";
 import type { FeedAdapter, FetchLike } from "./feeds/index.js";
 import { getFeedAdapter } from "./feeds/index.js";
 import { filterItems } from "./filter.js";
+import { detectInjection } from "./injection-detector.js";
 import { saveItems } from "./items.js";
 import { loadSourceState, saveSourceState } from "./state.js";
 
@@ -16,6 +17,37 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Run the injection pre-filter (ADR-0009 M1a — Adopt) over an item's
+ * untrusted text fields and return the item with `injectionFlags` populated.
+ *
+ * Coverage: `title`, `summary`, and `raw`. The `raw` payload is structured
+ * (varies by adapter — RSS / Atom / npm / HTML), so we `JSON.stringify` it so
+ * embedded strings are still scanned without forcing each adapter to know
+ * about the detector. Fields that are unset / empty contribute nothing.
+ *
+ * Audit-only: the flags are recorded for later inspection by `research` /
+ * `review` / `update` and surface in CLI logs. We do NOT mutate `status`,
+ * sanitize content, or drop items — that aligns with ADR-0009 M5a (Adopt /
+ * user retains judgment) and M5b (Reject — no auto-drop).
+ */
+function annotateInjectionFlags(item: Item): Item {
+  const parts: string[] = [item.title];
+  if (item.summary) parts.push(item.summary);
+  if (item.raw !== undefined) {
+    try {
+      parts.push(JSON.stringify(item.raw));
+    } catch {
+      // Circular / unserializable raw payload — fall back to a coarse string
+      // cast so we still scan something rather than silently skip.
+      parts.push(String(item.raw));
+    }
+  }
+  const haystack = parts.join("\n");
+  const { matched } = detectInjection(haystack);
+  return { ...item, injectionFlags: matched };
 }
 
 export interface WorkspacePaths {
@@ -183,7 +215,9 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       log(`watch run: '${source.id}' unchanged (304)`);
     } else {
       const passed = filterItems(fetched, source);
-      const fresh = passed.filter((item) => !seenIds.has(item.id));
+      const fresh = passed
+        .filter((item) => !seenIds.has(item.id))
+        .map((item) => annotateInjectionFlags(item));
       if (fresh.length > 0) {
         await saveItems(paths.itemsDir, fresh);
         for (const item of fresh) seenIds.add(item.id);
@@ -197,6 +231,17 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       log(
         `watch run: '${source.id}' fetched ${fetched.length} items, ${fresh.length} new after filter`,
       );
+      // Surface a per-source audit summary for items that tripped the
+      // injection pre-filter (ADR-0009 M1a). We log once per source rather
+      // than per item to keep the watch output readable when a feed has many
+      // hits; the per-item view is available via `agentic-watch research` /
+      // `review` / `update` logs and in `items/<id>.yaml` directly.
+      const flagged = fresh.filter((i) => i.injectionFlags.length > 0);
+      if (flagged.length > 0) {
+        warn(
+          `watch run: '${source.id}' ${flagged.length} item(s) tripped the prompt-injection pre-filter (audit-only; status unchanged). See injectionFlags in items/<id>.yaml.`,
+        );
+      }
     }
 
     const nextState: SourceState = {
