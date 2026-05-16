@@ -87,6 +87,13 @@ describe("agents/codex-cli adapter", () => {
       expect(prompt).toContain(req.outputPath);
       expect(prompt).toContain(SAMPLE_ITEM.id);
 
+      // Item title / summary / raw must be inside the boundary marker pair
+      // (ADR-0009 M1c). The opening / closing tags and the upstream-sourced
+      // title both have to be present.
+      expect(prompt).toContain("<untrusted_item>");
+      expect(prompt).toContain("</untrusted_item>");
+      expect(prompt).toContain(SAMPLE_ITEM.title);
+
       // cwd is forwarded so `codex exec --cd <cwd>` is rooted at the workspace.
       expect(options.cwd).toBe(req.cwd);
 
@@ -169,6 +176,13 @@ describe("agents/codex-cli adapter", () => {
       expect(prompt).toContain(".agents/skills/review/SKILL.md");
       expect(prompt).toContain(req.researchPath);
       expect(prompt).toContain("codex-cli");
+
+      // The predecessor research body (untrusted, upstream-derived) is wrapped
+      // in the boundary marker pair (ADR-0009 M1c).
+      expect(prompt).toContain("<untrusted_item>");
+      expect(prompt).toContain("</untrusted_item>");
+      expect(prompt).toContain(req.researchBody);
+
       expect(options.cwd).toBe(req.cwd);
 
       const stdinJson = JSON.parse(options.stdin);
@@ -234,6 +248,14 @@ describe("agents/codex-cli adapter", () => {
       // Predecessor id is the supersedes target we instruct the agent to write.
       expect(prompt).toContain(SAMPLE_RESEARCH_FM.id);
       expect(prompt).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
+
+      // Both the predecessor research body and per-item title/summary/raw
+      // must sit inside the boundary marker pair (ADR-0009 M1c).
+      expect(prompt).toContain("<untrusted_item>");
+      expect(prompt).toContain("</untrusted_item>");
+      expect(prompt).toContain(req.prevResearch.body);
+      expect(prompt).toContain(SAMPLE_ITEM.title);
+
       expect(options.cwd).toBe(req.cwd);
 
       const stdinJson = JSON.parse(options.stdin);
