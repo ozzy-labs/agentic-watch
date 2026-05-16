@@ -68,6 +68,38 @@ function buildResearchPrompt(req: ResearchRequest): string {
  *     "researchBody":        string
  *   }
  */
+function buildReviewPrompt(req: ReviewRequest): string {
+  return [
+    "Run the `.agents/skills/review/SKILL.md` skill to cross-check the",
+    "existing research report and append a review block.",
+    "",
+    "Inputs (one JSON document on stdin):",
+    "  - agent:               the agent id you are running as",
+    "  - templateId:          review template id (e.g. `default`)",
+    "  - templateBody:        contents of templates/<templateId>.md, or empty",
+    "                         string if the workspace did not provide one",
+    "  - researchPath:        absolute path to the research file you MUST modify",
+    "  - researchFrontmatter: parsed frontmatter object (pre-review state)",
+    "  - researchBody:        full file body including frontmatter at adapter",
+    "                         invocation (the CLI re-reads after you return)",
+    "",
+    `Research file to review: ${req.researchPath}`,
+    `Reviewing agent id (stamp this into reviewedBy): ${req.agent}`,
+    "",
+    "Constraints:",
+    "  - Follow `.agents/skills/review/SKILL.md` exactly for the review block",
+    "    layout and frontmatter stamp; ADR-0003 / ADR-0008 are the canonical",
+    "    contract specs.",
+    "  - Set frontmatter `reviewedAt` to the current ISO 8601 timestamp (UTC)",
+    "    and `reviewedBy` to the agent id above.",
+    "  - Append a single `## レビュー (<agent-id>, <ISO 8601>)` section at the",
+    "    end of the body. Do not rewrite the existing research content.",
+    "  - Do not modify items/*.yaml — the CLI handles the status transition",
+    "    and the atomic rollback if anything fails.",
+    "  - Write to `researchPath` only. Do not create new files.",
+  ].join("\n");
+}
+
 /**
  * Build the prompt handed to `gemini -p` for update.
  *
@@ -116,38 +148,6 @@ function buildUpdatePrompt(req: UpdateRequest): string {
     "  - Do not modify the predecessor file or any items/*.yaml — the CLI",
     "    enforces immutable history and items.yaml status invariance.",
     "  - Write to `outputPath` only. Do not create other files.",
-  ].join("\n");
-}
-
-function buildReviewPrompt(req: ReviewRequest): string {
-  return [
-    "Run the `.agents/skills/review/SKILL.md` skill to cross-check the",
-    "existing research report and append a review block.",
-    "",
-    "Inputs (one JSON document on stdin):",
-    "  - agent:               the agent id you are running as",
-    "  - templateId:          review template id (e.g. `default`)",
-    "  - templateBody:        contents of templates/<templateId>.md, or empty",
-    "                         string if the workspace did not provide one",
-    "  - researchPath:        absolute path to the research file you MUST modify",
-    "  - researchFrontmatter: parsed frontmatter object (pre-review state)",
-    "  - researchBody:        full file body including frontmatter at adapter",
-    "                         invocation (the CLI re-reads after you return)",
-    "",
-    `Research file to review: ${req.researchPath}`,
-    `Reviewing agent id (stamp this into reviewedBy): ${req.agent}`,
-    "",
-    "Constraints:",
-    "  - Follow `.agents/skills/review/SKILL.md` exactly for the review block",
-    "    layout and frontmatter stamp; ADR-0003 / ADR-0008 are the canonical",
-    "    contract specs.",
-    "  - Set frontmatter `reviewedAt` to the current ISO 8601 timestamp (UTC)",
-    "    and `reviewedBy` to the agent id above.",
-    "  - Append a single `## レビュー (<agent-id>, <ISO 8601>)` section at the",
-    "    end of the body. Do not rewrite the existing research content.",
-    "  - Do not modify items/*.yaml — the CLI handles the status transition",
-    "    and the atomic rollback if anything fails.",
-    "  - Write to `researchPath` only. Do not create new files.",
   ].join("\n");
 }
 
