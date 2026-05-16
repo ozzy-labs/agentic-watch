@@ -1,7 +1,7 @@
 # User Guide
 
-> **Status**: alpha — Phase 1 実装中。各コマンドは段階的に有効化される。
-> 本ドキュメントは Phase 1 完了時点の仕様を先取りして記述しており、Phase 0 時点では一部のサブコマンドが `not implemented yet (Phase 1)` を返す。
+> **Status**: alpha — Phase 1-5 まで実装済み (7 サブコマンド + 4 agent × 4 source kind + cron 雛形)。Phase 6 (OIDC Trusted Publishers での `0.1.0` npm publish) 待機中。
+> 本ドキュメントは現行 CLI 仕様を記述する。実装と乖離している箇所は issue で報告してほしい。
 
 ## インストール
 
@@ -28,7 +28,7 @@ npx @ozzylabs/agentic-watch <command>
 | `gemini-cli` | 実装済み | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` 内で対話ログイン（OAuth）または `GEMINI_API_KEY` 環境変数 | `gemini -p "<prompt>" -y --skip-trust --output-format text` |
 | `copilot` | 実装済み | [GitHub Copilot CLI](https://docs.github.com/copilot/github-copilot-in-the-cli) | `copilot auth login` | `copilot -p "<prompt>" --allow-all-paths --allow-all-tools --no-color` |
 
-Phase 2 で 4 agent 全てが本実装済み。
+4 agent 全てが利用可能 (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`)。
 
 ## クイックスタート
 
@@ -55,10 +55,12 @@ agentic-watch research <item-id> --agent claude-code
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
 ├── templates/           # 既定テンプレートのコピー
-├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions
+├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions (`--no-agents-md` で skip)
 ├── .agents/skills/      # engine SKILL (SSoT): research / review / update
-├── .claude/skills/      # Claude Code slash-command 雛形 (薄い wrapper)
-└── .github/workflows/   # 定期実行ワークフロー（任意）
+├── .claude/skills/      # Claude Code slash-command 雛形 (薄い wrapper、`--no-claude-skills` で skip)
+├── .gemini/commands/    # Gemini CLI 用 TOML slash-command 雛形 (`--no-gemini-commands` で skip)
+├── .github/workflows/   # 定期実行ワークフロー (`--with-actions` 指定時のみ)
+└── claude/routines/     # Claude Routines (`--with-routines` 指定時のみ)
 ```
 
 `--with-routines` / `--with-actions` を指定すると、定期実行 scheduler への接続用雛形が追加で生成される（詳細は本ドキュメントの「[スケジュール実行](#スケジュール実行)」セクション）。
@@ -68,6 +70,7 @@ agentic-watch research <item-id> --agent claude-code
 - `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
 - **engine SKILL** (`.agents/skills/{research,review,update}/SKILL.md`) を **bundled** からコピー。adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体
 - **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
+- **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 
@@ -320,9 +323,9 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 - 検証が通れば `items/<sourceId>/<item-id>.yaml` の `status` を `researched` に遷移
 - 既存ファイルが既にある場合は上書きせずエラー終了する（再実行は `agentic-watch update` 経由）
 
-出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。
+出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。agent が誤って `reviewedAt` / `reviewedBy` / `supersedes` を populate した場合、CLI は warning を出しつつ frontmatter を `null` に自動補正する（drift 防止）。
 
-Phase 2 で 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが利用可能になった (#19, #44, #45, #32 本 PR, #46)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
+4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが利用可能 (#19, #44, #45, #32, #46)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
 
 Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
@@ -377,9 +380,9 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 
 #### 再レビュー (re-review)
 
-同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す（Phase 4）。
+同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す。
 
-Phase 2 で 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが review に対応する。
+4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが review に対応する。
 
 #### クロスエージェント運用（推奨）
 
@@ -492,7 +495,7 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ### スコープ外
 
-- `update` コマンドの default agent: Phase 5 で `update` コマンド本体を実装する際に追加
+- `update` コマンド専用の default agent: 現状 `update` は `defaultResearchAgent` を借用する（前版を書いた agent と同じ系統で v+1 を生成するため）。dedicated `defaultUpdateAgent` フィールドは将来別 issue で追加
 - agent 固有の設定（timeout / API key / モデル指定など）: 必要が出てから別 issue で追加
 
 ## スケジュール実行
@@ -554,7 +557,7 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ### 信頼できる feed source のみ登録する
 
-現時点 (Phase 2) では agentic-watch 側に prompt injection sanitize レイヤーを持たないため、ユーザー側の運用で feed source を選別することが第一の防御線になる。
+現時点では agentic-watch 側に包括的な prompt injection sanitize レイヤーを持たない ([ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a の regex pre-filter は audit-only)。ユーザー側の運用で feed source を選別することが第一の防御線になる。
 
 **推奨される source**:
 
@@ -664,7 +667,7 @@ filters:
 
 | 症状 | 対処 |
 |---|---|
-| `not implemented yet (Phase 1)` | 該当コマンドは未実装。Phase 1 まで待つか、[Phase 1 epic](https://github.com/ozzy-labs/agentic-watch/issues?q=label%3Aphase-1) に貢献 |
 | agent CLI が見つからない | `claude` / `codex` / `gemini` / `copilot` が `PATH` に存在し認証済みであることを確認 |
+| `codex login` / `gemini` OAuth / `copilot auth login` が未完了でエラー | 該当 agent CLI を一度対話起動して認証を完了させる。`agentic-watch` は子プロセスとして spawn するだけで認証ループは持たない |
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
-| Phase 1 で試した workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/agentic-watch/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
+| workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/agentic-watch/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
