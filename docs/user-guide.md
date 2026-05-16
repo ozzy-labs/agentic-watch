@@ -82,6 +82,8 @@ agentic-watch research <item-id> --agent claude-code
 | `--keywords` | カンマ区切り、ヒット対象キーワード |
 | `--exclude-keywords` | カンマ区切り、除外キーワード |
 
+なお `sources/<id>.yaml` は **`trustLevel: "trusted" | "untrusted"`** フィールドも持つ（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M4）。default は `"untrusted"` で、`source add` で生成される YAML には `trustLevel: untrusted` が書き出される。`"trusted"` への opt-in は YAML を手で編集する（CLI flag は提供しない。後述「[trustLevel: 信頼境界の opt-in](#trustlevel-信頼境界の-opt-in)」を参照）。
+
 #### `--kind github-releases`
 
 GitHub の Releases API (`GET /repos/<owner>/<repo>/releases`) からリリースを取得する。
@@ -508,6 +510,32 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 ### 包括的な sanitize 対策
 
 agentic-watch 全体での prompt injection 緩和レイヤー（item content の sanitize、agent prompt の分離、出力検証など）は別 Phase で取り組む予定（[#49](https://github.com/ozzy-labs/agentic-watch/issues/49)）。それまでは上記の運用ガイドラインで mitigate する。
+
+### `trustLevel`: 信頼境界の opt-in
+
+`sources/<id>.yaml` の **`trustLevel`** フィールドで、その source のコンテンツを信頼境界の内側として扱うかを宣言する（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M4）。
+
+| 値 | 意味 |
+|---|---|
+| `"untrusted"` (default) | 外部 feed と同等に扱う。`source add` で生成される YAML はすべてこれ |
+| `"trusted"` | ユーザーが自分でコンテンツを掌握している source（自社内部 feed、社内 wiki エクスポート、release notes を maintainer 自身が書く GitHub Releases など）に opt-in |
+
+ファイル例（明示 opt-in。CLI flag は提供されないため YAML を直接編集する）:
+
+```yaml
+# sources/internal-blog.yaml
+id: internal-blog
+kind: rss
+url: https://blog.internal.example.com/feed.xml
+trustLevel: trusted   # 既定は untrusted。社内 feed のみ明示的に格上げする
+tags: ["internal"]
+filters:
+  keywords: ["release", "changelog"]
+```
+
+`trustLevel` 未指定の既存 YAML（[#17](https://github.com/ozzy-labs/agentic-watch/pull/17) 以前に作成したもの）は schema が default `"untrusted"` を補うため、migration は不要。
+
+**現時点の挙動**: 本フィールドは schema のみの拡張で、実際の policy 分岐（regex 検出感度の調整、prompt builder の boundary marker 強度など）はまだ実装されていない。すべての source は `trustLevel` の値に関わらず untrusted 扱いで運用される。downstream で `trustLevel` を参照するロジックは [#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 配下の sub-issue で順次入れていく。それまで `trustLevel: trusted` を設定しても挙動上の差は出ない（将来の policy 分岐に備えた宣言として機能する）。
 
 ## トラブルシューティング
 
