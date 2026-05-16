@@ -179,6 +179,12 @@ describe("e2e/cli (binary smoke)", () => {
       for (const skill of ["research", "review", "update", "dismiss"]) {
         expect(existsSync(join(workdir, ".claude", "skills", skill, "SKILL.md"))).toBe(true);
       }
+      // Gemini CLI slash commands under .gemini/commands/ (ADR-0007 revision
+      // via #78): native TOML format Gemini CLI surfaces as /research etc.
+      // dismiss appears here too (same asymmetry as .claude/skills/).
+      for (const command of ["research", "review", "update", "dismiss"]) {
+        expect(existsSync(join(workdir, ".gemini", "commands", `${command}.toml`))).toBe(true);
+      }
       // Workspace-root AGENTS.md (ADR-0007 revision via #77): agent-agnostic
       // instructions auto-read by Codex / Gemini / Copilot when opened in
       // the workspace.
@@ -196,6 +202,23 @@ describe("e2e/cli (binary smoke)", () => {
       }
       // .claude/skills/ should not exist at all.
       expect(existsSync(join(workdir, ".claude", "skills"))).toBe(false);
+    });
+
+    it("--no-gemini-commands skips .gemini/commands/ but still writes engine SKILLs", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-init-nogc-"));
+      const result = await runCli(["init", "--no-gemini-commands"], { cwd: workdir });
+
+      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+      // Engine SKILLs still written (SSoT layer, always on).
+      for (const skill of ["research", "review", "update"]) {
+        expect(existsSync(join(workdir, ".agents", "skills", skill, "SKILL.md"))).toBe(true);
+      }
+      // Claude discovery skills still written (independent of gemini opt-out).
+      for (const skill of ["research", "review", "update", "dismiss"]) {
+        expect(existsSync(join(workdir, ".claude", "skills", skill, "SKILL.md"))).toBe(true);
+      }
+      // .gemini/commands/ should not exist at all.
+      expect(existsSync(join(workdir, ".gemini", "commands"))).toBe(false);
     });
   });
 

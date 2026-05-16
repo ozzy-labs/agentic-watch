@@ -8,6 +8,7 @@ const REPO_ROOT = resolve(__dirname, "..", "..");
 const BUNDLED_SKILLS_ROOT = join(REPO_ROOT, "src", "skills");
 const BUNDLED_TEMPLATES_ROOT = join(REPO_ROOT, "src", "templates");
 const BUNDLED_CLAUDE_SKILLS_ROOT = join(REPO_ROOT, "src", "claude-skills");
+const BUNDLED_GEMINI_COMMANDS_ROOT = join(REPO_ROOT, "src", "gemini-commands");
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -50,13 +51,14 @@ describe("cli/init", () => {
   });
 
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
-    // Scope this test to the engine SKILLs only — claude discovery skills and
-    // AGENTS.md get their own describe blocks below.
+    // Scope this test to the engine SKILLs only — claude discovery skills,
+    // gemini commands, and AGENTS.md get their own describe blocks below.
     const result = await initWorkspace({
       cwd: workdir,
       force: false,
       skillsRoot: BUNDLED_SKILLS_ROOT,
       noClaudeSkills: true,
+      noGeminiCommands: true,
       noAgentsMd: true,
       warn: (m) => warnings.push(m),
       info: () => undefined,
@@ -378,6 +380,141 @@ describe("cli/init", () => {
       expect(warnings.some((m) => m.includes("bundled claude discovery skill not found"))).toBe(
         true,
       );
+    });
+  });
+
+  describe("gemini commands (.gemini/commands/)", () => {
+    // ADR-0007 (revised 2026-05-17 c via #78): default-on Gemini CLI slash
+    // commands at <cwd>/.gemini/commands/<name>.toml, opt-out via
+    // `noGeminiCommands` for workspaces that already manage that directory
+    // or don't use Gemini CLI. Closes the slash-command UX gap for Gemini
+    // CLI (Codex CLI is covered by the engine SKILL dual-mode procedure
+    // itself; Claude / Copilot were already covered via .claude/skills/).
+
+    it("emits .gemini/commands/{research,review,update,dismiss}.toml by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        geminiCommandsRoot: BUNDLED_GEMINI_COMMANDS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      for (const command of ["research", "review", "update", "dismiss"]) {
+        const dest = join(workdir, ".gemini", "commands", `${command}.toml`);
+        expect(await pathExists(dest)).toBe(true);
+        const body = await readFile(dest, "utf8");
+        // Gemini CLI command TOML contract: `prompt` and `description` keys.
+        expect(body).toMatch(/^prompt\s*=/m);
+        expect(body).toMatch(/^description\s*=/m);
+        // The wrapper delegates to the CLI — body should reference it and
+        // Gemini's {{args}} interpolation token.
+        expect(body).toContain("agentic-watch");
+        expect(body).toContain("{{args}}");
+        expect(result.copiedFiles).toContain(`.gemini/commands/${command}.toml`);
+      }
+    });
+
+    it("skips .gemini/commands/ entirely when noGeminiCommands: true", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        geminiCommandsRoot: BUNDLED_GEMINI_COMMANDS_ROOT,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      // The .gemini/commands/ directory should not be touched at all.
+      expect(await pathExists(join(workdir, ".gemini", "commands"))).toBe(false);
+      // Engine SKILLs are still written (this is the SSoT layer, always on).
+      for (const skill of ["research", "review", "update"]) {
+        expect(await pathExists(join(workdir, ".agents", "skills", skill, "SKILL.md"))).toBe(true);
+      }
+      // No .gemini/commands/ entries in either copied or skipped (we never
+      // even looked at the bundle).
+      const geminiEntries = [...result.copiedFiles, ...result.skippedFiles].filter((p) =>
+        p.startsWith(".gemini/commands/"),
+      );
+      expect(geminiEntries).toEqual([]);
+    });
+
+    it("protects existing .gemini/commands/<name>.toml without --force", async () => {
+      const dest = join(workdir, ".gemini", "commands", "research.toml");
+      await mkdir(join(workdir, ".gemini", "commands"), { recursive: true });
+      await writeFile(dest, 'prompt = "user-edited"\ndescription = "user"\n', "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        geminiCommandsRoot: BUNDLED_GEMINI_COMMANDS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe('prompt = "user-edited"\ndescription = "user"\n');
+      expect(result.skippedFiles).toContain(".gemini/commands/research.toml");
+      expect(warnings.some((m) => m.includes(".gemini/commands/research.toml"))).toBe(true);
+      // The other 3 commands should still be written.
+      for (const command of ["review", "update", "dismiss"]) {
+        expect(await pathExists(join(workdir, ".gemini", "commands", `${command}.toml`))).toBe(
+          true,
+        );
+      }
+    });
+
+    it("overwrites existing .gemini/commands/<name>.toml with --force", async () => {
+      const dest = join(workdir, ".gemini", "commands", "dismiss.toml");
+      await mkdir(join(workdir, ".gemini", "commands"), { recursive: true });
+      await writeFile(dest, 'prompt = "user-edited"\ndescription = "user"\n', "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        geminiCommandsRoot: BUNDLED_GEMINI_COMMANDS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe('prompt = "user-edited"\ndescription = "user"\n');
+      expect(body).toMatch(/^prompt\s*=/m);
+      expect(body).toContain("agentic-watch dismiss");
+      expect(result.copiedFiles).toContain(".gemini/commands/dismiss.toml");
+    });
+
+    it("warns and records a skip when the gemini-commands bundle is missing", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        // Point at a gemini-commands root that does not exist on disk.
+        geminiCommandsRoot: join(workdir, "__nope__"),
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      for (const command of ["research", "review", "update", "dismiss"]) {
+        expect(await pathExists(join(workdir, ".gemini", "commands", `${command}.toml`))).toBe(
+          false,
+        );
+        expect(result.skippedFiles).toContain(`.gemini/commands/${command}.toml`);
+      }
+      expect(warnings.some((m) => m.includes("bundled gemini command not found"))).toBe(true);
     });
   });
 
