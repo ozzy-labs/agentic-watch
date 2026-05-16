@@ -29,6 +29,7 @@ agentic-watch プロジェクト**内部の**設計判断を記録する。OzzyL
 | [0006](./0006-filter-specification.md) | Filter Specification | Proposed |
 | [0007](./0007-skill-bundling-and-init-distribution.md) | Skill Bundling and `init` Distribution | Accepted |
 | [0008](./0008-status-state-machine.md) | Item Status State Machine | Accepted |
+| [0009](./0009-untrusted-external-content-handling.md) | Untrusted External Content Handling for Agent Prompts | Accepted |
 
 ## 新規 ADR の追加
 

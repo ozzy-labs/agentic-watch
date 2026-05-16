@@ -147,6 +147,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 | Phase 5 | `update` コマンド（既存 research の差分更新） |
 | Phase 6 | npm publish 初版 + Trusted Publisher 登録 |
 | Phase 7 | VS Code extension |
+| Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 親 issue) |
 
 ## 関連 ADR
 
@@ -158,8 +159,10 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 - [0006 Filter Specification](./adr/0006-filter-specification.md)
 - [0007 Skill Bundling and `init` Distribution](./adr/0007-skill-bundling-and-init-distribution.md)
 - [0008 Item Status State Machine](./adr/0008-status-state-machine.md)
+- [0009 Untrusted External Content Handling for Agent Prompts](./adr/0009-untrusted-external-content-handling.md)
 
 ## 関連 Design Docs
 
 - [`design/filter-spec.md`](./design/filter-spec.md) — `core/filter` の評価順序・matchMode・matchFields・edge cases（ADR-0006 の実装寄り詳細）
 - [`design/skill-design.md`](./design/skill-design.md) — `.agents/skills/` バンドリング、`init` copy 戦略、SKILL 呼び出しプロトコル（ADR-0001 / ADR-0003 / ADR-0007 / ADR-0008 の実装寄り詳細）
+- [`design/threat-model.md`](./design/threat-model.md) — prompt injection 攻撃面 / 被害範囲 / 緩和候補（ADR-0009 の脅威モデル詳細）
