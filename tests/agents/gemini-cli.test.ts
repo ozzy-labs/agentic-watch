@@ -122,6 +122,13 @@ describe("agents/gemini-cli", () => {
       expect(call.prompt).toContain(".agents/skills/research/SKILL.md");
       expect(call.prompt).toContain(SAMPLE_ITEM.id);
       expect(call.prompt).toContain("/tmp/agentic-watch/research/20260510_demo_v1.md");
+
+      // Item title / summary / raw must sit inside the boundary marker pair
+      // (ADR-0009 M1c) so the LLM treats the upstream-sourced content as data.
+      expect(call.prompt).toContain("<untrusted_item>");
+      expect(call.prompt).toContain("</untrusted_item>");
+      expect(call.prompt).toContain(SAMPLE_ITEM.title);
+
       // The cwd is forwarded so the spawned CLI sees workspace-relative paths.
       expect(call.cwd).toBe("/tmp/agentic-watch");
     });
@@ -199,6 +206,12 @@ describe("agents/gemini-cli", () => {
       expect(call.prompt).toContain("gemini-cli");
       // The review prompt should NOT re-trigger the research SKILL.
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
+
+      // The predecessor research body (untrusted, upstream-derived) is wrapped
+      // in the boundary marker pair (ADR-0009 M1c).
+      expect(call.prompt).toContain("<untrusted_item>");
+      expect(call.prompt).toContain("</untrusted_item>");
+      expect(call.prompt).toContain("---\nid: demo\n---\n\n# body\n");
     });
 
     it("forwards the full review payload as JSON on stdin", async () => {
@@ -266,6 +279,13 @@ describe("agents/gemini-cli", () => {
       expect(call.cwd).toBe("/tmp/agentic-watch");
       // update prompt must NOT re-trigger the research SKILL (would generate v1, not v2).
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
+
+      // Both the predecessor research body and per-item title/summary/raw
+      // must sit inside the boundary marker pair (ADR-0009 M1c).
+      expect(call.prompt).toContain("<untrusted_item>");
+      expect(call.prompt).toContain("</untrusted_item>");
+      expect(call.prompt).toContain("---\nid: demo\n---\n\n# v1 body\n");
+      expect(call.prompt).toContain(SAMPLE_ITEM.title);
     });
 
     it("forwards prevResearch + items + outputPath as JSON on stdin", async () => {

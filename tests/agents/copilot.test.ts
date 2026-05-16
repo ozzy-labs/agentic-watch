@@ -105,6 +105,13 @@ describe("agents/copilot research", () => {
     expect(calls[0].prompt).toContain(".agents/skills/research/SKILL.md");
     expect(calls[0].prompt).toContain(SAMPLE_ITEM.id);
     expect(calls[0].prompt).toContain("/tmp/research/20260510_anthropic-news_v1.md");
+
+    // Item title / summary / raw must sit inside the boundary marker pair
+    // (ADR-0009 M1c) so the LLM treats the upstream-sourced content as data.
+    expect(calls[0].prompt).toContain("<untrusted_item>");
+    expect(calls[0].prompt).toContain("</untrusted_item>");
+    expect(calls[0].prompt).toContain(SAMPLE_ITEM.title);
+
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
@@ -168,6 +175,13 @@ describe("agents/copilot review", () => {
     expect(calls[0].prompt).toContain(".agents/skills/review/SKILL.md");
     expect(calls[0].prompt).toContain("/tmp/research/20260510_anthropic-news_v1.md");
     expect(calls[0].prompt).toContain("stamp this into reviewedBy");
+
+    // The predecessor research body (untrusted, upstream-derived) is wrapped
+    // in the boundary marker pair (ADR-0009 M1c).
+    expect(calls[0].prompt).toContain("<untrusted_item>");
+    expect(calls[0].prompt).toContain("</untrusted_item>");
+    expect(calls[0].prompt).toContain("---\nid: x\n---\nbody\n");
+
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
@@ -224,6 +238,14 @@ describe("agents/copilot update", () => {
     expect(calls[0].prompt).toContain(
       "/tmp/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     );
+
+    // Both the predecessor research body and per-item title/summary/raw
+    // must sit inside the boundary marker pair (ADR-0009 M1c).
+    expect(calls[0].prompt).toContain("<untrusted_item>");
+    expect(calls[0].prompt).toContain("</untrusted_item>");
+    expect(calls[0].prompt).toContain("---\nid: x\n---\n# v1 body\n");
+    expect(calls[0].prompt).toContain(SAMPLE_ITEM.title);
+
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
