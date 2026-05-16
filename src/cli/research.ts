@@ -231,6 +231,16 @@ export async function runResearch(
   }
   const { item } = found;
 
+  // Surface any prompt-injection pre-filter hits recorded by the watcher
+  // (ADR-0009 M1a / M5a — Adopt). Audit-only: the agent still runs against
+  // the original content, but the user gets an explicit warning so they can
+  // `agentic-watch dismiss` and re-evaluate before committing tokens.
+  if (item.injectionFlags.length > 0) {
+    warn(
+      `research: item '${item.id}' has ${item.injectionFlags.length} injection flag(s): ${item.injectionFlags.join(", ")} (audit-only; use \`agentic-watch dismiss\` to skip)`,
+    );
+  }
+
   // Load template.
   const templatesDir = join(cwd, "templates");
   let template: ResearchTemplate;

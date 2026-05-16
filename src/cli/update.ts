@@ -353,6 +353,18 @@ export async function runUpdate(
     return 1;
   }
 
+  // Surface any prompt-injection pre-filter hits recorded by the watcher
+  // (ADR-0009 M1a / M5a — Adopt). Audit-only: `update` still generates a v+1
+  // from possibly tainted content, but the user gets the audit signal before
+  // spending tokens on the regeneration pass.
+  for (const linked of linkedItems) {
+    if (linked.injectionFlags.length > 0) {
+      warn(
+        `update: item '${linked.id}' has ${linked.injectionFlags.length} injection flag(s): ${linked.injectionFlags.join(", ")} (audit-only; v+1 will regenerate research from the same source content)`,
+      );
+    }
+  }
+
   // Load template.
   const templatesDir = join(cwd, "templates");
   let template: ResearchTemplate;
