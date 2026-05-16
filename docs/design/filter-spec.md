@@ -94,10 +94,10 @@ def evaluate(item, filters):
 |---|---|:--:|:--:|:--:|:--:|
 | `title` | `item.title` | YES | YES | YES | YES |
 | `summary` | `item.summary`（RSS なら `<description>`） | YES | YES | YES | YES |
-| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | no (captured into `raw` only; `Item` schema has no `body` field, `filter.ts` silently skips) | no | no |
-| `tags` | feed が `<category>` / labels を提供する場合 | no | no | YES | no |
+| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | no (captured into `raw` only) | no | no |
+| `tags` | feed が `<category>` / labels を提供する場合 | no | no | no (captured into `raw` only) | no |
 
-`matchFields` に未提供フィールド（adapter が `Item` に surface しないフィールド）を指定しても **silently skip**（エラーにせず、その field を無いものとして扱う）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、後で adapter が増えても自動的に有効化される。`html` adapter は `body` を `raw.body` として持つが Item schema には body field が無いため `filter.ts` 側でも参照不可。
+`Item` schema には `body` / `tags` field が無いため、`filter.ts` の `buildHaystack` は両 field を **全 adapter で silently skip**（エラーにせず、その field を無いものとして扱う、`src/core/filter.ts` L57-61）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、将来 `Item` schema に `body` / `tags` を追加し adapter が surface し始めれば自動的に有効化される。例えば `html` adapter は `body` を `raw.body` として保持しているが、`Item` schema に body field が無いため `filter.ts` 側からは参照できない (`raw` は agent 渡し用の生データ袋であり、filter haystack の対象ではない)。
 
 ## Edge cases
 
