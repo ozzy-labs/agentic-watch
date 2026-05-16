@@ -10,6 +10,26 @@ allowed-tools: Read,Grep,Bash,WebFetch
 
 研究 (`research`) を書いた agent と**別の agent** で update を実行することも可能。`agent` フィールドは v+1 で書き換えてよい (skill-design.md §8.3 で mutable と定義)。`reviewedAt` / `reviewedBy` は v+1 で **`null` にリセット** する。
 
+## Invocation modes
+
+This SKILL serves two invocation modes:
+
+1. **Adapter spawn (default)**: The `agentic-watch` CLI spawns the agent as a
+   subprocess and pipes a JSON payload to stdin (`agent`, `templateId`,
+   `templateBody`, `items`, `outputPath`, optionally `prevResearch`). Follow
+   the procedure below.
+
+2. **Interactive invocation (slash / mention)**: If invoked from an
+   interactive session (no stdin JSON payload, `$ARGUMENTS` or equivalent
+   argument string present), do NOT attempt the full procedure. Instead,
+   shell out to the `agentic-watch` CLI verbatim:
+
+   - For update: `agentic-watch update $ARGUMENTS`
+
+   The CLI re-invokes the agent through the adapter spawn path internally,
+   so the procedure below still runs — just through the right invocation
+   channel.
+
 ## 入力 (stdin JSON)
 
 CLI は次のスキーマで JSON を 1 件だけ stdin に書き込む:

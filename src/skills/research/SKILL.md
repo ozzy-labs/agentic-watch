@@ -10,6 +10,26 @@ allowed-tools: Read,Grep,Bash,WebFetch
 
 このスキルは `agentic-watch research <item-id> --agent <agent-id>` から起動され、CLI から **stdin に 1 つの JSON ドキュメント** が渡される。本文の最終仕様は [#9](https://github.com/ozzy-labs/agentic-watch/issues/9) § 2 (`docs/design/skill-design.md`) で確定する。
 
+## Invocation modes
+
+This SKILL serves two invocation modes:
+
+1. **Adapter spawn (default)**: The `agentic-watch` CLI spawns the agent as a
+   subprocess and pipes a JSON payload to stdin (`agent`, `templateId`,
+   `templateBody`, `items`, `outputPath`, optionally `prevResearch`). Follow
+   the procedure below.
+
+2. **Interactive invocation (slash / mention)**: If invoked from an
+   interactive session (no stdin JSON payload, `$ARGUMENTS` or equivalent
+   argument string present), do NOT attempt the full procedure. Instead,
+   shell out to the `agentic-watch` CLI verbatim:
+
+   - For research: `agentic-watch research $ARGUMENTS`
+
+   The CLI re-invokes the agent through the adapter spawn path internally,
+   so the procedure below still runs — just through the right invocation
+   channel.
+
 ## 入力 (stdin JSON)
 
 CLI は次のスキーマで JSON を 1 件だけ stdin に書き込む:
