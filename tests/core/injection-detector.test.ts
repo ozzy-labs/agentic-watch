@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  INJECTION_PATTERN_LABELS,
-  detectInjection,
-} from "../../src/core/injection-detector.js";
+import { detectInjection, INJECTION_PATTERN_LABELS } from "../../src/core/injection-detector.js";
 
 describe("core/injection-detector — pattern coverage (ADR-0009 M1a)", () => {
   // Each row exercises one labelled pattern. The acceptance criterion for #63
