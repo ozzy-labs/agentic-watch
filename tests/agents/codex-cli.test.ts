@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCodexCliAdapter } from "../../src/agents/codex-cli.js";
-import type { ResearchRequest, ReviewRequest } from "../../src/agents/index.js";
+import type { ResearchRequest, ReviewRequest, UpdateRequest } from "../../src/agents/index.js";
 import type { Item, ResearchFrontmatter } from "../../src/schemas/index.js";
 import { ItemSchema } from "../../src/schemas/index.js";
 
@@ -47,6 +47,23 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     researchPath: "/tmp/agentic-watch-test/research/sample.md",
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nstub: true\n---\n# body\n",
+    cwd: "/tmp/agentic-watch-test",
+    ...overrides,
+  };
+}
+
+function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateRequest {
+  return {
+    agent: "codex-cli",
+    templateId: "default",
+    templateBody: "",
+    prevResearch: {
+      frontmatter: SAMPLE_RESEARCH_FM,
+      body: "---\nid: stub\n---\n# v1 body\n",
+    },
+    items: [SAMPLE_ITEM],
+    outputPath:
+      "/tmp/agentic-watch-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     cwd: "/tmp/agentic-watch-test",
     ...overrides,
   };
@@ -198,6 +215,71 @@ describe("agents/codex-cli adapter", () => {
       const adapter = createCodexCliAdapter({ run });
 
       await expect(adapter.review(buildReviewRequest())).rejects.toThrow(/codex CLI not found/);
+    });
+  });
+
+  describe("update", () => {
+    it("invokes the runner with the update SKILL prompt and predecessor id", async () => {
+      const run = vi.fn().mockResolvedValue({ code: 0, stdout: "ok", stderr: "" });
+      const adapter = createCodexCliAdapter({ run });
+      const req = buildUpdateRequest();
+
+      await adapter.update(req);
+
+      expect(run).toHaveBeenCalledTimes(1);
+      const [prompt, options] = run.mock.calls[0];
+
+      expect(prompt).toContain(".agents/skills/update/SKILL.md");
+      expect(prompt).toContain(req.outputPath);
+      // Predecessor id is the supersedes target we instruct the agent to write.
+      expect(prompt).toContain(SAMPLE_RESEARCH_FM.id);
+      expect(prompt).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
+      expect(options.cwd).toBe(req.cwd);
+
+      const stdinJson = JSON.parse(options.stdin);
+      expect(stdinJson).toEqual({
+        agent: "codex-cli",
+        templateId: "default",
+        templateBody: "",
+        prevResearch: req.prevResearch,
+        items: req.items,
+        outputPath: req.outputPath,
+      });
+    });
+
+    it("surfaces an auth-error hint when codex exits non-zero with an unauth message", async () => {
+      const run = vi.fn().mockResolvedValue({
+        code: 1,
+        stdout: "",
+        stderr: "Error: 401 Unauthorized. Please run `codex login`.",
+      });
+      const adapter = createCodexCliAdapter({ run });
+
+      await expect(adapter.update(buildUpdateRequest())).rejects.toThrow(
+        /codex CLI is not authenticated/,
+      );
+    });
+
+    it("includes the exit code and stderr tail on generic non-zero exit", async () => {
+      const run = vi.fn().mockResolvedValue({
+        code: 2,
+        stdout: "",
+        stderr: "boom: update prompt rejected\n",
+      });
+      const adapter = createCodexCliAdapter({ run });
+
+      await expect(adapter.update(buildUpdateRequest())).rejects.toThrow(
+        /codex CLI exited with code 2.*boom: update prompt rejected/s,
+      );
+    });
+
+    it("propagates ENOENT-style errors from the runner", async () => {
+      const run = vi
+        .fn()
+        .mockRejectedValue(new Error("codex CLI not found in PATH — install Codex CLI"));
+      const adapter = createCodexCliAdapter({ run });
+
+      await expect(adapter.update(buildUpdateRequest())).rejects.toThrow(/codex CLI not found/);
     });
   });
 });
