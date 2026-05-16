@@ -1,9 +1,9 @@
 # Skill Design — `.agents/skills/` Bundling and Agent Invocation
 
-Status: **draft v2** (Phase 2 — `review` command implementation, [#29](https://github.com/ozzy-labs/agentic-watch/issues/29))
+Status: **draft v3** (Phase 5 — `update` design pin, [#40](https://github.com/ozzy-labs/agentic-watch/issues/40))
 Tracks: [#9](https://github.com/ozzy-labs/agentic-watch/issues/9) §2 / §3 (subset)
 
-This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pins `review` (this revision); `update` remains a stub and will be normalised in Phase 4.
+This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pinned `review`; Phase 5 pins the `update` design contract (this revision). The `update` CLI/adapter implementation itself ships in Sub-issue B ([#41](https://github.com/ozzy-labs/agentic-watch/issues/41)); this revision freezes the design so that implementation can proceed against a stable target.
 
 ## 1. Research SKILL.md — prompt body
 
@@ -47,7 +47,7 @@ Rationale:
 ```text
 .agents/skills/research/SKILL.md
 .agents/skills/review/SKILL.md   (Phase 1 stub; canonicalised in Phase 2)
-.agents/skills/update/SKILL.md   (Phase 1 stub; canonicalised in Phase 4)
+.agents/skills/update/SKILL.md   (Phase 1 stub; canonicalised in Phase 5 — design in §8, implementation in #41)
 ```
 
 Rules:
@@ -199,14 +199,14 @@ The Phase 2 SKILL ships a **four-axis rubric**:
 
 Workspaces that need a different rubric can drop a `templates/<id>.md` and call `review --template <id>`. The CLI passes `templateBody` through stdin unchanged; an empty string means "use the SKILL's built-in rubric".
 
-We do **not** adopt the [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) multi-perspective Schema v1 yet. The handbook ADR targets *code* review (correctness, security, architecture etc.), whereas the `agentic-watch` review is a *content* review of an existing Markdown report. Phase 4 (`update`) may need a stable parse-able structure inside the review block; until then the free-form Japanese-heading layout in §3 of the SKILL is the contract.
+We do **not** adopt the [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) multi-perspective Schema v1 yet. The handbook ADR targets *code* review (correctness, security, architecture etc.), whereas the `agentic-watch` review is a *content* review of an existing Markdown report. Phase 5 (`update`) may need a stable parse-able structure inside the review block; until then the free-form Japanese-heading layout in §3 of the SKILL is the contract.
 
 ### 7.5 Re-review semantics
 
 ADR-0008 leaves "re-review after `update`" undefined. Phase 2 makes the following concrete decisions, scoped to a single research file version:
 
 - **Same-version re-review is refused.** Running `agentic-watch review` on a research file whose frontmatter already has `reviewedAt != null` exits non-zero with `review: research '<id>' is already reviewed`. This guarantees a single canonical review block per file and avoids appending stale critiques.
-- **Cross-version re-review is deferred to Phase 4.** When `update` lands and produces `_v2.md`, the new file's frontmatter resets `reviewedAt` / `reviewedBy` to `null` (per [skill-design §8.3](#83-frontmatter-relationship-to-predecessors)). A fresh `review` over `_v2.md` is allowed and treated as a brand-new review pass.
+- **Cross-version re-review semantics are pinned by Phase 5 §8.6.** When `update` lands and produces `_v2.md`, the new file's frontmatter resets `reviewedAt` / `reviewedBy` to `null` (per [§8.3](#83-frontmatter-relationship-to-predecessors)). A fresh `review` over `_v2.md` is allowed and treated as a brand-new review pass.
 
 ### 7.6 Implementation pointers
 
@@ -217,31 +217,56 @@ ADR-0008 leaves "re-review after `update`" undefined. Phase 2 makes the followin
 | Output validation | CLI re-reads file, parses frontmatter against `ResearchFrontmatterSchema`, asserts `reviewedAt != null`, `reviewedBy == agent`, immutable fields unchanged | [`src/cli/review.ts`](../../src/cli/review.ts) |
 | Rollback target | in-memory snapshot of research body + linked item payloads | this doc §7.2 |
 | Status transition | CLI sets each linked `items/<sourceId>/<itemId>.yaml` `status: researched → reviewed` after frontmatter validation | [ADR-0008](../adr/0008-status-state-machine.md) |
-| Re-review | refused at the CLI when `reviewedAt != null`; cross-version handled by Phase 4 `update` | this doc §7.5 |
+| Re-review | refused at the CLI when `reviewedAt != null`; cross-version handled by Phase 5 `update` (§8.6) | this doc §7.5 |
 
-## 8. `update` skill body and diff-detection strategy — Phase 4 direction
+## 8. `update` skill body and diff-detection strategy — Phase 5 pin
 
-[`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch update <research-id> --agent <agent-id>` (Phase 4). Phase 4 will pin down:
+[`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch update <research-id> --agent <agent-id>` (Phase 5, Sub-issue B [#41](https://github.com/ozzy-labs/agentic-watch/issues/41)). This revision (Sub-issue A [#40](https://github.com/ozzy-labs/agentic-watch/issues/40)) pins the design ahead of implementation so #41 can be reviewed against a stable target.
 
-### 8.1 What counts as "new information"
+### 8.1 What counts as "new information" — adopted signal set
 
-| Signal | Source of truth | Likely heuristic |
-|---|---|---|
-| Original article was edited | `<url>` re-fetch + `etag` / `lastModified` from `state/*.yaml` | If etag / lastModified moved → fetch and diff |
-| Related item appeared in same source | `items/<itemId>.yaml` with matching `sourceId` and overlapping `matchedKeywords` | Phase 4 may walk `items/` listing |
-| Time elapsed since `createdAt` | research frontmatter `createdAt` | Threshold is user-configurable (default: 30 days)|
-| Linked release / docs page updated | URLs in v1 `## 出典` block | WebFetch + content hash compare |
+Four candidate signals were considered for triggering an update:
 
-The skill body will surface these signals to the agent rather than have the CLI compute a diff itself — the agent's strength is judging *whether* a textual change is materially new vs trivial copy-edits.
+| Tag | Signal | Source of truth | Decision |
+|---|---|---|---|
+| (a) | `item.summary` 変化 | `items/<id>.yaml` `summary` field re-fetched by `watch run` | **Reject** as a primary trigger |
+| (b) | 関連 item (`itemIds` 追加) が同じ source / keyword で検出された | `items/` directory walk with `sourceId` + `matchedKeywords` overlap | **Reject** as a primary trigger |
+| (c) | 時間経過 | research frontmatter `createdAt` vs `now()` | **Reject** as a primary trigger |
+| (d) | source 側ページ更新 | `<url>` re-fetch + `etag` / `lastModified` from `state/*.yaml`; failing that, content hash via WebFetch | **Adopt** as the primary trigger |
 
-### 8.2 Old version handling: rewrite vs diff-only
+#### 採用案 (d) the rationale
 
-Two strategies are on the table:
+Signal (d) is the only one that **directly grounds "is there new information?" in an externally observable fact**: the upstream article / release / docs page changed. The agent can then WebFetch the current URL and compare against v1's `## 出典` block to decide whether the delta is material (substantive content change) or trivial (typo, layout). This matches the "rewrite-and-supersede on real upstream change" mental model that maps cleanly to the existing detection pipeline.
 
-- **Strategy A (rewrite-and-supersede):** generate a complete new `_v(N+1).md` that stands alone. `supersedes: <previous filename>` in frontmatter links back to v1. v1 is immutable per [ADR-0003](../adr/0003-output-format-and-versioning.md). Pros: each file is self-contained, easy to read in isolation. Cons: redundant text across versions.
-- **Strategy B (diff-only block):** v(N+1) contains only a "Changes since v\<N\>" block plus updated metadata. Cons: requires readers to chase the v1 file for context; breaks "self-contained" reading.
+The CLI does **not** compute the diff itself. It hands the agent:
 
-**Phase 4 default: Strategy A.** Self-contained files match user expectation when reading from a static-site generator or grep. A diff block (`## v<N+1> での変更点`) is also added at the top of v(N+1) to make the delta visible — but the rest of the report is regenerated, not redacted from v1.
+1. The v1 research frontmatter + body (so the agent knows what was previously said).
+2. The current upstream page content (re-fetched at `update` invocation time).
+3. The recorded `etag` / `lastModified` from `state/<sourceId>.yaml` for evidence that something moved.
+
+The agent decides materiality. Empirically, an LLM is better at judging *whether* a textual change is materially new than at running structural diff heuristics; offloading materiality to the agent also keeps the CLI agent-agnostic (every agent reads the same SKILL).
+
+#### 却下理由
+
+- **(a) `item.summary` 変化**: `summary` is derived by the feed adapter from the upstream page; if the page changed in a way that altered the summary, signal (d) already fires. Treating (a) as an independent trigger creates false positives whenever a feed parser refines summary extraction without the underlying article changing. We keep `summary` as **evidence** the agent may consult, but not as the trigger.
+- **(b) 関連 item 追加 (`itemIds` 追加)**: Adding a sibling item is a different operation than updating an existing report — semantically it's "this v1 report now also covers item X". The cleaner design is a separate "merge items into existing research" flow (out of scope for Phase 5); routing it through `update` would conflate two operations and complicate `supersedes` lineage. Phase 5 defers this; users who need to extend `itemIds` regenerate v2 manually or wait for a dedicated `merge` skill.
+- **(c) 時間経過**: A purely time-based trigger ("re-research after 30 days") generates an update whether or not anything changed upstream. That is exactly the no-op write that §8.5 explicitly forbids. Time-based scheduling belongs at the **cron / routine layer** (the user can schedule `agentic-watch update --all-stale`), not in the SKILL's materiality judgement.
+
+### 8.2 Old version handling: rewrite vs diff-only — rewrite-and-supersede confirmed
+
+Two strategies were on the table during Phase 1:
+
+- **Strategy A (rewrite-and-supersede):** generate a complete new `_v(N+1).md` that stands alone. `supersedes: <previous id>` in frontmatter links back to v1. v1 is immutable per [ADR-0003](../adr/0003-output-format-and-versioning.md). Pros: each file is self-contained, easy to read in isolation. Cons: redundant text across versions.
+- **Strategy B (diff-only block):** v(N+1) contains only a "Changes since v\<N\>" block plus updated metadata. Cons: requires readers to chase the v1 file for context; breaks "self-contained" reading; complicates static-site renderings.
+
+**Phase 5 default: Strategy A (rewrite-and-supersede).** Phase 1 [#20](https://github.com/ozzy-labs/agentic-watch/pull/20) already marked Strategy A as default; this revision re-confirms it now that the schema is in place. Self-contained files match user expectation when reading from a static-site generator or grep; the redundancy is acceptable because the v1 file is immutable and remains as the historical record.
+
+Implementation notes for the agent:
+
+- Re-fetch the upstream URL(s).
+- Re-run the research procedure (the `research` SKILL body is reusable here; `update` is essentially `research` with a v1 reference attached).
+- Emit a `## v<N+1> での変更点` block **at the top of the body** summarising what changed vs v1. This block is the user-facing diff narrative; the rest of the report is regenerated end-to-end and is allowed to diverge from v1's wording.
+- Write the new file to `research/<new-id>.md`. Do not modify v1.
 
 ### 8.3 Frontmatter relationship to predecessors
 
@@ -249,34 +274,68 @@ The new file's frontmatter records the lineage explicitly:
 
 ```yaml
 ---
-id: <new id>           # e.g. 20260612_anthropic-claude-3-7_v2
-itemIds: [...]
-agent: <agent-id>
-templateId: <id>
-createdAt: <ISO 8601 of v1 createdAt>     # preserved, NOT bumped
-updatedAt: <ISO 8601 now>                  # set on update
-reviewedAt: null                           # reset; new version needs new review
-reviewedBy: null
-supersedes: 20260512_anthropic-claude-3-7_v1.md   # filename (relative to research/)
+id: 20260612_anthropic-claude-3-7_v2           # new id (filename without .md)
+itemIds:                                       # preserved from v1
+  - anthropic-news-2026-05-10-claude-code
+agent: <agent-id>                              # the update agent (may differ from v1)
+templateId: <id>                               # preserved from v1
+createdAt: "2026-05-11T00:00:00Z"              # PRESERVED from v1 (detection timeline)
+updatedAt: "2026-06-12T00:00:00Z"              # this v+1 write time
+reviewedAt: null                               # reset; new version needs a new review
+reviewedBy: null                               # reset
+supersedes: 20260511_anthropic-claude-3-7_v1   # previous id (NOT filename — no .md)
 ---
 ```
 
-Note that `createdAt` is **preserved** from v1 so the original detection timeline is not lost. `updatedAt` is the new write time. `reviewedAt` / `reviewedBy` reset to `null` because a v1 review does not automatically transfer to v2 (Phase 2 may revisit; see §7).
+Field-by-field contract:
 
-`supersedes` is **not in `ResearchFrontmatterSchema` today** (see [`src/schemas/research.ts`](../../src/schemas/research.ts)). Phase 4 will extend the schema with `supersedes: z.string().optional()` when `update` lands; the field is documented here so the lineage contract is reviewable before code arrives.
+| Field | Source | Mutability under `update` |
+|---|---|---|
+| `id` | New, based on `update` invocation date + slug + `_v<N+1>` | New value |
+| `itemIds` | Preserved from v1 | Immutable — `update` does not extend |
+| `agent` | The agent currently running `update` | Mutable (user may run v2 with a different agent) |
+| `templateId` | Preserved from v1 | Immutable |
+| `createdAt` | Preserved from v1 | Immutable — detection timeline must not be lost |
+| `updatedAt` | `update` invocation timestamp (ISO 8601 UTC) | New value |
+| `reviewedAt` | `null` | Reset — v1 review does not transfer |
+| `reviewedBy` | `null` | Reset |
+| `supersedes` | v1's `id` (no `.md`) | New value |
 
-### 8.4 Item status interaction
+`supersedes` is the **id** (filename minus `.md`), not the filename. This matches every other reference to a research record in the codebase (Item Schema's `researchPath` is the only place we use a literal path; everywhere else "research id" is the canonical handle). Storing the bare id makes downstream tooling (`agentic-watch list-versions <root-id>` etc., should they land) trivial to implement against the schema.
 
-`update` does **not** change `items/<itemId>.yaml` `status`. Per [ADR-0008](../adr/0008-status-state-machine.md), `status` tracks the **item lifecycle**, not the research version. The CLI updates `items/<itemId>.yaml` `researchPath` to point at the new file but leaves `status` untouched (an item already at `reviewed` remains `reviewed` even though the linked research is now v2; the user must re-run `review` to refresh the review stamp).
+Schema implementation: [`src/schemas/research.ts`](../../src/schemas/research.ts) defines `supersedes: z.string().min(1).nullable().default(null)`. The `.default(null)` allows pre-Phase-5 v1 frontmatter (which omits the field) to remain valid after the schema bump — they parse to `supersedes: null`, which is semantically identical to "no predecessor".
+
+### 8.4 Item status interaction — reviewed→updated invariant
+
+`update` does **not** change `items/<sourceId>/<itemId>.yaml` `status`. Per [ADR-0008](../adr/0008-status-state-machine.md) and [ADR-0003](../adr/0003-output-format-and-versioning.md), `status` tracks the **item lifecycle**, not the research version.
+
+| Pre-update `status` | Post-update `status` | Rationale |
+|---|---|---|
+| `researched` | `researched` (unchanged) | v1 is in `researched`; producing v2 doesn't move the item further along its lifecycle |
+| `reviewed` | `reviewed` (unchanged) | The v1 review event still happened; that fact must not be overwritten. The user can re-run `review` against v2 to record a new review event |
+| `detected` / `dismissed` | (rejected) | `update` requires an existing research file; the CLI refuses with a non-zero exit code if the item has not been researched yet (or has been dismissed) |
+
+Consequence: it is possible to have an item at `reviewed` whose **latest** research (v2) has `reviewedAt: null`. This is by design — the v1 review is a real historical event we do not invalidate. Users who want the latest research reviewed must run `agentic-watch review <new-id> --agent <id>` explicitly. The `agentic-watch list-stale` / similar surfacing is out of scope for Phase 5.
 
 ### 8.5 No-op suppression
 
-If the post-fetch comparison shows no material change, the skill must **skip creating a new file** and report "no update needed" rather than emit a v(N+1) that is byte-identical to v1. The exact materiality threshold (whitespace-only? typo-fix only?) is a Phase 4 decision; the v1 contract is simply "do not write an empty diff".
+If the post-fetch comparison shows no material change, the skill must **skip creating a new file** and report "no update needed" rather than emit a v(N+1) that is byte-identical to v1. Materiality is judged by the agent (see §8.1) but the v1 contract is bright-line: **do not write an empty diff**.
+
+Concrete CLI behaviour: when the SKILL returns "no update needed", the CLI logs the decision and exits 0 without writing anything. The `update` adapter signals this via a JSON-line on stdout (`{"decision": "skip", "reason": "<short>"}`) — the exact protocol is finalised in Sub-issue B alongside the implementation.
+
+### 8.6 Re-review semantics
+
+ADR-0008 left "re-review after `update`" undefined; §7.5 of this document deferred the cross-version case. Phase 5 closes the loop:
+
+- v+1's frontmatter is written with `reviewedAt: null` / `reviewedBy: null` (per §8.3). The CLI's existing same-version refusal (§7.5) only fires when `reviewedAt != null`, so a fresh `review` on v+1 is allowed and treated as a brand-new review pass.
+- The item-status invariant in §8.4 means the user must opt-in to running `review` on v+1; nothing auto-promotes the item.
 
 ## 9. Open questions deferred to later phases
 
-- **CLI-specific companion files**: scaffolded in §4 above; not exercised until Phase 2 surfaces a concrete need.
+- **CLI-specific companion files**: scaffolded in §4 above; not exercised until a concrete need surfaces.
 - **Three-way merge on `init --force`**: deferred; `git diff` is the workspace-side fallback.
 - **`.claude/skills/` automation**: revisit when user feedback demands it.
-- **Re-review after `update`**: see §7 final bullet.
-- **Materiality threshold in `update`**: see §8.5.
+- **Re-review after `update`**: closed in §8.6 — v+1 resets review fields; the existing same-version refusal no longer blocks a fresh review on v+1.
+- **Materiality threshold in `update`**: closed in §8.5 — materiality is the agent's call; the CLI only enforces "no empty diff" via the `{"decision": "skip", ...}` adapter contract finalised in Sub-issue B.
+- **`merge`-style flow that extends `itemIds` on an existing research**: deferred (see §8.1 rejection of signal (b)).
+- **Time-based scheduling of `update`**: pushed to the cron/routine layer, not the SKILL (see §8.1 rejection of signal (c)).
