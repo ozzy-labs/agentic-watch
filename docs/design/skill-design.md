@@ -3,7 +3,7 @@
 Status: **draft v3** (Phase 5 — `update` design pin, [#40](https://github.com/ozzy-labs/agentic-watch/issues/40))
 Tracks: [#9](https://github.com/ozzy-labs/agentic-watch/issues/9) §2 / §3 (subset)
 
-This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pinned `review`; Phase 5 pins the `update` design contract (this revision). The `update` CLI/adapter implementation itself ships in Sub-issue B ([#41](https://github.com/ozzy-labs/agentic-watch/issues/41)); this revision freezes the design so that implementation can proceed against a stable target.
+This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pinned `review`; Phase 5 pins the `update` design contract (this revision). The `update` CLI/adapter implementation shipped in Sub-issue B ([#41](https://github.com/ozzy-labs/agentic-watch/issues/41), merged); this revision froze the design so that implementation could proceed against a stable target.
 
 ## 1. Research SKILL.md — prompt body
 
@@ -45,9 +45,9 @@ Rationale:
 [`src/cli/init.ts`](../../src/cli/init.ts) ships three SKILL.md files into the workspace:
 
 ```text
-.agents/skills/research/SKILL.md
-.agents/skills/review/SKILL.md   (Phase 1 stub; canonicalised in Phase 2)
-.agents/skills/update/SKILL.md   (Phase 1 stub; canonicalised in Phase 5 — design in §8, implementation in #41)
+.agents/skills/research/SKILL.md   (fully canonicalised; Phase 1)
+.agents/skills/review/SKILL.md     (fully canonicalised; Phase 2)
+.agents/skills/update/SKILL.md     (fully canonicalised; Phase 5 — design in §8, implementation in #41)
 ```
 
 Rules:
@@ -58,7 +58,7 @@ Rules:
 
 ### Untrusted content boundary (ADR-0009)
 
-All three shipped SKILL bodies (`research`, `review`, `update`) carry an **Untrusted content boundary** section that instructs the agent to treat `<untrusted_item>...</untrusted_item>` contents, prior research bodies, and `WebFetch` results as data only — never as instructions — and to refuse writes outside the workspace (M2a / M2b / M3b in [ADR-0009](../adr/0009-untrusted-external-content-handling.md)). The boundary marker injection itself (M1c) ships in a separate prompt-builder change and pairs with this skill-side guidance; the SKILL text is harmless when the marker is absent because it still steers agents away from following external instructions in any form. Because the SKILL bodies are bundled into the workspace by `init` (and re-bundled by `init --force`), updating the boundary guidance is a SKILL.md edit, not a CLI release — the same distribution channel as every other procedure change.
+All three shipped SKILL bodies (`research`, `review`, `update`) carry an **Untrusted content boundary** section that instructs the agent to treat `<untrusted_item>...</untrusted_item>` contents, prior research bodies, and `WebFetch` results as data only — never as instructions — and to refuse writes outside the workspace (M2a / M2b / M3b in [ADR-0009](../adr/0009-untrusted-external-content-handling.md)). The boundary marker injection itself (M1c) is shipped in [`src/agents/_boundary.ts`](../../src/agents/_boundary.ts) (`wrapUntrusted` / `renderItemForPrompt`, invoked by every agent adapter's prompt builder) and pairs with this skill-side guidance; the SKILL text is harmless when the marker is absent because it still steers agents away from following external instructions in any form. Because the SKILL bodies are bundled into the workspace by `init` (and re-bundled by `init --force`), updating the boundary guidance is a SKILL.md edit, not a CLI release — the same distribution channel as every other procedure change.
 
 ## 3. `allowed-tools` recommendations
 
@@ -101,21 +101,31 @@ We do not implement the override path in Phase 1 — `research` calls the base S
 
 ## 5. Multi-agent skill placement
 
-[Issue #11](https://github.com/ozzy-labs/agentic-watch/issues/11) decided that `init` writes a **single canonical copy** under `.agents/skills/`. This document codifies the rationale:
+`init` writes a **5-layer skill bundle** to the user workspace so all four supported agent CLIs (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) can drive `research` / `review` / `update` / `dismiss` from a **single SSoT** — both via adapter spawn (the CLI calls the agent as a subprocess) and via interactive slash / mention commands. The five layers are:
 
-- `.agents/skills/` is the [AGENTS.md](../../AGENTS.md) convention adopted by Codex CLI and GitHub Copilot CLI, and it's where this repository's own agent assets live.
-- Claude Code reads `.claude/skills/`, which is **separately managed** by the [`@ozzylabs/skills`](https://github.com/ozzy-labs/skills) Renovate preset. `init` deliberately does **not** write there because:
-  1. The Renovate preset would clobber any local copy on the next bump.
-  2. Phase 1 SKILLs are workspace-scoped (research/review/update), not org-wide skill primitives, so they do not belong in the preset.
-- Gemini CLI is configured to fall back to `AGENTS.md` (see [`.gemini/settings.json`](../../.gemini/settings.json)) and indirectly picks up `.agents/skills/`.
+| Layer | Path | Role | Bundle source | Opt-out |
+|---|---|---|---|---|
+| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | Adapter spawn target — agent CLIs read this procedure body when spawned by `agentic-watch`. The "Invocation modes" header at the top routes interactive invocations (no stdin JSON, `$ARGUMENTS` present) back through `agentic-watch <subcommand>` so a Codex CLI `$research` mention / `/skills` panel re-enters via the adapter spawn path. | `src/skills/` | (SSoT, no opt-out) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Thin wrapper exposing `/research`, `/review`, `/update`, `/dismiss` slash commands in Claude Code interactive sessions. Shells out to `agentic-watch <subcommand>` only. | `src/claude-skills/` | `--no-claude-skills` |
+| **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Thin wrapper exposing the same four slash commands in Gemini CLI interactive sessions, via TOML `prompt = "agentic-watch <subcommand> {{args}}"`. | `src/gemini-commands/` | `--no-gemini-commands` |
+| **AGENTS.md** | `<cwd>/AGENTS.md` | Agent-agnostic instructions auto-read by Codex CLI / Gemini CLI / GitHub Copilot CLI on session start. Lists workspace overview, primary commands, typical workflow, docs pointers. | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
+| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | Templates for connecting to a recurring scheduler ([ADR-0004](../adr/0004-schedule-strategy.md)). | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
 
-When users want Claude Code itself to invoke these SKILLs (rather than the Claude Code CLI agent that `agentic-watch research` spawns), they can manually symlink or copy `.agents/skills/research/SKILL.md` into `.claude/skills/`. We do not automate this in Phase 1; revisit if user feedback shows the manual step is a recurring friction.
+The engine SKILL is the **single source of truth for procedure**. The Claude discovery layer and Gemini commands layer are intentionally **thin wrappers** — they only carry slash-command metadata and `agentic-watch <subcommand>` shell-outs. No procedure text is duplicated across layers (drift prevention). Re-bundling on `init --force` flows through one place: edit `src/skills/<name>/SKILL.md`, then publish a new agentic-watch release.
 
-> **Revision (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75))**: the "manual symlink" friction did materialize, so `init` now also writes **thin slash-command wrappers** to `<cwd>/.claude/skills/{research,review,update,dismiss}/SKILL.md` (default-on, opt-out via `--no-claude-skills`). The wrappers shell out to the `agentic-watch` CLI — they do **not** duplicate the engine procedure. The engine SKILLs under `.agents/skills/` remain the single source of truth for research / review / update behaviour. See [ADR-0007 § Revision](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-75) for the layered design.
->
-> **Revision (2026-05-17 c, [#78](https://github.com/ozzy-labs/agentic-watch/issues/78))**: Codex CLI / Gemini CLI slash-command parity closed via two changes. (1) Engine SKILLs (`.agents/skills/{research,review,update}/SKILL.md`) gained a **dual-mode "Invocation modes"** section at the top: adapter spawn (default) follows the procedure body; interactive invocation (no stdin JSON, `$ARGUMENTS` present) shells out to `agentic-watch <subcommand> $ARGUMENTS` so the CLI re-enters via the adapter spawn path. This lets the same `.agents/skills/` directory serve both Codex CLI auto-discovery (interactive `$research` mention / `/skills` panel) and the adapter spawn flow, without duplicating the procedure. (2) `init` now also writes Gemini CLI native slash command TOMLs to `<cwd>/.gemini/commands/{research,review,update,dismiss}.toml` (default-on, opt-out via `--no-gemini-commands`). The TOMLs are thin wrappers via Gemini's `{{args}}` interpolation. See [ADR-0007 § Revision (c)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-c-78) for the five-layer design.
+For agent adapters that spawn the CLI as a subprocess, the working directory is the workspace root and the SKILL is read via `Read` against `.agents/skills/<name>/SKILL.md`. Every supported agent CLI honours this — there is no path-resolution branching inside the adapter.
 
-For agent adapters that spawn the CLI as a subprocess (which is what Phase 1's `research` does), the working directory is the workspace root and the SKILL is read via `Read` against `.agents/skills/research/SKILL.md`. Every supported agent CLI honours this — there is no path-resolution branching inside the adapter.
+### Historical note: the original single-copy design
+
+[Issue #11](https://github.com/ozzy-labs/agentic-watch/issues/11) (Phase 1) initially decided that `init` writes a **single canonical copy** under `.agents/skills/` and deliberately does **not** write to `.claude/skills/`, on the grounds that (1) the [`@ozzylabs/skills`](https://github.com/ozzy-labs/skills) Renovate preset would clobber any local copy on the next bump, and (2) Phase 1 SKILLs are workspace-scoped (research/review/update), not org-wide skill primitives, so they do not belong in that preset.
+
+Subsequent revisions extended the bundle layer by layer as agent-discovery gaps surfaced:
+
+- **Revision (a)** (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75)) — added the Claude discovery SKILL (`.claude/skills/<name>/SKILL.md`) after manual-symlink friction was reported. The wrappers shell out to the `agentic-watch` CLI rather than duplicating the engine procedure. See [ADR-0007 § Revision (a)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-75).
+- **Revision (b)** (2026-05-17 b, [#77](https://github.com/ozzy-labs/agentic-watch/issues/77)) — added `AGENTS.md` (Codex / Gemini / Copilot auto-read instructions). See [ADR-0007 § Revision (b)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-b-77).
+- **Revision (c)** (2026-05-17 c, [#78](https://github.com/ozzy-labs/agentic-watch/issues/78)) — added Gemini commands (`.gemini/commands/<name>.toml`) and dual-mode-ified the engine SKILL so Codex CLI auto-discovery via `$<name>` mention also works without duplicating the procedure. See [ADR-0007 § Revision (c)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-c-78).
+
+The original single-copy rationale (preset clobber avoidance, scope separation between workspace-scoped and org-wide skills) still holds for the **engine SKILL** layer — the preset never owns `.agents/skills/`. The Claude discovery / Gemini commands layers are deliberately thin wrappers (no procedure body) so the same preset-clobber concern does not apply; if a workspace prefers the preset's wrappers, `--no-claude-skills` / `--no-gemini-commands` opt them out without disabling the SSoT.
 
 ## 6. Phase 1 contract summary
 

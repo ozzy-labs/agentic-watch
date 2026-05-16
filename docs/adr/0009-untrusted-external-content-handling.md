@@ -86,6 +86,25 @@ M4 (`Source.trustLevel`) は **schema レベルの基盤**として上記スタ�
 - 安全側に倒すなら新 status (例: `quarantined`) と user 承認手順が必要 → ADR-0008 改訂が必要 → 本 ADR の範囲を越える
 - 採用したい場合は **別 ADR / 別 issue で status machine 改訂** とセットで再評価
 
+## Implementation Status (2026-05-17)
+
+採択時 (2026-05-16) は「採用 / 留保 / 却下 の確定のみ、実装は別 sub-issue」と明記していた。2026-05-17 時点で **採用 7 個別策はすべて実装済み**、却下 / 留保策の状態も以下のとおり確定している。
+
+| ID | 緩和策 | 状態 | 実装位置 |
+|---|---|---|---|
+| **M1a** | regex pre-filter | **Shipped** | [`src/core/injection-detector.ts`](../../src/core/injection-detector.ts) — `detectInjection()` |
+| **M1c** | boundary marker (`<untrusted_item>...</untrusted_item>`) | **Shipped** | [`src/agents/_boundary.ts`](../../src/agents/_boundary.ts) — `wrapUntrusted()` / `renderItemForPrompt()` を prompt builder から呼び出し |
+| **M2a** | SKILL.md に untrusted instruction を従わない旨を明示 | **Shipped** | [`src/skills/research/SKILL.md`](../../src/skills/research/SKILL.md) / [`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) / [`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) の "Untrusted content boundary" セクション |
+| **M2b** | tool 呼び出し前 self-check 手順 | **Shipped** | 同上 "Untrusted content boundary" セクション (advisory) |
+| **M3b** | workspace 外 write 禁止 (SKILL guidance) | **Shipped** | 同上 "Untrusted content boundary" セクション |
+| **M4** | `Source.trustLevel` metadata (default `"untrusted"`) | **Shipped** | [`src/schemas/source.ts`](../../src/schemas/source.ts) — `TrustLevelSchema.default("untrusted")` |
+| **M5a** | injection 検出を frontmatter / log に記録 | **Shipped** | [`src/schemas/item.ts`](../../src/schemas/item.ts) — `injectionFlags: z.array(z.string()).default([])`、M1a の検出結果が item frontmatter に載る |
+| M1b | LLM-as-a-judge 前処理 | Reject — **未実装、再評価予定なし** | (なし) |
+| M5b | 検出時 status=dismissed 自動遷移 | Reject — **未実装、status machine 改訂と pair で再評価** | (なし) |
+| M3a | sandbox / container 実行 | Defer — **agentic-watch 側では未実装、user-side dedicated dev container 運用で代替** | (なし、[`docs/user-guide.md`](../user-guide.md) § Security 警告 + ADR-0009 § Defer 理由を参照) |
+
+実装は採択時の sub-issue 分割 (schema → core → agents → skills) に従って段階的に shipped され、Phase 5 終了時点で 7 個別策が出揃った。本 ADR の **判定そのものは不変** — 状態 callout は実装側の trace 用記録。
+
 ## Consequences
 
 ### 良い面

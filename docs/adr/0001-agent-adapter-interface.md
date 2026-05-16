@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11）
+Accepted（2026-05-11）— `research` (Phase 1), `review` (Phase 2), `update` + `supersedes` lineage (Phase 4 / 5) all shipped. The interface in [`src/agents/types.ts`](../../src/agents/types.ts) now exposes `research` / `review` / `update` per the snippet below.
 
 ## Context
 
@@ -21,24 +21,50 @@ copilot  : copilot -p "<prompt>"  --allow-all-paths --allow-all-tools --no-color
 
 `src/agents/types.ts` に共通 interface を定義し、各 CLI に対応する adapter を `src/agents/{agent-id}.ts` に置く。
 
+canonical 定義は [`src/agents/types.ts`](../../src/agents/types.ts) を参照。代表的な signature は以下:
+
 ```typescript
-import type { AgentId, Item } from "../schemas/index.js";
+import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 
 export interface ResearchRequest {
   agent: AgentId;
-  templateBody: string;
+  templateId: string;       // research template id (e.g. "default")
+  templateBody: string;     // templates/<id>.md contents, or "" for SKILL default
   items: Item[];
   outputPath: string;
+  cwd: string;              // workspace root for the spawned agent CLI
+}
+
+export interface ReviewRequest {
+  agent: AgentId;
+  templateId: string;
+  templateBody: string;
+  researchPath: string;
+  researchFrontmatter: ResearchFrontmatter;
+  researchBody: string;
+  cwd: string;
+}
+
+export interface UpdateRequest {
+  agent: AgentId;
+  templateId: string;
+  templateBody: string;
+  prevResearch: { frontmatter: ResearchFrontmatter; body: string };
+  items: Item[];
+  outputPath: string;
+  cwd: string;
 }
 
 export interface AgentAdapter {
   id: AgentId;
   research: (req: ResearchRequest) => Promise<void>;
+  review: (req: ReviewRequest) => Promise<void>;
+  update: (req: UpdateRequest) => Promise<void>;
 }
 ```
 
 - `AgentId` は `"claude-code" | "codex-cli" | "gemini-cli" | "copilot"`（[schemas/research.ts](../../src/schemas/research.ts)）
-- Phase 1 では `research` メソッドのみ。Phase 2 で `review`、Phase 4 で `update` を追加（同 interface へ拡張）
+- `research` (Phase 1), `review` (Phase 2), `update` (Phase 4 / 5) はすべて shipped。`update` は `supersedes` lineage と rewrite-and-supersede 戦略を含む（詳細は [`docs/design/skill-design.md`](../design/skill-design.md) §8）
 - 各 adapter は子プロセスとして対応 CLI を起動し、`outputPath` への Markdown 書き込みは agent 側に委ねる
 
 呼び出し側は `src/agents/index.ts` の registry から `AgentAdapter` を取得し、interface 経由でのみアクセスする。
