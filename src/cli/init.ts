@@ -88,6 +88,21 @@ interface InitOptions {
    */
   noClaudeSkills?: boolean;
   /**
+   * Skip writing `<cwd>/AGENTS.md`. By default `init` copies the bundled
+   * AGENTS.md template into the workspace so that agent CLIs which auto-read
+   * an agent-agnostic instructions file (Codex / Gemini / Copilot) get
+   * workspace context (available commands, typical workflow, docs pointers)
+   * the moment a user opens an interactive session.
+   *
+   * Useful for workspaces that already manage their own AGENTS.md (e.g. a
+   * monorepo with project-wide instructions) and don't want agentic-watch's
+   * boilerplate to land at the root.
+   *
+   * See ADR-0007 (revised 2026-05-17 b) for the four-layer init bundle
+   * (engine SKILL / claude discovery / AGENTS.md / schedule scaffolds).
+   */
+  noAgentsMd?: boolean;
+  /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
    */
@@ -154,6 +169,19 @@ const SCHEDULE_SCAFFOLDS = {
 } as const;
 
 /**
+ * Bundled agent-agnostic instructions file emitted by default at the
+ * workspace root. Codex CLI / Gemini CLI / GitHub Copilot CLI auto-read
+ * `AGENTS.md` from project root; Claude Code does not, but the standard
+ * pattern is `CLAUDE.md` → `@AGENTS.md` include.
+ *
+ * See ADR-0007 (revised 2026-05-17 b) for the four-layer init bundle.
+ */
+const AGENTS_MD_SCAFFOLD = {
+  src: "agents/AGENTS.md",
+  dest: ["AGENTS.md"] as const,
+} as const;
+
+/**
  * Initialize the current directory as an agentic-watch workspace.
  *
  * Creates the canonical workspace directories and copies bundled SKILL.md
@@ -171,6 +199,14 @@ const SCHEDULE_SCAFFOLDS = {
  * `.claude/skills/` via the `@ozzylabs/skills` Renovate preset won't be
  * surprised; alternatively use `--no-claude-skills` to skip the discovery
  * layer entirely.
+ *
+ * Multi-agent context (ADR-0007, revised 2026-05-17 b via #77): `init`
+ * also writes an agent-agnostic `AGENTS.md` at the workspace root. Codex
+ * CLI, Gemini CLI, and GitHub Copilot CLI auto-read this file when opened
+ * interactively in the workspace, giving those agents context about
+ * available commands, typical workflow, and docs pointers without any
+ * extra setup. Opt out via `--no-agents-md` (workspaces that already have
+ * their own AGENTS.md).
  */
 export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   const { cwd, force } = options;
@@ -239,6 +275,18 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       await copyFile(src, dest);
       copiedFiles.push(`.claude/skills/${skill}/SKILL.md`);
     }
+  }
+
+  if (!options.noAgentsMd) {
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: AGENTS_MD_SCAFFOLD,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
   }
 
   if (options.withRoutines) {
@@ -319,6 +367,7 @@ interface ParsedArgs {
   withRoutines: boolean;
   withActions: boolean;
   noClaudeSkills: boolean;
+  noAgentsMd: boolean;
   help: boolean;
 }
 
@@ -327,6 +376,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let withRoutines = false;
   let withActions = false;
   let noClaudeSkills = false;
+  let noAgentsMd = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -337,27 +387,32 @@ function parseArgs(args: string[]): ParsedArgs {
       withActions = true;
     } else if (arg === "--no-claude-skills") {
       noClaudeSkills = true;
+    } else if (arg === "--no-agents-md") {
+      noAgentsMd = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, withActions, noClaudeSkills, help };
+  return { force, withRoutines, withActions, noClaudeSkills, noAgentsMd, help };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, withActions, noClaudeSkills, help } = parseArgs(args);
+    const { force, withRoutines, withActions, noClaudeSkills, noAgentsMd, help } = parseArgs(args);
     if (help) {
       console.log(
-        "Usage: agentic-watch init [--force] [--with-routines] [--with-actions] [--no-claude-skills]",
+        "Usage: agentic-watch init [--force] [--with-routines] [--with-actions] [--no-claude-skills] [--no-agents-md]",
       );
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
       console.log(
         "  - Claude Code slash-command wrappers: .claude/skills/{research,review,update,dismiss}/SKILL.md",
+      );
+      console.log(
+        "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
       );
       console.log("");
       console.log("Options:");
@@ -372,6 +427,10 @@ export const initCommand: Command = {
       console.log(
         "                       (useful if @ozzylabs/skills Renovate preset manages that directory)",
       );
+      console.log("  --no-agents-md       Skip writing AGENTS.md at the workspace root");
+      console.log(
+        "                       (useful if the workspace already has its own AGENTS.md)",
+      );
       return 0;
     }
     await initWorkspace({
@@ -380,6 +439,7 @@ export const initCommand: Command = {
       withRoutines,
       withActions,
       noClaudeSkills,
+      noAgentsMd,
     });
     return 0;
   },

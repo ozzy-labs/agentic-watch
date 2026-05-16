@@ -13,6 +13,8 @@
 │  items/*.yaml         ← 検出記事                         │
 │  research/*.md        ← 調査結果（Markdown + frontmatter）│
 │  templates/*.md       ← Markdown テンプレ（ユーザー編集可）│
+│  AGENTS.md            ← Codex / Gemini / Copilot が auto-read する │
+│                          agent-agnostic instructions (--no-agents-md でスキップ) │
 │  .agents/skills/...   ← 4 CLI 共通 engine SKILL (SSoT)   │
 │  .claude/skills/...   ← Claude Code slash-command 雛形    │
 │                          (薄い wrapper、--no-claude-skills でスキップ) │

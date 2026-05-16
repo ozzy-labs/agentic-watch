@@ -179,6 +179,10 @@ describe("e2e/cli (binary smoke)", () => {
       for (const skill of ["research", "review", "update", "dismiss"]) {
         expect(existsSync(join(workdir, ".claude", "skills", skill, "SKILL.md"))).toBe(true);
       }
+      // Workspace-root AGENTS.md (ADR-0007 revision via #77): agent-agnostic
+      // instructions auto-read by Codex / Gemini / Copilot when opened in
+      // the workspace.
+      expect(existsSync(join(workdir, "AGENTS.md"))).toBe(true);
     });
 
     it("--no-claude-skills skips .claude/skills/ but still writes engine SKILLs", async () => {

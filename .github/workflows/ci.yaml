@@ -99,6 +99,7 @@ jobs:
               'dist/claude-skills/review/SKILL.md',
               'dist/claude-skills/update/SKILL.md',
               'dist/claude-skills/dismiss/SKILL.md',
+              'dist/templates/agents/AGENTS.md',
             ];
             const missing = required.filter(p => !files.includes(p));
             if (missing.length > 0) {

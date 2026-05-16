@@ -55,6 +55,7 @@ agentic-watch research <item-id> --agent claude-code
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
 ├── templates/           # 既定テンプレートのコピー
+├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions
 ├── .agents/skills/      # engine SKILL (SSoT): research / review / update
 ├── .claude/skills/      # Claude Code slash-command 雛形 (薄い wrapper)
 └── .github/workflows/   # 定期実行ワークフロー（任意）
@@ -67,7 +68,39 @@ agentic-watch research <item-id> --agent claude-code
 - `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
 - **engine SKILL** (`.agents/skills/{research,review,update}/SKILL.md`) を **bundled** からコピー。adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体
 - **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
+- **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
+
+#### AGENTS.md について
+
+`init` は workspace の root に **`AGENTS.md`** (agent-agnostic instructions) を default で生成する。Codex CLI / Gemini CLI / GitHub Copilot CLI はこのファイルを auto-read するため、interactive session を開いた agent に workspace の文脈 (主要コマンド、典型ワークフロー、docs pointer) を即座に伝えられる ([ADR-0007 Revision 2026-05-17 b](./adr/0007-skill-bundling-and-init-distribution.md))。
+
+| Agent | AGENTS.md auto-read |
+|---|---|
+| Claude Code | ❌ (`CLAUDE.md` 経由 — `CLAUDE.md` から `@AGENTS.md` で取り込むパターンが業界標準) |
+| Codex CLI | ✅ (project root → CWD、`project_doc_max_bytes` 32 KiB 制限) |
+| Gemini CLI | ✅ (project root、`.gemini/settings.json` の `context.fileName` でも追加可) |
+| GitHub Copilot CLI | ✅ (repo root / CWD / `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`) |
+
+`--no-agents-md` を使うべきケース:
+
+- workspace に既に独自の `AGENTS.md` (monorepo 全体の指示等) があり、agentic-watch の boilerplate と衝突させたくない
+- `AGENTS.md` を別ツール (`@ozzylabs/skills` 等) で集中管理している
+
+```bash
+agentic-watch init --no-agents-md   # AGENTS.md 生成を skip
+```
+
+Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込んで SSoT を維持するパターンが推奨:
+
+```markdown
+# CLAUDE.md
+
+共通方針は @AGENTS.md を参照。以下は Claude Code 固有の設定。
+
+## Claude Code 固有
+...
+```
 
 #### Claude Code interactive での利用 (slash commands)
 

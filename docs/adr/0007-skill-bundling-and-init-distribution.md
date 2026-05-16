@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11、Revised 2026-05-17）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/agentic-watch/issues/75))。
+Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/agentic-watch/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/agentic-watch/issues/77))。
 
 ## Context
 
@@ -64,7 +64,7 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 
 ### 改訂後の方針
 
-`init` は **2 層の skill** を user workspace に配置する:
+`init` は **2 層の skill** を user workspace に配置する (further extended to 4 layers in Revision (b), 2026-05-17 b):
 
 | 層 | 配置先 | 役割 | bundle 元 |
 |---|---|---|---|
@@ -98,6 +98,62 @@ discovery SKILL は **薄い wrapper** であり、research / review / update �
 ### 既存ファイル保護
 
 discovery 層も `.claude/skills/<name>/SKILL.md` が既に存在すれば skip + warning。`--force` で上書き (engine 層と同じパターン)。preset で配布される skill 名と衝突した場合、user は preset 側を優先するか agentic-watch 側を `--force` で上書きするかを選べる。
+
+## Revision (2026-05-17 b, [#77](https://github.com/ozzy-labs/agentic-watch/issues/77))
+
+### 動機 (Revision b)
+
+Revision (a) (2026-05-17) で `.claude/skills/` の slash-command wrapper を default-on で配置するようにしたが、**Claude Code 以外の agent CLI が auto-read する instructions file** (AGENTS.md) は user workspace に配置されていなかった。
+
+[`ai/practice/multi-agent-repo`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/multi-agent-repo.md) knowledge doc の中心原則は **「`AGENTS.md` を SSoT、CLI 固有ファイルは差分のみ」**。Codex CLI / Gemini CLI / GitHub Copilot CLI は `AGENTS.md` を auto-read するため、これがないと interactive session を開いた agent は「ここが何のワークスペースか / 何が実行できるか」を知らないままになる (Claude Code は `CLAUDE.md` を参照するが、`CLAUDE.md` → `@AGENTS.md` include が業界標準パターン)。
+
+#### Auto-read 対応表
+
+| Agent | AGENTS.md auto-read |
+|---|---|
+| Claude Code | ❌ (CLAUDE.md 経由 — ただし CLAUDE.md → "see AGENTS.md" パターンが業界標準) |
+| Codex CLI | ✅ (project root → CWD、`project_doc_max_bytes` 32 KiB 制限) |
+| Gemini CLI | ✅ (project root、`.gemini/settings.json` の `context.fileName` でも追加可) |
+| Copilot CLI | ✅ (repo root / CWD / `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`) |
+
+### 改訂後の方針 (4 層構成)
+
+`init` は **4 層** を user workspace に配置する:
+
+| 層 | 配置先 | 役割 | bundle 元 | opt-out |
+|---|---|---|---|---|
+| **engine SKILL (SSoT)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体 | `src/skills/` | (なし、SSoT) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`agentic-watch <subcommand>` を呼ぶだけ | `src/claude-skills/` | `--no-claude-skills` |
+| **AGENTS.md** (新規) | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer) | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
+| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+
+#### AGENTS.md の内容方針
+
+bundle される `AGENTS.md` は user workspace 向けに簡潔で実用的な内容 (32 KiB 制限以内、目安 5-8 KiB):
+
+- このディレクトリは何か (agentic-watch workspace の概要)
+- 主要コマンド一覧 (init / source / watch / research / review / update / dismiss)
+- 利用可能 slash commands (`.claude/skills/` 経由)
+- 典型ワークフロー (watch run → research → review → (任意で update))
+- cross-agent review 推奨パターン (ADR-0001)
+- データ管理ポリシー (`sources/` / `items/` / `state/` / `research/` を git commit)
+- セキュリティ警告 (untrusted external content、ADR-0009)
+- 詳細ドキュメントへの pointer (user-guide.md / architecture.md / adr/)
+
+このリポ自身の `AGENTS.md` (本リポ開発者向け) は触らない。user workspace 向けの内容は別物。
+
+#### AGENTS.md の opt-out
+
+`agentic-watch init --no-agents-md` で AGENTS.md 生成を skip。既に独自の `AGENTS.md` を管理している workspace (monorepo 等) 向け。engine SKILL / Claude discovery SKILL は影響を受けない。
+
+#### AGENTS.md の既存ファイル保護
+
+`<cwd>/AGENTS.md` が既に存在すれば skip + warning。`--force` で上書き (engine / discovery 層と同じパターン)。
+
+### 改訂 (b) が解消しない事項
+
+- Revision (a) と同じく、ユーザー編集後の sync 問題は引き続き発生 (`--force` または手 merge で対処)
+- 個別 agent 設定ファイル (`.gemini/settings.json` 等) の bundling は本改訂のスコープ外 (別 issue で検討)
 
 ## Consequences
 
