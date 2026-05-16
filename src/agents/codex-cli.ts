@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { AgentAdapter, ResearchRequest, ReviewRequest } from "./types.js";
+import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from "./types.js";
 
 /**
  * Build the prompt handed to `codex exec`.
@@ -65,6 +65,56 @@ function buildResearchPrompt(req: ResearchRequest): string {
  *     "researchBody":        string
  *   }
  */
+/**
+ * Build the prompt handed to `codex exec` for update.
+ *
+ * Symmetric with the research / review prompts: thin wrapper that points the
+ * agent at `.agents/skills/update/SKILL.md` and re-states the critical
+ * filesystem invariants for the v+1 generation (rewrite-and-supersede). The
+ * structured inputs arrive in the `<stdin>` block appended by the Codex CLI.
+ *
+ * Stdin payload schema (JSON):
+ *   {
+ *     "agent":        AgentId,
+ *     "templateId":   string,
+ *     "templateBody": string,
+ *     "prevResearch": { frontmatter: ResearchFrontmatter, body: string },
+ *     "items":        Item[],
+ *     "outputPath":   string
+ *   }
+ */
+function buildUpdatePrompt(req: UpdateRequest): string {
+  const newId = req.outputPath.replace(/^.*\//, "").replace(/\.md$/, "");
+  return [
+    "Run the `.agents/skills/update/SKILL.md` skill to regenerate the supplied",
+    "research report as a new `_v(N+1).md` file (rewrite-and-supersede).",
+    "",
+    "Inputs (one JSON document appended in the `<stdin>` block):",
+    "  - agent:        the agent id you are running as",
+    "  - templateId:   research template id (e.g. `default`)",
+    "  - templateBody: contents of templates/<templateId>.md, or empty string",
+    "                  if the workspace did not provide one (use SKILL default)",
+    "  - prevResearch: { frontmatter, body } of the predecessor file",
+    "  - items:        validated Item objects linked from the predecessor",
+    "  - outputPath:   absolute path where you MUST write the new v+1 report",
+    "",
+    `Predecessor research id: ${req.prevResearch.frontmatter.id}`,
+    `New research id: ${newId}`,
+    `Write the v+1 Markdown report to: ${req.outputPath}`,
+    "",
+    "Constraints:",
+    "  - Follow `.agents/skills/update/SKILL.md` exactly for layout and",
+    "    frontmatter; ADR-0003 is the canonical format spec.",
+    `  - Set frontmatter \`supersedes: ${req.prevResearch.frontmatter.id}\``,
+    "    (predecessor id, not filename).",
+    `  - Preserve \`itemIds\`, \`templateId\`, and \`createdAt\` from v(N).`,
+    "  - Set `reviewedAt: null` and `reviewedBy: null` (v+1 resets review state).",
+    "  - Do not modify the predecessor file or any items/*.yaml — the CLI",
+    "    enforces immutable history and items.yaml status invariance.",
+    "  - Write to `outputPath` only. Do not create other files.",
+  ].join("\n");
+}
+
 function buildReviewPrompt(req: ReviewRequest): string {
   return [
     "Run the `.agents/skills/review/SKILL.md` skill to cross-check the",
@@ -265,12 +315,30 @@ export function createCodexCliAdapter(options: CodexCliAdapterOptions = {}): Age
         throw new Error(`codex-cli adapter: codex CLI exited with code ${result.code}: ${tail}`);
       }
     },
-    update: async (_req) => {
-      // TODO(#41 commit 3): implement update by spawning `codex exec ...` with
-      // the update SKILL prompt, mirroring the research / review code paths
-      // above. Phase 5 Sub-issue B commit 1 ships only the interface stub so
-      // typecheck + CLI plumbing can be built in isolation.
-      throw new Error("codex-cli adapter: update not implemented yet (Phase 5 Sub-issue B)");
+    update: async (req) => {
+      const prompt = buildUpdatePrompt(req);
+      const stdin = `${JSON.stringify(
+        {
+          agent: req.agent,
+          templateId: req.templateId,
+          templateBody: req.templateBody,
+          prevResearch: req.prevResearch,
+          items: req.items,
+          outputPath: req.outputPath,
+        },
+        null,
+        2,
+      )}\n`;
+      const result = await run(prompt, { cwd: req.cwd, stdin });
+      if (result.code !== 0) {
+        const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
+        if (isAuthError(`${result.stderr}\n${result.stdout}`)) {
+          throw new Error(
+            `codex-cli adapter: codex CLI is not authenticated — run \`codex login\` and retry. Original output: ${tail}`,
+          );
+        }
+        throw new Error(`codex-cli adapter: codex CLI exited with code ${result.code}: ${tail}`);
+      }
     },
   };
 }
