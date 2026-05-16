@@ -50,13 +50,14 @@ describe("cli/init", () => {
   });
 
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
-    // Scope this test to the engine SKILLs only — claude discovery skills get
-    // their own describe block below.
+    // Scope this test to the engine SKILLs only — claude discovery skills and
+    // AGENTS.md get their own describe blocks below.
     const result = await initWorkspace({
       cwd: workdir,
       force: false,
       skillsRoot: BUNDLED_SKILLS_ROOT,
       noClaudeSkills: true,
+      noAgentsMd: true,
       warn: (m) => warnings.push(m),
       info: () => undefined,
     });
@@ -377,6 +378,106 @@ describe("cli/init", () => {
       expect(warnings.some((m) => m.includes("bundled claude discovery skill not found"))).toBe(
         true,
       );
+    });
+  });
+
+  describe("agents.md (workspace-root AGENTS.md for multi-agent context)", () => {
+    // ADR-0007 (revised 2026-05-17 b via #77): default-on AGENTS.md at the
+    // workspace root so that Codex CLI / Gemini CLI / Copilot CLI auto-read
+    // workspace context. Opt-out via `noAgentsMd` for workspaces that already
+    // have their own AGENTS.md.
+
+    it("emits <cwd>/AGENTS.md by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const dest = join(workdir, "AGENTS.md");
+      expect(await pathExists(dest)).toBe(true);
+      expect(result.copiedFiles).toContain("AGENTS.md");
+    });
+
+    it("skips AGENTS.md when noAgentsMd: true", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "AGENTS.md"))).toBe(false);
+      const agentsEntries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "AGENTS.md",
+      );
+      expect(agentsEntries).toEqual([]);
+    });
+
+    it("protects existing AGENTS.md without --force", async () => {
+      const dest = join(workdir, "AGENTS.md");
+      await writeFile(dest, "user-edited agents instructions", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited agents instructions");
+      expect(result.skippedFiles).toContain("AGENTS.md");
+      expect(warnings.some((m) => m.includes("AGENTS.md"))).toBe(true);
+    });
+
+    it("overwrites existing AGENTS.md with --force", async () => {
+      const dest = join(workdir, "AGENTS.md");
+      await writeFile(dest, "user-edited agents instructions", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited agents instructions");
+      expect(result.copiedFiles).toContain("AGENTS.md");
+    });
+
+    it("AGENTS.md content includes key commands and workspace context", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(join(workdir, "AGENTS.md"), "utf8");
+      // Sanity: the bundled template names the project and the main commands.
+      expect(body).toContain("agentic-watch");
+      expect(body).toContain("research");
+      expect(body).toContain("review");
+      expect(body).toContain("update");
+      expect(body).toContain("dismiss");
     });
   });
 });
