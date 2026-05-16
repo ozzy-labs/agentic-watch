@@ -18,5 +18,11 @@ node_modules/
 dist/
 build/
 
+# Test coverage
+coverage/
+
+# Claude Code harness (drive subagent worktrees are harness-managed and short-lived)
+.claude/worktrees/
+
 # Logs
 *.log
