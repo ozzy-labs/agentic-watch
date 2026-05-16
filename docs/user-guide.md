@@ -333,9 +333,56 @@ agentic-watch review <research-id> --agent claude-code
 
 CLI 側で agent の組合せを強制はしない（ユーザー判断）。`radar.config.yaml` で default agent を指定すれば、`--agent` を毎回付けずに済む（[後述](#radarconfigyaml)）。
 
-### `agentic-watch update <research-id> --agent <agent-id>`
+### `agentic-watch update <research-id> [--agent <agent-id>] [--template <id>]`
 
-既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history）。
+既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history、[ADR-0003](./adr/0003-output-format-and-versioning.md)）。
+
+| 引数 | 説明 |
+|---|---|
+| `<research-id>` | `research/<id>.md` の id（拡張子 `.md` は省略可。例: `20260510_anthropic-news-claude-code_v1`） |
+| `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`、`radar.config.yaml` の `defaultResearchAgent` を fallback として使う） |
+| `--template` | テンプレ id（既定: `default`、`templates/<id>.md` を参照） |
+
+挙動:
+
+- 前版 (`<base>_v<N>.md`) を読み込み、その frontmatter / 本文を adapter に渡す
+- adapter は `<agent> -p "<prompt>"` を子プロセスで起動し、`.agents/skills/update/SKILL.md` を実行する
+- adapter が新ファイル `research/<base>_v<N+1>.md` を書き出す（rewrite-and-supersede 戦略、[`docs/design/skill-design.md` §8.2](./design/skill-design.md)）
+- CLI 側で v+1 frontmatter を `ResearchFrontmatter` schema で検証し、v+1 invariants を assert する:
+  - `itemIds` / `templateId` / `createdAt` が前版と一致
+  - `supersedes` が前版 id と一致
+  - `reviewedAt` / `reviewedBy` が `null`
+- 違反が検出された場合は警告ログを出して frontmatter を自動修正する（agent の drift から保護）
+- 旧版 (`_v<N>.md`) は**書き換えない**（immutable history）
+- `items/<sourceId>/<itemId>.yaml` の `status` は**変更しない**（[ADR-0008](./adr/0008-status-state-machine.md) / [`docs/design/skill-design.md` §8.4](./design/skill-design.md)）。`reviewed` だった item は `reviewed` のまま、`researched` だった item は `researched` のまま
+- `detected` / `dismissed` の item に対する update は拒否する（v1 research がないため supersede 対象がない）
+
+出力: `research/<base>_v<N+1>.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。
+
+例:
+
+```bash
+# v1 を元に v2 を生成（v1 と同じ claude-code で）
+agentic-watch update 20260510_anthropic-news-claude-code_v1 --agent claude-code
+
+# v2 を生成しつつ agent を切り替え（v1 は claude-code、v2 は codex-cli）
+agentic-watch update 20260510_anthropic-news-claude-code_v1 --agent codex-cli
+
+# v2 を更に更新 (v3 を生成)
+agentic-watch update 20260510_anthropic-news-claude-code_v2 --agent claude-code
+```
+
+#### v+1 で `reviewedAt` / `reviewedBy` をリセットする理由
+
+v1 に対して `review` を実行した内容は v2 には引き継がない（v2 は v1 と内容が変わっているため、v1 のレビュー結論をそのまま使えない）。v+1 の内容を改めてレビューしたい場合は、`agentic-watch review <new-id> --agent <id>` を v+1 に対して実行する（[`docs/design/skill-design.md` §8.6](./design/skill-design.md)）。
+
+#### items.yaml の status が動かないことの含意
+
+「`reviewed` の item の最新 research が v2 で、まだ review されていない」状態が出現することがある。`items.yaml` の `status` 単独では「最新 research が review 済みか」を判定できないので、必要に応じて `research/*.md` 側の `reviewedAt` を確認すること。これは ADR-0003 / ADR-0008 の意図的な設計（item lifecycle と research version を直交させる）であり、自動 promote はしない。
+
+#### update の対象が無い場合 (no-op suppression)
+
+agent が最新情報を取得しても material な変更が無いと判断した場合は、v+1 ファイルを作らずスキップする（[`docs/design/skill-design.md` §8.5](./design/skill-design.md)）。空 diff の v+1 を作らない設計のため、再実行で v3, v4 が無限に増えることはない。
 
 ## radar.config.yaml
 
@@ -469,3 +516,4 @@ agentic-watch 全体での prompt injection 緩和レイヤー（item content �
 | `not implemented yet (Phase 1)` | 該当コマンドは未実装。Phase 1 まで待つか、[Phase 1 epic](https://github.com/ozzy-labs/agentic-watch/issues?q=label%3Aphase-1) に貢献 |
 | agent CLI が見つからない | `claude` / `codex` / `gemini` / `copilot` が `PATH` に存在し認証済みであることを確認 |
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
+| Phase 1 で試した workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/agentic-watch/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |

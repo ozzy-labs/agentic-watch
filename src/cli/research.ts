@@ -307,8 +307,7 @@ export async function runResearch(
   // Phase 5 contract: `supersedes` is null on v1 by definition (no predecessor
   // exists). Defensive reset applies if a misbehaving agent populates it; the
   // `update` command (Sub-issue B / #41) is the only writer that may set it.
-  const reviewedDrift =
-    fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
+  const reviewedDrift = fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
   const supersedesDrift = fmResult.data.supersedes !== null;
   if (reviewedDrift || supersedesDrift) {
     if (reviewedDrift) {
