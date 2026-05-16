@@ -416,8 +416,10 @@ export async function runReview(
     return 1;
   }
   // Other immutable frontmatter fields must remain unchanged. Catching a
-  // misbehaving agent that rewrote `id` / `itemIds` / `agent` / `createdAt`
-  // here is cheaper than letting the inconsistency leak downstream.
+  // misbehaving agent that rewrote `id` / `itemIds` / `agent` / `createdAt` /
+  // `supersedes` here is cheaper than letting the inconsistency leak
+  // downstream. `supersedes` is owned by `research` (v1=null) and `update`
+  // (v+1=<prev id>); `review` must never touch it.
   const drift: string[] = [];
   if (postFm.id !== preFm.id) drift.push(`id (${preFm.id} -> ${postFm.id})`);
   if (postFm.agent !== preFm.agent) drift.push(`agent (${preFm.agent} -> ${postFm.agent})`);
@@ -427,6 +429,8 @@ export async function runReview(
     drift.push(`createdAt (${preFm.createdAt} -> ${postFm.createdAt})`);
   if (JSON.stringify(postFm.itemIds) !== JSON.stringify(preFm.itemIds))
     drift.push(`itemIds (${preFm.itemIds.join(",")} -> ${postFm.itemIds.join(",")})`);
+  if (postFm.supersedes !== preFm.supersedes)
+    drift.push(`supersedes (${preFm.supersedes} -> ${postFm.supersedes})`);
   if (drift.length > 0) {
     error(`review: adapter mutated immutable frontmatter fields: ${drift.join("; ")}`);
     await restoreSnapshot(snapshot);
