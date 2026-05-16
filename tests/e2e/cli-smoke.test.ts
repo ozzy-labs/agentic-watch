@@ -157,7 +157,7 @@ describe("e2e/cli (binary smoke)", () => {
   });
 
   describe("scenario A: init", () => {
-    it("creates the canonical workspace layout and copies bundled skills", async () => {
+    it("creates the canonical workspace layout and copies bundled skills (engine + claude discovery)", async () => {
       const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-init-"));
       const result = await runCli(["init"], { cwd: workdir });
 
@@ -169,9 +169,29 @@ describe("e2e/cli (binary smoke)", () => {
       for (const dir of ["sources", "state", "items", "research", "templates"]) {
         expect(existsSync(join(workdir, dir))).toBe(true);
       }
+      // Engine SKILLs (SSoT) under .agents/skills/.
       for (const skill of ["research", "review", "update"]) {
         expect(existsSync(join(workdir, ".agents", "skills", skill, "SKILL.md"))).toBe(true);
       }
+      // Claude Code slash-command wrappers under .claude/skills/ (ADR-0007
+      // revision via #75). dismiss is here but NOT in engine skills since the
+      // dismiss command does not invoke an agent.
+      for (const skill of ["research", "review", "update", "dismiss"]) {
+        expect(existsSync(join(workdir, ".claude", "skills", skill, "SKILL.md"))).toBe(true);
+      }
+    });
+
+    it("--no-claude-skills skips .claude/skills/ but still writes engine SKILLs", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-init-nocs-"));
+      const result = await runCli(["init", "--no-claude-skills"], { cwd: workdir });
+
+      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+      // Engine SKILLs still written.
+      for (const skill of ["research", "review", "update"]) {
+        expect(existsSync(join(workdir, ".agents", "skills", skill, "SKILL.md"))).toBe(true);
+      }
+      // .claude/skills/ should not exist at all.
+      expect(existsSync(join(workdir, ".claude", "skills"))).toBe(false);
     });
   });
 

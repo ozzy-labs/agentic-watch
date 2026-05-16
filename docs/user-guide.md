@@ -55,18 +55,36 @@ agentic-watch research <item-id> --agent claude-code
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
 ├── templates/           # 既定テンプレートのコピー
-├── .agents/skills/      # research / review / update skill
+├── .agents/skills/      # engine SKILL (SSoT): research / review / update
+├── .claude/skills/      # Claude Code slash-command 雛形 (薄い wrapper)
 └── .github/workflows/   # 定期実行ワークフロー（任意）
 ```
 
 `--with-routines` / `--with-actions` を指定すると、定期実行 scheduler への接続用雛形が追加で生成される（詳細は本ドキュメントの「[スケジュール実行](#スケジュール実行)」セクション）。
 
-#### Phase 1 時点の挙動
+#### 挙動
 
 - `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
-- `.agents/skills/{research,review,update}/SKILL.md` を **bundled SKILL.md** からコピー（review / update は Phase 1 では stub プロンプト、本文は Phase 2/4 で確定）
+- **engine SKILL** (`.agents/skills/{research,review,update}/SKILL.md`) を **bundled** からコピー。adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体
+- **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
-- Claude Code 側 (`.claude/skills/`) への配置は本 Phase では行わない（`@ozzylabs/skills` Renovate preset との衝突回避）
+
+#### Claude Code interactive での利用 (slash commands)
+
+`init` で配置される slash commands:
+
+| Slash | 動作 | 中身 |
+|---|---|---|
+| `/research <item-id> [--agent ...]` | research を実行 | `agentic-watch research $ARGUMENTS` を呼ぶ |
+| `/review <research-id> [--agent ...]` | review を実行 | `agentic-watch review $ARGUMENTS` を呼ぶ |
+| `/update <research-id> [--agent ...]` | v+1 を生成 | `agentic-watch update $ARGUMENTS` を呼ぶ |
+| `/dismiss <item-id>` | item を dismiss | `agentic-watch dismiss $ARGUMENTS` を呼ぶ (LLM 不要) |
+
+各 slash command は **薄い wrapper** で、研究 / レビュー / update / dismiss の procedure 本体は `.agents/skills/<name>/SKILL.md` (engine SKILL) を SSoT として参照する。
+
+#### `--no-claude-skills` を使うべきケース
+
+`@ozzylabs/skills` Renovate preset 等で `.claude/skills/` を集中管理している workspace では、`agentic-watch init --no-claude-skills` で discovery 層 (`.claude/skills/`) を skip すると preset 側との衝突 / 上書き競合を避けられる。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる。
 
 ### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
 

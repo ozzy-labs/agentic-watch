@@ -1,0 +1,45 @@
+---
+name: research
+description: Generate a research report for a detected item via the agentic-watch CLI.
+argument-hint: <item-id> [--agent claude-code|codex-cli|gemini-cli|copilot] [--template <id>]
+---
+
+# research
+
+Generate a Markdown research report for an `agentic-watch` workspace item.
+
+This skill is a thin wrapper: it delegates to the `agentic-watch` CLI, which
+handles item lookup, template loading, adapter dispatch (spawning the chosen
+agent CLI), schema validation, and the `detected → researched` status
+transition. The canonical research procedure (frontmatter format, body
+layout, `<untrusted_item>` boundary handling) lives in
+`.agents/skills/research/SKILL.md` (the SSoT) and is invoked by the agent
+adapter that the CLI spawns. Do not duplicate that procedure here.
+
+## Steps
+
+1. Resolve `$ARGUMENTS`. If empty or `--help`, run:
+
+   ```bash
+   agentic-watch research --help
+   ```
+
+   and report the usage. Otherwise pass `$ARGUMENTS` through verbatim.
+2. Execute:
+
+   ```bash
+   agentic-watch research $ARGUMENTS
+   ```
+
+3. Report the resulting research file path (printed on stdout by the CLI as
+   `research: wrote <path>` and `research: <item-id> status -> researched`)
+   and surface any stderr to the user.
+
+## Notes
+
+- If the CLI exits non-zero (item not found, schema validation, adapter
+  failure), surface the error message and exit code; do not retry blindly.
+- Cross-review with a different agent is recommended (ADR-0001 / user-guide
+  §クロスエージェント運用). After this skill produces `research/<id>.md`, the
+  user typically follows up with `/review <id> --agent <different-agent>`.
+- The CLI's default agent is `claude-code`; override with `--agent`.

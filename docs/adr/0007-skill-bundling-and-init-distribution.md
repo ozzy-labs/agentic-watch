@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11）— 詳細実装は Phase 1 で固める。
+Accepted（2026-05-11、Revised 2026-05-17）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/agentic-watch/issues/75))。
 
 ## Context
 
@@ -55,6 +55,49 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 ### CLI 固有 companion
 
 `SKILL.claude-code.md` のような CLI 固有 companion は **agentic-watch 同梱 skill では当面用意しない**。必要が出たら本 ADR を改訂する（Claude Code の `AskUserQuestion` 等を使う必要が出た場合）。
+
+## Revision (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75))
+
+### 動機
+
+初版 (2026-05-11) では `init` は `.agents/skills/` のみに書き込み、`.claude/skills/` を意図的に touch しない方針だった (Renovate preset との衝突回避)。これは agent CLI 経由の呼び出し (`agentic-watch research <item> --agent claude-code` → adapter が `claude` を spawn → `claude` が `.agents/skills/research/SKILL.md` を読む) には十分だが、**Claude Code interactive session で `/research` / `/review` / `/update` / `/dismiss` の slash command が発見されない** という UX gap があった (user feedback、`docs/design/skill-design.md` line 112 の "revisit if user feedback shows friction" 条件発動)。
+
+### 改訂後の方針
+
+`init` は **2 層の skill** を user workspace に配置する:
+
+| 層 | 配置先 | 役割 | bundle 元 |
+|---|---|---|---|
+| **engine SKILL (SSoT)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体 | `src/skills/` |
+| **Claude discovery SKILL (薄い wrapper)** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`agentic-watch <subcommand>` を呼ぶだけ | `src/claude-skills/` (新規 bundle dir) |
+
+#### Claude discovery SKILL の対象
+
+| Slash | wraps |
+|---|---|
+| `/research <item-id> [--agent ...]` | `agentic-watch research` |
+| `/review <research-id> [--agent ...]` | `agentic-watch review` |
+| `/update <research-id> [--agent ...]` | `agentic-watch update` |
+| `/dismiss <item-id>` | `agentic-watch dismiss` (no LLM) |
+
+`dismiss` は agent を呼ばないため engine SKILL を持たないが、UX 上 slash command として提供する価値があるため discovery 層には含める (非対称性を許容)。
+
+#### opt-out
+
+`agentic-watch init --no-claude-skills` で discovery 層を skip する。これは `@ozzylabs/skills` Renovate preset で `.claude/skills/` を集中管理している workspace 向け。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる (この flag では skip しない)。
+
+#### SSoT 維持
+
+discovery SKILL は **薄い wrapper** であり、research / review / update の procedure 本体 (frontmatter 形式、boundary marker 取扱い、status 不変ルール 等) は engine SKILL のみに書く。procedure を duplicate しない (drift 防止)。
+
+### 改訂が解消しない事項
+
+- 初版 § Consequences 「ユーザー編集後の sync 問題」は引き続き発生 (`--force` または手 merge で対処)
+- 別 npm 分離 (案 C) は引き続き不要
+
+### 既存ファイル保護
+
+discovery 層も `.claude/skills/<name>/SKILL.md` が既に存在すれば skip + warning。`--force` で上書き (engine 層と同じパターン)。preset で配布される skill 名と衝突した場合、user は preset 側を優先するか agentic-watch 側を `--force` で上書きするかを選べる。
 
 ## Consequences
 

@@ -111,6 +111,8 @@ We do not implement the override path in Phase 1 — `research` calls the base S
 
 When users want Claude Code itself to invoke these SKILLs (rather than the Claude Code CLI agent that `agentic-watch research` spawns), they can manually symlink or copy `.agents/skills/research/SKILL.md` into `.claude/skills/`. We do not automate this in Phase 1; revisit if user feedback shows the manual step is a recurring friction.
 
+> **Revision (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75))**: the "manual symlink" friction did materialize, so `init` now also writes **thin slash-command wrappers** to `<cwd>/.claude/skills/{research,review,update,dismiss}/SKILL.md` (default-on, opt-out via `--no-claude-skills`). The wrappers shell out to the `agentic-watch` CLI — they do **not** duplicate the engine procedure. The engine SKILLs under `.agents/skills/` remain the single source of truth for research / review / update behaviour. See [ADR-0007 § Revision](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-75) for the layered design.
+
 For agent adapters that spawn the CLI as a subprocess (which is what Phase 1's `research` does), the working directory is the workspace root and the SKILL is read via `Read` against `.agents/skills/research/SKILL.md`. Every supported agent CLI honours this — there is no path-resolution branching inside the adapter.
 
 ## 6. Phase 1 contract summary
