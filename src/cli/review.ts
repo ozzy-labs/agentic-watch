@@ -323,6 +323,18 @@ export async function runReview(
     return 1;
   }
 
+  // Surface any prompt-injection pre-filter hits recorded by the watcher
+  // (ADR-0009 M1a / M5a — Adopt). Audit-only: review still proceeds against
+  // the original research file, but the user sees the audit trail before
+  // tokens are spent on the cross-agent review pass.
+  for (const linked of linkedItems) {
+    if (linked.injectionFlags.length > 0) {
+      warn(
+        `review: item '${linked.id}' has ${linked.injectionFlags.length} injection flag(s): ${linked.injectionFlags.join(", ")} (audit-only; the linked research was generated from possibly tainted content)`,
+      );
+    }
+  }
+
   // Load template.
   const templatesDir = join(cwd, "templates");
   let template: ResearchTemplate;
