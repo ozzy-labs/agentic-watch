@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Copies bundled assets that tsc does not handle:
-//   - src/skills/**/*.md  -> dist/skills/
-//   - src/templates/**    -> dist/templates/  (schedule scaffolds for init)
+//   - src/skills/**/*.md        -> dist/skills/        (engine SSoT, .agents/skills/)
+//   - src/templates/**          -> dist/templates/     (schedule scaffolds for init)
+//   - src/claude-skills/**/*.md -> dist/claude-skills/ (slash command wrappers, .claude/skills/)
 
 import { cp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,7 @@ async function copyMdTree(srcRel, distRel, label) {
 async function main() {
   await copyMdTree("src/skills", "dist/skills", "skills");
   await copyMdTree("src/templates", "dist/templates", "init templates");
+  await copyMdTree("src/claude-skills", "dist/claude-skills", "claude discovery skills");
 }
 
 main().catch((err) => {

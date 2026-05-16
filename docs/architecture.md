@@ -13,7 +13,9 @@
 │  items/*.yaml         ← 検出記事                         │
 │  research/*.md        ← 調査結果（Markdown + frontmatter）│
 │  templates/*.md       ← Markdown テンプレ（ユーザー編集可）│
-│  .agents/skills/...   ← 4 CLI 共通 Skill (init で配置)    │
+│  .agents/skills/...   ← 4 CLI 共通 engine SKILL (SSoT)   │
+│  .claude/skills/...   ← Claude Code slash-command 雛形    │
+│                          (薄い wrapper、--no-claude-skills でスキップ) │
 │  .github/workflows/...← 定期実行ワークフロー (init で配置) │
 └───────────────────────────────────────────────────────────┘
                     ▲

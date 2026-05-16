@@ -33,6 +33,31 @@ async function resolveTemplatesRoot(): Promise<string> {
   return resolve(here, "../templates");
 }
 
+/**
+ * Resolve the directory holding the bundled Claude Code slash-command
+ * wrappers (`dist/claude-skills/`).
+ *
+ * These are distinct from the engine SKILLs at `dist/skills/`. The engine
+ * SKILLs land at `<cwd>/.agents/skills/<name>/SKILL.md` and are read by the
+ * agent adapter when the CLI spawns claude/codex/gemini/copilot. The Claude
+ * discovery skills land at `<cwd>/.claude/skills/<name>/SKILL.md` so that
+ * Claude Code, when opened in the workspace, surfaces `/research` /
+ * `/review` / `/update` / `/dismiss` as invocable slash commands. The
+ * discovery skills are thin wrappers — they shell out to the `agentic-watch`
+ * CLI rather than duplicating the engine procedure.
+ *
+ * See ADR-0007 (revised 2026-05-17) for the policy and `docs/design/
+ * skill-design.md` for the SSoT vs discovery layering rationale.
+ */
+async function resolveClaudeSkillsRoot(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const compiled = resolve(here, "../claude-skills");
+  if (await pathExists(compiled)) {
+    return compiled;
+  }
+  return resolve(here, "../claude-skills");
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await access(p);
@@ -45,10 +70,23 @@ async function pathExists(p: string): Promise<boolean> {
 interface InitOptions {
   cwd: string;
   force: boolean;
-  /** Override the source location of bundled skills (used by tests). */
+  /** Override the source location of bundled engine skills (used by tests). */
   skillsRoot?: string;
   /** Override the source location of bundled init templates (used by tests). */
   templatesRoot?: string;
+  /** Override the source location of bundled Claude discovery skills (used by tests). */
+  claudeSkillsRoot?: string;
+  /**
+   * Skip writing Claude Code slash-command wrappers to
+   * `<cwd>/.claude/skills/`. Useful for workspaces that already manage that
+   * directory via the `@ozzylabs/skills` Renovate preset and don't want
+   * agentic-watch's discovery skills to land alongside the preset ones.
+   *
+   * The engine SKILLs at `<cwd>/.agents/skills/` (which the agent adapter
+   * reads when the CLI spawns the agent) are always written regardless of
+   * this flag; they are the SSoT.
+   */
+  noClaudeSkills?: boolean;
   /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
@@ -71,7 +109,29 @@ interface InitResult {
 }
 
 const WORKSPACE_DIRS = ["sources", "state", "items", "research", "templates"] as const;
+
+/**
+ * Engine SKILLs (SSoT): canonical procedure documents that the agent adapter
+ * reads when the CLI spawns claude/codex/gemini/copilot. They land at
+ * `<cwd>/.agents/skills/<name>/SKILL.md`.
+ */
 const BUNDLED_SKILLS = ["research", "review", "update"] as const;
+
+/**
+ * Claude Code discovery SKILLs: thin slash-command wrappers that surface
+ * `/research` / `/review` / `/update` / `/dismiss` inside Claude Code
+ * interactive sessions opened in the workspace. They land at
+ * `<cwd>/.claude/skills/<name>/SKILL.md` and delegate to the `agentic-watch`
+ * CLI; they do not duplicate the engine procedure.
+ *
+ * Note `dismiss` is here but NOT in `BUNDLED_SKILLS` — the dismiss command
+ * does not invoke an agent (no LLM call), so there is no engine SKILL for
+ * it. The slash-command wrapper is purely a UX affordance for Claude Code
+ * users (vs typing `agentic-watch dismiss` in a terminal).
+ *
+ * See ADR-0007 (revised 2026-05-17) for the SSoT vs discovery split.
+ */
+const CLAUDE_DISCOVERY_SKILLS = ["research", "review", "update", "dismiss"] as const;
 
 /**
  * Schedule scaffolds that `init` may emit on opt-in flags.
@@ -100,14 +160,17 @@ const SCHEDULE_SCAFFOLDS = {
  * files into `.agents/skills/<name>/SKILL.md`. Existing files are protected
  * unless `force` is true.
  *
- * Claude Code adapter integration: `init` currently writes a single canonical
- * copy under `.agents/skills/`. We do not duplicate or symlink into
- * `.claude/skills/` because `@ozzylabs/skills` Renovate preset manages that
- * directory separately and we want to avoid surprise overwrites of skills
- * shipped through the preset. This decision is logged on
- * https://github.com/ozzy-labs/agentic-watch/issues/9 § 2 and will be revisited
- * if user feedback requires direct Claude Code discoverability for bundled
- * skills.
+ * Claude Code discoverability (ADR-0007, revised 2026-05-17 via #75): in
+ * addition to the engine SKILLs at `.agents/skills/`, `init` also writes
+ * thin slash-command wrappers to `.claude/skills/` so that Claude Code,
+ * when opened interactively in the workspace, surfaces `/research` /
+ * `/review` / `/update` / `/dismiss`. The wrappers delegate to the
+ * `agentic-watch` CLI rather than duplicating the engine procedure (the
+ * engine SKILL at `.agents/skills/<name>/SKILL.md` remains the SSoT).
+ * Existing files are protected, so workspaces that already manage
+ * `.claude/skills/` via the `@ozzylabs/skills` Renovate preset won't be
+ * surprised; alternatively use `--no-claude-skills` to skip the discovery
+ * layer entirely.
  */
 export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   const { cwd, force } = options;
@@ -148,6 +211,34 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
 
     await copyFile(src, dest);
     copiedFiles.push(`.agents/skills/${skill}/SKILL.md`);
+  }
+
+  if (!options.noClaudeSkills) {
+    const claudeSkillsRoot = options.claudeSkillsRoot ?? (await resolveClaudeSkillsRoot());
+
+    for (const skill of CLAUDE_DISCOVERY_SKILLS) {
+      const src = join(claudeSkillsRoot, skill, "SKILL.md");
+      const destDir = join(cwd, ".claude", "skills", skill);
+      const dest = join(destDir, "SKILL.md");
+      await mkdir(destDir, { recursive: true });
+
+      if (!(await pathExists(src))) {
+        warn(`init: bundled claude discovery skill not found, skipped: ${src}`);
+        skippedFiles.push(`.claude/skills/${skill}/SKILL.md`);
+        continue;
+      }
+
+      if ((await pathExists(dest)) && !force) {
+        warn(
+          `init: skipped existing file (use --force to overwrite): .claude/skills/${skill}/SKILL.md`,
+        );
+        skippedFiles.push(`.claude/skills/${skill}/SKILL.md`);
+        continue;
+      }
+
+      await copyFile(src, dest);
+      copiedFiles.push(`.claude/skills/${skill}/SKILL.md`);
+    }
   }
 
   if (options.withRoutines) {
@@ -227,6 +318,7 @@ interface ParsedArgs {
   force: boolean;
   withRoutines: boolean;
   withActions: boolean;
+  noClaudeSkills: boolean;
   help: boolean;
 }
 
@@ -234,6 +326,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let force = false;
   let withRoutines = false;
   let withActions = false;
+  let noClaudeSkills = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -242,31 +335,42 @@ function parseArgs(args: string[]): ParsedArgs {
       withRoutines = true;
     } else if (arg === "--with-actions") {
       withActions = true;
+    } else if (arg === "--no-claude-skills") {
+      noClaudeSkills = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, withActions, help };
+  return { force, withRoutines, withActions, noClaudeSkills, help };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, withActions, help } = parseArgs(args);
+    const { force, withRoutines, withActions, noClaudeSkills, help } = parseArgs(args);
     if (help) {
-      console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
+      console.log(
+        "Usage: agentic-watch init [--force] [--with-routines] [--with-actions] [--no-claude-skills]",
+      );
       console.log("");
-      console.log("Creates the workspace directories and copies bundled skills");
-      console.log("(research / review / update) into .agents/skills/.");
+      console.log("Creates the workspace directories and copies bundled skills:");
+      console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
+      console.log(
+        "  - Claude Code slash-command wrappers: .claude/skills/{research,review,update,dismiss}/SKILL.md",
+      );
       console.log("");
       console.log("Options:");
-      console.log("  --force            Overwrite existing files");
+      console.log("  --force              Overwrite existing files");
       console.log(
-        "  --with-routines    Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
+        "  --with-routines      Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
       );
       console.log(
-        "  --with-actions     Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
+        "  --with-actions       Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
+      );
+      console.log("  --no-claude-skills   Skip writing slash-command wrappers to .claude/skills/");
+      console.log(
+        "                       (useful if @ozzylabs/skills Renovate preset manages that directory)",
       );
       return 0;
     }
@@ -275,6 +379,7 @@ export const initCommand: Command = {
       force,
       withRoutines,
       withActions,
+      noClaudeSkills,
     });
     return 0;
   },

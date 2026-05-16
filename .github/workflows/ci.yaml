@@ -95,6 +95,10 @@ jobs:
               'dist/skills/research/SKILL.md',
               'dist/skills/review/SKILL.md',
               'dist/skills/update/SKILL.md',
+              'dist/claude-skills/research/SKILL.md',
+              'dist/claude-skills/review/SKILL.md',
+              'dist/claude-skills/update/SKILL.md',
+              'dist/claude-skills/dismiss/SKILL.md',
             ];
             const missing = required.filter(p => !files.includes(p));
             if (missing.length > 0) {
