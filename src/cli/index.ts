@@ -38,7 +38,7 @@ function printHelp(): void {
   console.log("  -h, --help     Show this help");
   console.log("  -v, --version  Show version");
   console.log("");
-  console.log("Status: alpha — implementation in progress (Phase 0).");
+  console.log("Status: alpha — Phase 1-5 complete, Phase 6 (npm publish 0.1.0) pending.");
 }
 
 export async function run(argv: string[]): Promise<void> {
