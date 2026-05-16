@@ -1,0 +1,2 @@
+prompt = "Run `agentic-watch dismiss {{args}}` to mark the specified detected item as dismissed. This command does not invoke an LLM; the CLI flips the item status directly. Surface the resulting status and any errors from stdout/stderr."
+description = "Mark a detected item as dismissed via agentic-watch (no LLM)."

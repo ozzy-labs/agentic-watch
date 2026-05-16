@@ -15,9 +15,11 @@
 │  templates/*.md       ← Markdown テンプレ（ユーザー編集可）│
 │  AGENTS.md            ← Codex / Gemini / Copilot が auto-read する │
 │                          agent-agnostic instructions (--no-agents-md でスキップ) │
-│  .agents/skills/...   ← 4 CLI 共通 engine SKILL (SSoT)   │
+│  .agents/skills/...   ← 4 CLI 共通 engine SKILL (SSoT, dual-mode)│
 │  .claude/skills/...   ← Claude Code slash-command 雛形    │
 │                          (薄い wrapper、--no-claude-skills でスキップ) │
+│  .gemini/commands/... ← Gemini CLI slash command (TOML)    │
+│                          (薄い wrapper、--no-gemini-commands でスキップ) │
 │  .github/workflows/...← 定期実行ワークフロー (init で配置) │
 └───────────────────────────────────────────────────────────┘
                     ▲
