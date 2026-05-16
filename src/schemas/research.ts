@@ -16,6 +16,12 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
  * Phase 1 contract: `reviewedAt` / `reviewedBy` are **always written as
  * `null`** by the `research` command. They become non-null when Phase 2's
  * `review` command stamps the file. See ADR-0003.
+ *
+ * Phase 5 contract: `supersedes` records the lineage between research file
+ * versions. v1 files write `null`; v(N+1) files write the previous version's
+ * `id` (filename without the `.md` extension). The field is `null`-defaulted
+ * so existing v1 frontmatter generated before Phase 5 (which omits the field
+ * entirely) parses without violating the schema. See ADR-0003.
  */
 export const ResearchFrontmatterSchema = z.object({
   id: z.string().min(1),
@@ -26,6 +32,7 @@ export const ResearchFrontmatterSchema = z.object({
   updatedAt: z.string().datetime().nullable(),
   reviewedAt: z.string().datetime().nullable(),
   reviewedBy: AgentIdSchema.nullable(),
+  supersedes: z.string().min(1).nullable().default(null),
 });
 export type ResearchFrontmatter = z.infer<typeof ResearchFrontmatterSchema>;
 

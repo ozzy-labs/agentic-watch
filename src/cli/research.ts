@@ -304,10 +304,23 @@ export async function runResearch(
   }
   // Phase 1 contract: review fields must be null. The schema permits null;
   // we additionally enforce that the agent did not jump ahead and stamp them.
-  if (fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null) {
-    warn(
-      "research: agent populated reviewedAt/reviewedBy; resetting to null (Phase 1 contract — review handles this in Phase 2)",
-    );
+  // Phase 5 contract: `supersedes` is null on v1 by definition (no predecessor
+  // exists). Defensive reset applies if a misbehaving agent populates it; the
+  // `update` command (Sub-issue B / #41) is the only writer that may set it.
+  const reviewedDrift =
+    fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
+  const supersedesDrift = fmResult.data.supersedes !== null;
+  if (reviewedDrift || supersedesDrift) {
+    if (reviewedDrift) {
+      warn(
+        "research: agent populated reviewedAt/reviewedBy; resetting to null (Phase 1 contract — review handles this in Phase 2)",
+      );
+    }
+    if (supersedesDrift) {
+      warn(
+        "research: agent populated supersedes; resetting to null (Phase 5 contract — v1 has no predecessor; `update` writes supersedes)",
+      );
+    }
     const parsed = matter(body, matterOptions);
     const rewritten = matter.stringify(
       parsed.content,
@@ -315,6 +328,7 @@ export async function runResearch(
         ...fmResult.data,
         reviewedAt: null,
         reviewedBy: null,
+        supersedes: null,
       },
       matterOptions,
     );
