@@ -19,18 +19,33 @@ Accepted（2026-05-11）
 
 `src/core/feeds/types.ts` に共通 interface を定義し、各 source 種別に対応する adapter を `src/core/feeds/<kind>.ts` に置く。
 
+canonical 定義は [`src/core/feeds/types.ts`](../../src/core/feeds/types.ts) を参照。代表的な signature は以下:
+
 ```typescript
-import type { Item, Source } from "../../schemas/index.js";
+import type { Item, Source, SourceState } from "../../schemas/index.js";
+
+export interface FeedFetchResult {
+  items: Item[];
+  /** Patch to merge into the source's SourceState (e.g. lastEtag, lastSeenIds). */
+  state: Partial<SourceState>;
+  /** true for HTTP 304 / unchanged content; watcher short-circuits item processing. */
+  notModified?: boolean;
+}
+
+export interface FeedAdapterOptions {
+  fetch?: FetchLike;       // injected by tests; defaults to global fetch
+  state?: SourceState;     // previous on-disk state for this source
+}
 
 export interface FeedAdapter {
   kind: Source["kind"];
-  fetch: (source: Source) => Promise<Item[]>;
+  fetch: (source: Source, options?: FeedAdapterOptions) => Promise<FeedFetchResult>;
 }
 ```
 
 - `Source["kind"]` は `"rss" | "html" | "github-releases" | "npm-registry"`（[schemas/source.ts](../../src/schemas/source.ts)）
 - `core/watcher.ts` は kind から adapter を解決し、interface 経由でのみ fetch を呼ぶ
-- 各 adapter は state（`lastEtag` / `lastSeenIds`）を読み取り、新規分のみ返す（実装の詳細は adapter 内）
+- 各 adapter は前回 state（`lastEtag` / `lastSeenIds` 等）を `options.state` から受け取り、新規分の `items` と次回 state への `state` patch を返す。304 / unchanged 時は `notModified: true` で短絡する
 
 ### Item ID 派生のコントラクト
 

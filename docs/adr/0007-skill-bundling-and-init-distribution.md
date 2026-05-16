@@ -17,7 +17,25 @@ Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026
 
 ## Decision
 
-**agentic-watch リポに同梱、`init` で user workspace にコピー**する。
+**agentic-watch リポに同梱、`init` で user workspace へ 5 層構成でコピー**する。
+
+### 5 層構成 (canonical)
+
+`init` は以下の 5 層を user workspace に配置し、4 種類の agent CLI (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) に対し **adapter spawn 経路と interactive slash / mention 経路の両方** を同一の SSoT から駆動する:
+
+| 層 | 配置先 | 役割 | bundle 元 | opt-out |
+|---|---|---|---|---|
+| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体。冒頭に "Invocation modes" セクションを持ち、(1) adapter spawn 時は procedure を実行、(2) interactive 起動時 (stdin JSON なし、`$ARGUMENTS` あり) は `agentic-watch <subcommand>` に shell out する dual-mode | `src/skills/` | (なし、SSoT) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`agentic-watch <subcommand>` を呼ぶだけの薄い wrapper | `src/claude-skills/` | `--no-claude-skills` |
+| **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Gemini CLI interactive で `/research` 等の slash command として発火、TOML の `prompt` キーから `agentic-watch <subcommand> {{args}}` を呼ぶ | `src/gemini-commands/` | `--no-gemini-commands` |
+| **AGENTS.md** | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer) | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
+| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+
+`package.json` の `files` には `dist/skills` / `dist/claude-skills` / `dist/gemini-commands` / `dist/templates` を含めて配布する。
+
+### SSoT 維持の原則
+
+engine SKILL (`.agents/skills/`) のみが procedure 本体を持つ。Claude discovery / Gemini commands は **薄い wrapper** (slash command の発火点のみ) で、procedure を duplicate しない (drift 防止)。dual-mode 化により Codex CLI は `.agents/skills/` の auto-discovery 経由で `$research` mention に応答でき、Gemini CLI は `.gemini/commands/` の TOML 経由で `/research` slash に応答できる。
 
 ### 同梱する Skill
 
@@ -30,13 +48,11 @@ src/skills/
 └── update/SKILL.md         # 既存 research → 最新情報で v+1 を生成
 ```
 
-`package.json` の `files` に `dist/skills` を含めて配布する。
-
 ### `init` の挙動
 
 `agentic-watch init` 実行時:
 
-1. user workspace の `.agents/skills/{research,review,update}/SKILL.md` にコピー
+1. user workspace の 5 層配置先にコピー（engine SKILL は SSoT として常時、それ以外は default-on / opt-out）
 2. ファイル既存時は `--force` 指定なしで skip し warning（ユーザー編集を保護）
 3. `--force` 指定時のみ上書き
 
@@ -54,7 +70,7 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 
 ### CLI 固有 companion
 
-`SKILL.claude-code.md` のような CLI 固有 companion は **agentic-watch 同梱 skill では当面用意しない**。必要が出たら本 ADR を改訂する（Claude Code の `AskUserQuestion` 等を使う必要が出た場合）。
+`SKILL.<agent-id>.md` のような per-agent override 用 companion file path は §4 of [`docs/design/skill-design.md`](../design/skill-design.md) で予約済みだが、現状は未使用 (engine SKILL 1 本で 4 agent を兼用)。初版 (2026-05-11) は「CLI 固有 companion は当面用意しない」方針だったが、Revision (a) (`.claude/skills/`)、(b) (`AGENTS.md`)、(c) (`.gemini/commands/`) の 3 段階で **CLI 固有 discovery 層は薄い wrapper として導入済み** (procedure は engine SKILL に閉じる、という SSoT 原則は維持)。
 
 ## Revision (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75))
 

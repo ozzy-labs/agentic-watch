@@ -26,7 +26,7 @@ agentic-watch プロジェクト**内部の**設計判断を記録する。OzzyL
 | [0003](./0003-output-format-and-versioning.md) | Output Format and Versioning | Accepted |
 | [0004](./0004-schedule-strategy.md) | Schedule Strategy | Accepted |
 | [0005](./0005-user-data-separation.md) | User Data Separation | Accepted |
-| [0006](./0006-filter-specification.md) | Filter Specification | Proposed |
+| [0006](./0006-filter-specification.md) | Filter Specification | Accepted |
 | [0007](./0007-skill-bundling-and-init-distribution.md) | Skill Bundling and `init` Distribution | Accepted |
 | [0008](./0008-status-state-machine.md) | Item Status State Machine | Accepted |
 | [0009](./0009-untrusted-external-content-handling.md) | Untrusted External Content Handling for Agent Prompts | Accepted |
