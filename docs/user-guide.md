@@ -102,9 +102,18 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 ...
 ```
 
-#### Claude Code interactive での利用 (slash commands)
+#### AI agent interactive での利用 (slash commands)
 
-`init` で配置される slash commands:
+`init` で配置される slash commands は **4 agent 横断** で利用できる。発火形式と読み取り経路は agent ごとに違うが、最終的にはどれも `agentic-watch <subcommand>` を呼んで engine SKILL (`.agents/skills/<name>/SKILL.md`、SSoT) の procedure に流れる:
+
+| Agent | 発火形式 | 経路 |
+|---|---|---|
+| Claude Code | `/research <item-id>` | `.claude/skills/research/SKILL.md` (薄い wrapper) |
+| Copilot CLI | `/research <item-id>` 等 | `.claude/skills/` を auto-read |
+| Codex CLI | `$research` mention or `/skills` panel | `.agents/skills/research/SKILL.md` (engine SKILL の dual-mode、interactive 発火時は CLI に shell out) |
+| Gemini CLI | `/research <item-id>` | `.gemini/commands/research.toml` (薄い wrapper、TOML 形式) |
+
+利用できる slash commands (全 agent 共通):
 
 | Slash | 動作 | 中身 |
 |---|---|---|
@@ -113,11 +122,15 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 | `/update <research-id> [--agent ...]` | v+1 を生成 | `agentic-watch update $ARGUMENTS` を呼ぶ |
 | `/dismiss <item-id>` | item を dismiss | `agentic-watch dismiss $ARGUMENTS` を呼ぶ (LLM 不要) |
 
-各 slash command は **薄い wrapper** で、研究 / レビュー / update / dismiss の procedure 本体は `.agents/skills/<name>/SKILL.md` (engine SKILL) を SSoT として参照する。
+各 slash command は **薄い wrapper** で、procedure 本体は engine SKILL (`.agents/skills/<name>/SKILL.md`) を SSoT として参照する。Codex CLI は専用の slash wrapper を持たず、engine SKILL の冒頭 "Invocation modes" セクションが adapter spawn と interactive 起動の両方を捌く (interactive 起動時は `agentic-watch <subcommand>` に shell out)。
 
 #### `--no-claude-skills` を使うべきケース
 
 `@ozzylabs/skills` Renovate preset 等で `.claude/skills/` を集中管理している workspace では、`agentic-watch init --no-claude-skills` で discovery 層 (`.claude/skills/`) を skip すると preset 側との衝突 / 上書き競合を避けられる。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる。
+
+#### `--no-gemini-commands` を使うべきケース
+
+`.gemini/commands/` を別の方法で管理している (またはそもそも Gemini CLI を使わない) workspace では、`agentic-watch init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip できる。Gemini CLI interactive session も engine SKILL (`.agents/skills/`) の dual-mode 動作で正しく機能するため、`/research` slash の代わりに `$research` mention 経由になる。
 
 ### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
 
