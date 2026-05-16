@@ -242,6 +242,13 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
         throw new Error(`copilot adapter: copilot CLI exited with code ${result.code}: ${tail}`);
       }
     },
+    update: async (_req) => {
+      // TODO(#41 commit 3): implement update by spawning `copilot -p ...` with
+      // the update SKILL prompt, mirroring the research / review code paths
+      // above. Phase 5 Sub-issue B commit 1 ships only the interface stub so
+      // typecheck + CLI plumbing can be built in isolation.
+      throw new Error("copilot adapter: update not implemented yet (Phase 5 Sub-issue B)");
+    },
   };
 }
 

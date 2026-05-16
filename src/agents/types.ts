@@ -52,8 +52,55 @@ export interface ReviewRequest {
   cwd: string;
 }
 
+/**
+ * Inputs for the `update` adapter method.
+ *
+ * Phase 5 contract ([ADR-0001](../../docs/adr/0001-agent-adapter-interface.md)
+ * / [ADR-0003](../../docs/adr/0003-output-format-and-versioning.md) /
+ * [ADR-0008](../../docs/adr/0008-status-state-machine.md), and the design pin
+ * in `docs/design/skill-design.md` §2 / §8):
+ *
+ * - The CLI loads the previous version's research file (frontmatter + body)
+ *   and hands the adapter both alongside the new output path. The agent
+ *   regenerates the report end-to-end (rewrite-and-supersede strategy
+ *   confirmed in skill-design.md §8.2) and writes the v+1 file at
+ *   `outputPath`.
+ * - The adapter is responsible only for **agent-side mutations** (writing the
+ *   new file with the correct frontmatter, including `supersedes: <prev id>`,
+ *   `reviewedAt: null`, `reviewedBy: null`, and the v1 `createdAt` preserved).
+ *   The CLI handles validation, the `_v(N+1)` filename derivation, and the
+ *   `items.yaml` `status` invariant (ADR-0008: `update` never changes status).
+ * - `templateBody` mirrors `ResearchRequest.templateBody`: empty string means
+ *   "use the SKILL's built-in default research structure". The `update` SKILL
+ *   re-uses the research SKILL body internally, so the same template applies.
+ * - `prevResearch` carries the previous version's parsed frontmatter and
+ *   raw body so the agent can re-fetch upstream sources, judge materiality,
+ *   and emit a `## v<N+1> での変更点` block referencing v(N) content.
+ */
+export interface UpdateRequest {
+  agent: AgentId;
+  templateId: string;
+  templateBody: string;
+  /** Previous version frontmatter + raw body (with frontmatter). */
+  prevResearch: {
+    frontmatter: ResearchFrontmatter;
+    body: string;
+  };
+  /** Items linked from the previous research (preserved on v+1, ADR-0003). */
+  items: Item[];
+  /** Absolute path where the agent MUST write the new `_v(N+1).md` file. */
+  outputPath: string;
+  /**
+   * Working directory for the agent CLI invocation. Same role as
+   * `ResearchRequest.cwd`: rooted at the workspace so the agent can read
+   * `items/`, `sources/`, etc. with relative paths.
+   */
+  cwd: string;
+}
+
 export interface AgentAdapter {
   id: AgentId;
   research: (req: ResearchRequest) => Promise<void>;
   review: (req: ReviewRequest) => Promise<void>;
+  update: (req: UpdateRequest) => Promise<void>;
 }
