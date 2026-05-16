@@ -99,6 +99,10 @@ jobs:
               'dist/claude-skills/review/SKILL.md',
               'dist/claude-skills/update/SKILL.md',
               'dist/claude-skills/dismiss/SKILL.md',
+              'dist/gemini-commands/research.toml',
+              'dist/gemini-commands/review.toml',
+              'dist/gemini-commands/update.toml',
+              'dist/gemini-commands/dismiss.toml',
               'dist/templates/agents/AGENTS.md',
             ];
             const missing = required.filter(p => !files.includes(p));
