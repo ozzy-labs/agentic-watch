@@ -32,7 +32,7 @@ HTML adapter は `Source.selectors` の CSS セレクタを使って item を抽
 - 単独で CSS セレクタによる item 列挙 + テキスト抽出 + attribute 取得を完結できる
 - 依存パッケージなし。footprint が最も小さい
 - 実 web サイトに頻出する不正な HTML を寛容に扱う
-- `HTMLElement.querySelector(All)` / `getAttribute` / `text` / `structuredText` の API は cheerio/linkedom 経由でも同等。乗り換え時の移植コストは限定的
+- `HTMLElement.querySelector(All)` / `getAttribute` / `text` の API は cheerio/linkedom 経由でも同等。乗り換え時の移植コストは限定的
 
 ### 不採用理由
 
@@ -47,9 +47,9 @@ HTML adapter は `Source.selectors` の CSS セレクタを使って item を抽
 | field | 必須 | 評価コンテキスト | 抽出方法 |
 |---|---|---|---|
 | `item` | yes | document root | 各 match を 1 件の Item とする |
-| `title` | yes | item 要素配下 | テキスト (`structuredText`) |
-| `link` | yes | item 要素配下 | `href` 属性。属性が無ければテキスト |
-| `summary` | no | item 要素配下 | テキスト |
+| `title` | yes | item 要素配下 | テキスト (`el.text` 経由の `textOf`) |
+| `link` | yes | item 要素配下 | `href` 属性 (相対 URL は `source.url` に対して `new URL(raw, source.url)` で解決、`resolveUrl` で実装)。属性が無ければテキスト |
+| `summary` | no | item 要素配下 | テキスト (`textOf`) |
 | `publishedAt` | no | item 要素配下 | `datetime` / `content` / `value` 属性のいずれかを優先、無ければテキスト。`new Date()` で ISO 8601 に正規化、parse 失敗時は drop |
 | `body` | no | item 要素配下 | テキスト（`SourceFilters.matchFields` で `body` を選択した場合に filter で使用される） |
 | `tags` | no | item 要素配下 | 全 match 要素のテキストの配列 |

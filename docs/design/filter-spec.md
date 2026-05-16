@@ -70,9 +70,9 @@ def evaluate(item, filters):
 
 ### `matchMode: regex` の安全性
 
-`regex` モードは `new RegExp(keyword, flags)` をそのまま使う。これは強力だが、ユーザー入力が直接コンパイルされるため **ReDoS（指数バックトラック）の責任はユーザーが負う**。Phase 1 の実装方針:
+`regex` モードは `new RegExp(keyword, flags)` をそのまま使う。これは強力だが、ユーザー入力が直接コンパイルされるため **ReDoS（指数バックトラック）の責任はユーザーが負う**。現状の実装と防御方針:
 
-| 防御 | 状態 (Phase 1) | 備考 |
+| 防御 | 状態 | 備考 |
 |---|---|---|
 | `RegExp` コンパイルタイムアウト | **未実装** | Node.js 標準 `RegExp` には timeout が無い。導入には `vm.Script` を介す改造が必要 |
 | キーワード文字列長制限 | **未実装** | Zod スキーマは長さ上限を持たない（`keywords: z.array(z.string()).default([])`）|
@@ -94,10 +94,10 @@ def evaluate(item, filters):
 |---|---|:--:|:--:|:--:|:--:|
 | `title` | `item.title` | YES | YES | YES | YES |
 | `summary` | `item.summary`（RSS なら `<description>`） | YES | YES | YES | YES |
-| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | YES (Phase 3) | no | no |
-| `tags` | feed が `<category>` / labels を提供する場合 | no | no | YES (Phase 3) | no |
+| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | no (captured into `raw` only; `Item` schema has no `body` field, `filter.ts` silently skips) | no | no |
+| `tags` | feed が `<category>` / labels を提供する場合 | no | no | YES | no |
 
-Phase 1 は RSS adapter のみ実装。`matchFields` に `body` / `tags` を指定しても RSS adapter は **silently skip**（エラーにせず、その field を無いものとして扱う）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、後で adapter が増えても自動的に有効化される。
+`matchFields` に未提供フィールド（adapter が `Item` に surface しないフィールド）を指定しても **silently skip**（エラーにせず、その field を無いものとして扱う）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、後で adapter が増えても自動的に有効化される。`html` adapter は `body` を `raw.body` として持つが Item schema には body field が無いため `filter.ts` 側でも参照不可。
 
 ## Edge cases
 
@@ -126,7 +126,7 @@ matchedKeywords:
 status: detected
 ```
 
-研究レポート生成時、`matchedKeywords` を agent に渡してフォーカスを絞らせることができる（Phase 2 で活用）。
+研究レポート生成時、`matchedKeywords` を agent に渡してフォーカスを絞らせることができる。
 
 ## 単体テストパターン
 
