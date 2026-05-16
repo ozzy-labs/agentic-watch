@@ -20,21 +20,25 @@
 │                          (薄い wrapper、--no-claude-skills でスキップ) │
 │  .gemini/commands/... ← Gemini CLI slash command (TOML)    │
 │                          (薄い wrapper、--no-gemini-commands でスキップ) │
-│  .github/workflows/...← 定期実行ワークフロー (init で配置) │
+│  claude/routines/...  ← Claude Routines 雛形 (init --with-routines) │
+│  .github/workflows/...← GitHub Actions ワークフロー (init --with-actions) │
 └───────────────────────────────────────────────────────────┘
                     ▲
                     │ CLI が読み書き
                     │
 ┌──────────── @ozzylabs/agentic-watch (npm) ────────────────┐
 │  core/                                                    │
-│    ├─ watcher    : Feed adapter を呼び出して fetch        │
-│    ├─ feeds/     : RSS / HTML / GitHub Releases / npm     │
-│    ├─ filter     : keyword + excludeKeywords 判定         │
-│    ├─ items      : 検出アイテムの保存・status 管理        │
-│    └─ templates  : Markdown テンプレート差し込み           │
-│  agents/         : 4 CLI アダプタ（共通 IF + 個別実装）   │
-│  schemas/        : Zod スキーマ (Source / Item / State / Research) │
-│  cli/            : init / source / watch / research / review / update │
+│    ├─ watcher           : Feed adapter を呼び出して fetch │
+│    ├─ feeds/            : RSS / HTML / GitHub Releases / npm │
+│    ├─ filter            : keyword + excludeKeywords 判定  │
+│    ├─ items             : 検出アイテムの保存・status 管理 │
+│    ├─ templates         : Markdown テンプレート差し込み   │
+│    ├─ config            : radar.config.yaml の読込        │
+│    ├─ state             : source state YAML I/O           │
+│    └─ injection-detector: ADR-0009 M1c regex pre-filter   │
+│  agents/         : 4 CLI アダプタ + _boundary wrap helper │
+│  schemas/        : Zod スキーマ (Source / Item / State / Research / Config) │
+│  cli/            : init / source / watch / research / dismiss / review / update │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,9 +51,12 @@
 | `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用（詳細仕様: [`design/filter-spec.md`](./design/filter-spec.md)）|
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |
-| `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装（skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md)）|
-| `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) |
-| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / review / update) |
+| `core/config` | `src/core/config.ts` | `radar.config.yaml` の読み込みと default agent / 既定値の解決 |
+| `core/state` | `src/core/state.ts` | source 単位の state YAML (`lastEtag` / `lastSeenIds` 等) の読み書き |
+| `core/injection-detector` | `src/core/injection-detector.ts` | ADR-0009 M1c の regex pre-filter + research frontmatter / log への audit 出力 |
+| `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装、`_boundary.ts` で untrusted コンテンツ wrap helper を提供（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c）。skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md) |
+| `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` `Config` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md))。`Config` は `radar.config.yaml` 用 |
+| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update) |
 
 ## データフロー
 
@@ -64,6 +71,9 @@ Item[] ── [filter] ──► matched Item[]
    │
    ▼
 items/*.yaml (status=detected) ◄── state/*.yaml (lastEtag / lastSeenIds)
+   │
+   ├── user: agentic-watch dismiss <item-id>
+   │      └── items/*.yaml (status=dismissed) [terminal]
    │
    │ user: agentic-watch research <item-id> --agent <id>
    ▼
@@ -109,7 +119,7 @@ agentic-watch review <research> --agent claude-code
 - review が research を書いた agent と同じ「思い込み」を引きずらない
 - 4 プランを契約しているなら、リソースを分散できる
 
-agent 選択ロジックは CLI が強制しない（ユーザー判断）。`init` で生成される `radar.config.yaml`（仮）で default agent を指定可能（Phase 1）。
+agent 選択ロジックは CLI が強制しない（ユーザー判断）。`init` で生成される `radar.config.yaml` で default agent を指定可能（Phase 1 で確定済み、schema は `src/schemas/config.ts`）。
 
 ## Schedule（定期実行）
 
@@ -143,17 +153,17 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 
 ## Phase 別スコープ
 
-| Phase | 範囲 |
-|---|---|
-| Phase 0 | リポ初期化、CI/Release 基盤、本ドキュメント |
-| Phase 1 (MVP) | `init` / `source add\|list\|remove` / `watch run` (RSS のみ) / `research` (Claude Code 単独で固定) |
-| Phase 2 | 4 agent adapters + `review` |
-| Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 |
-| Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く |
-| Phase 5 | `update` コマンド（既存 research の差分更新） |
-| Phase 6 | npm publish 初版 + Trusted Publisher 登録 |
-| Phase 7 | VS Code extension |
-| Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 親 issue) |
+| Phase | 範囲 | 状態 |
+|---|---|---|
+| Phase 0 | リポ初期化、CI/Release 基盤、本ドキュメント | 完了 |
+| Phase 1 (MVP) | `init` / `source add\|list\|remove` / `watch run` (RSS のみ) / `research` (Claude Code 単独で固定) | 完了 |
+| Phase 2 | 4 agent adapters + `review` | 完了 |
+| Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 | 完了 |
+| Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く | 完了 |
+| Phase 5 | `update` コマンド（既存 research の差分更新）、`dismiss` コマンド | 完了 |
+| Phase 6 | npm publish 初版 + Trusted Publisher 登録 | 残タスク |
+| Phase 7 | VS Code extension | 残タスク |
+| Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 親 issue) | 進行中（M1c 完了、後続 M2/M3 等は残タスク） |
 
 ## 関連 ADR
 
@@ -171,4 +181,5 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 
 - [`design/filter-spec.md`](./design/filter-spec.md) — `core/filter` の評価順序・matchMode・matchFields・edge cases（ADR-0006 の実装寄り詳細）
 - [`design/skill-design.md`](./design/skill-design.md) — `.agents/skills/` バンドリング、`init` copy 戦略、SKILL 呼び出しプロトコル（ADR-0001 / ADR-0003 / ADR-0007 / ADR-0008 の実装寄り詳細）
+- [`design/source-html.md`](./design/source-html.md) — HTML scraping adapter のセレクタ仕様 / 抽出ルール / encoding ハンドリング（ADR-0002 の HTML kind 実装寄り詳細）
 - [`design/threat-model.md`](./design/threat-model.md) — prompt injection 攻撃面 / 被害範囲 / 緩和候補（ADR-0009 の脅威モデル詳細）
