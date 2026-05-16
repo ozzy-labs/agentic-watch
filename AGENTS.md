@@ -11,11 +11,13 @@
 
 ## プロジェクト概要
 
-`agentic-watch`: Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports
+`agentic-watch`: Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports.
+
+主要機能: 4 種の AI agent adapter (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) と 4 種の feed kind (RSS / HTML / GitHub Releases / npm registry) をサポート。`research` / `dismiss` / `review` / `update` で item を triage し、ADR-0009 M1c の prompt injection 緩和（regex pre-filter + audit + `_boundary` wrap）を組み込む。
 
 ## Tech Stack
 
-- Runtime: Node.js 22+ (ESM)
+- Runtime: Node.js 22+ (ESM)。`.mise.toml` で Node.js 24 を pin（開発・CI 共通）
 - Language: TypeScript
 - Package manager: pnpm
 - Version management: mise (`.mise.toml`)
