@@ -1,6 +1,6 @@
 ---
 name: update
-description: Regenerate an existing research report as v+1 via the agentic-watch CLI (rewrite-and-supersede).
+description: Regenerate an existing research report as v+1 via the FeedRadar CLI (rewrite-and-supersede).
 argument-hint: <research-id> [--agent claude-code|codex-cli|gemini-cli|copilot] [--template <id>]
 ---
 
@@ -10,7 +10,7 @@ Generate a new `<base>_v<N+1>.md` from the supplied predecessor research,
 writing `supersedes: <prev-id>` into the new frontmatter and leaving the
 predecessor file untouched (immutable history, ADR-0003).
 
-This skill is a thin wrapper: it delegates to the `agentic-watch` CLI, which
+This skill is a thin wrapper: it delegates to the `radar` CLI, which
 handles predecessor parsing, version increment, supersedes wiring, adapter
 dispatch, schema validation, and the **items.yaml status invariance** rule
 (ADR-0008: update never changes the source item's `status`, regardless of
@@ -25,14 +25,14 @@ here.
 1. Resolve `$ARGUMENTS`. If empty or `--help`, run:
 
    ```bash
-   agentic-watch update --help
+   radar update --help
    ```
 
    and report the usage. Otherwise pass `$ARGUMENTS` through verbatim.
 2. Execute:
 
    ```bash
-   agentic-watch update $ARGUMENTS
+   radar update $ARGUMENTS
    ```
 
 3. Report the v+1 file path the CLI produced (printed as `update: wrote

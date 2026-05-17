@@ -76,7 +76,7 @@ function parseArgs(args: string[]): ResearchArgs {
 }
 
 function printHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch research <item-id> [--agent <agent-id>] [--template <template-id>]");
+  log("Usage: radar research <item-id> [--agent <agent-id>] [--template <template-id>]");
   log("");
   log("Arguments:");
   log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
@@ -150,7 +150,7 @@ async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | n
 }
 
 /**
- * Implementation of `agentic-watch research <item-id>`.
+ * Implementation of `radar research <item-id>`.
  *
  * High-level flow (Phase 1):
  *   1. Parse + validate args (agent defaults to `claude-code`, template to `default`).
@@ -234,10 +234,10 @@ export async function runResearch(
   // Surface any prompt-injection pre-filter hits recorded by the watcher
   // (ADR-0009 M1a / M5a — Adopt). Audit-only: the agent still runs against
   // the original content, but the user gets an explicit warning so they can
-  // `agentic-watch dismiss` and re-evaluate before committing tokens.
+  // `radar dismiss` and re-evaluate before committing tokens.
   if (item.injectionFlags.length > 0) {
     warn(
-      `research: item '${item.id}' has ${item.injectionFlags.length} injection flag(s): ${item.injectionFlags.join(", ")} (audit-only; use \`agentic-watch dismiss\` to skip)`,
+      `research: item '${item.id}' has ${item.injectionFlags.length} injection flag(s): ${item.injectionFlags.join(", ")} (audit-only; use \`radar dismiss\` to skip)`,
     );
   }
 
@@ -252,14 +252,14 @@ export async function runResearch(
   }
 
   // Compute output path. Refuse to overwrite an existing file — re-runs go
-  // through `agentic-watch update` per ADR-0003 (immutable history).
+  // through `radar update` per ADR-0003 (immutable history).
   const now = new Date();
   const datePrefix = buildDatePrefix(item, now);
   const slug = buildSlug(item);
   const filename = `${datePrefix}_${slug}_v1.md`;
   const outputPath = join(cwd, "research", filename);
   if (await pathExists(outputPath)) {
-    error(`research: ${outputPath} already exists (use \`agentic-watch update\` to re-research)`);
+    error(`research: ${outputPath} already exists (use \`radar update\` to re-research)`);
     return 1;
   }
 

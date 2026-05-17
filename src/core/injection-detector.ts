@@ -13,7 +13,7 @@
  * - **Audit-only.** A non-empty `matched` list never changes the item's
  *   `status`, never rewrites the content, and never blocks research. ADR-0009
  *   rejected auto-sanitize (M5b) on the same principle — the user retains the
- *   judgment call and can `agentic-watch dismiss` an item manually.
+ *   judgment call and can `radar dismiss` an item manually.
  * - **High-precision patterns.** We intentionally avoid heuristics that try
  *   to catch every social-engineering phrase. The patterns target literal
  *   markers seen in real payloads; vague natural-language attacks (e.g.

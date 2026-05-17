@@ -6,7 +6,7 @@ Accepted（2026-05-11）— `research` (Phase 1), `review` (Phase 2), `update` +
 
 ## Context
 
-agentic-watch は 4 種類のエージェント CLI（Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI）に対し**同じ調査タスクを発注**する必要がある。各 CLI の非対話実行フラグは異なり、出力の取り出し方も異なる:
+FeedRadar は 4 種類のエージェント CLI（Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI）に対し**同じ調査タスクを発注**する必要がある。各 CLI の非対話実行フラグは異なり、出力の取り出し方も異なる:
 
 ```text
 claude   : claude -p "<prompt>" --output-format text --permission-mode bypassPermissions

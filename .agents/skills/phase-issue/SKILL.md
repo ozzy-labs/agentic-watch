@@ -29,7 +29,7 @@ phase-issue <phase-number> "<title>"
 ### 必須引数
 
 - `<phase-number>`: 整数（例: `0`, `1`, `2`）
-- `<title>`: 引用符でくくった文字列（例: `"agentic-watch foundation"`）
+- `<title>`: 引用符でくくった文字列（例: `"feedradar foundation"`）
 
 ### 任意引数の取り扱い（非対話モード）
 

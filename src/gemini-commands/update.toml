@@ -1,2 +1,2 @@
-prompt = "Run `agentic-watch update {{args}}` to regenerate the specified research report as a new v+1 version. Surface the resulting file path and any errors from stdout/stderr. The canonical procedure lives in `.agents/skills/update/SKILL.md` (SSoT); this command is a thin wrapper that delegates to the CLI."
-description = "Regenerate a research report as a new version via agentic-watch."
+prompt = "Run `radar update {{args}}` to regenerate the specified research report as a new v+1 version. Surface the resulting file path and any errors from stdout/stderr. The canonical procedure lives in `.agents/skills/update/SKILL.md` (SSoT); this command is a thin wrapper that delegates to the CLI."
+description = "Regenerate a research report as a new version via FeedRadar."

@@ -6,9 +6,9 @@ Accepted（2026-05-11）— Phase 1 で `Item` schema に `status` フィール�
 
 ## Context
 
-`agentic-watch` は detected → research → review → update のループを回す。session の議論初期には writing-studio の状態モデル（`detected → triaged → researched → reviewed → published → updated`）を引用したが、agentic-watch のスコープに合わせた再評価が必要:
+`radar` は detected → research → review → update のループを回す。session の議論初期には writing-studio の状態モデル（`detected → triaged → researched → reviewed → published → updated`）を引用したが、FeedRadar のスコープに合わせた再評価が必要:
 
-- agentic-watch は **research / review のみ**で、article publishing（writing-studio の `published`）は持たない
+- FeedRadar は **research / review のみ**で、article publishing（writing-studio の `published`）は持たない
 - `triaged` はユーザーの「research する / dismiss する」判断ステップ。明示状態として持つか、操作（CLI コマンド）として表現するかが論点
 
 ## Decision
@@ -24,18 +24,18 @@ detected ──► (dismissed | researched) ──► reviewed
 
 | status | 意味 | 遷移トリガー |
 |---|---|---|
-| `detected` | watch run が filter 通過後に出力した直後 | `agentic-watch watch run` |
-| `dismissed` | ユーザーが「research しない」と判断した terminal 状態 | `agentic-watch dismiss <item-id>` |
-| `researched` | research report が `research/` に作成された | `agentic-watch research <item-id> --agent <id>` |
-| `reviewed` | 既存 research に対しレビューが実行された | `agentic-watch review <research-id> --agent <id>` |
+| `detected` | watch run が filter 通過後に出力した直後 | `radar watch run` |
+| `dismissed` | ユーザーが「research しない」と判断した terminal 状態 | `radar dismiss <item-id>` |
+| `researched` | research report が `research/` に作成された | `radar research <item-id> --agent <id>` |
+| `reviewed` | 既存 research に対しレビューが実行された | `radar review <research-id> --agent <id>` |
 
 ### Update の扱い
 
-`agentic-watch update <research-id>` は **research ファイルの v+1 を作る**操作。item status は変えない（既に `researched` または `reviewed`）。
+`radar update <research-id>` は **research ファイルの v+1 を作る**操作。item status は変えない（既に `researched` または `reviewed`）。
 
 ### Review の二重更新
 
-`agentic-watch review` 実行時、**item.yaml と research.md の両方**を更新する:
+`radar review` 実行時、**item.yaml と research.md の両方**を更新する:
 
 - `items/<item-id>.yaml`: `status: researched → reviewed`
 - `research/<id>.md` frontmatter: `reviewedAt` / `reviewedBy` を記録（[ADR-0003](./0003-output-format-and-versioning.md)）
@@ -55,7 +55,7 @@ session で言及した `triaged` は**明示状態として持たない**。理
 
 ### writing-studio との差異
 
-| 概念 | writing-studio | agentic-watch |
+| 概念 | writing-studio | FeedRadar |
 |---|---|---|
 | article publishing | あり (`published`) | なし（research のみ） |
 | triage | 明示状態 (`triaged`) | 暗黙（操作で表現） |
@@ -82,7 +82,7 @@ session で言及した `triaged` は**明示状態として持たない**。理
 
 ### 案 A: writing-studio と完全に同じ 6 状態
 
-- 却下理由: `published` は agentic-watch の機能範囲外。`triaged` は実用上の必要性が薄い
+- 却下理由: `published` は FeedRadar の機能範囲外。`triaged` は実用上の必要性が薄い
 
 ### 案 B: 状態を持たず、ファイルの存在で判定
 

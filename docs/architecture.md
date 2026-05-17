@@ -1,6 +1,6 @@
 # Architecture
 
-`agentic-watch` は、技術ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) に渡して **Markdown 調査レポートを生成する CLI**。
+**FeedRadar** (`radar` CLI) は、技術ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) に渡して **Markdown 調査レポートを生成する CLI**。
 
 詳細な責務分離・拡張ポイント・運用判断の根拠は [`adr/`](./adr/README.md) 配下を参照。
 
@@ -26,7 +26,7 @@
                     ▲
                     │ CLI が読み書き
                     │
-┌──────────── @ozzylabs/agentic-watch (npm) ────────────────┐
+┌──────────── @ozzylabs/feedradar (npm) ────────────────┐
 │  core/                                                    │
 │    ├─ watcher           : Feed adapter を呼び出して fetch │
 │    ├─ feeds/            : RSS / HTML / GitHub Releases / npm │
@@ -72,18 +72,18 @@ Item[] ── [filter] ──► matched Item[]
    ▼
 items/*.yaml (status=detected) ◄── state/*.yaml (lastEtag / lastSeenIds)
    │
-   ├── user: agentic-watch dismiss <item-id>
+   ├── user: radar dismiss <item-id>
    │      └── items/*.yaml (status=dismissed) [terminal]
    │
-   │ user: agentic-watch research <item-id> --agent <id>
+   │ user: radar research <item-id> --agent <id>
    ▼
 [templates] + [agents/<id>] ──► research/<id>.md
    │
-   │ user: agentic-watch review <research-id> --agent <id>
+   │ user: radar review <research-id> --agent <id>
    ▼
 research/<id>.md (status=reviewed)
    │
-   │ user: agentic-watch update <research-id> --agent <id>
+   │ user: radar update <research-id> --agent <id>
    ▼
 research/<id>.md (新バージョン、immutable history)
 ```
@@ -106,11 +106,11 @@ Status は `items/*.yaml` に保存され、CLI が遷移を駆動。詳細・wr
 
 ## クロスエージェント運用
 
-agentic-watch は 4 種の agent CLI を adapter で抽象化しているため、**研究 (research) と レビュー (review) を別 agent で実行**することを推奨する:
+FeedRadar は 4 種の agent CLI を adapter で抽象化しているため、**研究 (research) と レビュー (review) を別 agent で実行**することを推奨する:
 
 ```bash
-agentic-watch research <item> --agent codex-cli
-agentic-watch review <research> --agent claude-code
+radar research <item> --agent codex-cli
+radar review <research> --agent claude-code
 ```
 
 異なる agent によるクロスチェックにより:
@@ -123,12 +123,12 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 
 ## Schedule（定期実行）
 
-`agentic-watch` 本体は **scheduler を内蔵しない**（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグで、ユーザーが選んだクラウド scheduler 向けの **接続点（雛形）** だけを workspace に書き出す。
+`radar` 本体は **scheduler を内蔵しない**（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグで、ユーザーが選んだクラウド scheduler 向けの **接続点（雛形）** だけを workspace に書き出す。
 
 | フラグ | 生成先 | 想定 scheduler |
 |---|---|---|
-| `agentic-watch init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
-| `agentic-watch init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions |
+| `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions |
 
 両 scheduler は実行ごとに **fresh clone** を行うため、`sources/` / `items/` / `state/` は **git にコミット済み**である必要がある。生成された雛形は `items/` / `state/` の commit + push 手順を含んでいる（fresh clone でも前回の `lastSeenIds` を引き継げるようにするため）。
 
@@ -146,7 +146,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 
 ## 配布形態
 
-- npm パッケージ `@ozzylabs/agentic-watch`、`bin: agentic-watch`
+- npm パッケージ `@ozzylabs/feedradar`、`bin: radar`
 - OIDC Trusted Publishers（[handbook/ADR-0001](https://github.com/ozzy-labs/handbook/blob/main/adr/0001-npm-scope-ozzylabs.md)、[standards/npm-trusted-publishers](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/standards/npm-trusted-publishers.md)）
 - 単一パッケージ（pnpm workspace なし）
 - engine と user data の分離（[ADR-0005](./adr/0005-user-data-separation.md)）
@@ -163,7 +163,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 | Phase 5 | `update` コマンド（既存 research の差分更新）、`dismiss` コマンド | 完了 |
 | Phase 6 | npm publish 初版 + Trusted Publisher 登録 | 残タスク |
 | Phase 7 | VS Code extension | 残タスク |
-| Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 親 issue) | 進行中（M1c 完了、後続 M2/M3 等は残タスク） |
+| Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/feedradar/issues/49) 親 issue) | 進行中（M1c 完了、後続 M2/M3 等は残タスク） |
 
 ## 関連 ADR
 

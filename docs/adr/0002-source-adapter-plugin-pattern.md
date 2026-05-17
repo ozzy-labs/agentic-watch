@@ -49,7 +49,7 @@ export interface FeedAdapter {
 
 ### Item ID 派生のコントラクト
 
-`Item.id` は adapter が生成する。形式と派生規則は全 adapter で統一する（Phase 1 [#24](https://github.com/ozzy-labs/agentic-watch/pull/24) で確定）:
+`Item.id` は adapter が生成する。形式と派生規則は全 adapter で統一する（Phase 1 [#24](https://github.com/ozzy-labs/feedradar/pull/24) で確定）:
 
 - **形式**: `<title-slug>-<8 hex of sha256(stableKey)>`（title がスラッグ化不能な場合はハッシュのみ 8 hex）
   - `title-slug`: title を小文字化し `[^a-z0-9]+` を `-` に正規化、長さ 40 で切り詰め

@@ -33,8 +33,8 @@ function buildResearchRequest(overrides: Partial<ResearchRequest> = {}): Researc
     templateId: "default",
     templateBody: "",
     items: [SAMPLE_ITEM],
-    outputPath: "/tmp/agentic-watch-test/research/sample.md",
-    cwd: "/tmp/agentic-watch-test",
+    outputPath: "/tmp/feedradar-test/research/sample.md",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -44,10 +44,10 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     agent: "codex-cli",
     templateId: "default",
     templateBody: "",
-    researchPath: "/tmp/agentic-watch-test/research/sample.md",
+    researchPath: "/tmp/feedradar-test/research/sample.md",
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nstub: true\n---\n# body\n",
-    cwd: "/tmp/agentic-watch-test",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -63,8 +63,8 @@ function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReque
     },
     items: [SAMPLE_ITEM],
     outputPath:
-      "/tmp/agentic-watch-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
-    cwd: "/tmp/agentic-watch-test",
+      "/tmp/feedradar-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -113,7 +113,7 @@ describe("agents/codex-cli adapter", () => {
         .fn()
         .mockRejectedValue(
           new Error(
-            "codex CLI not found in PATH — install Codex CLI and authenticate (`codex login`) before running `agentic-watch research` / `review`.",
+            "codex CLI not found in PATH — install Codex CLI and authenticate (`codex login`) before running `radar research` / `review`.",
           ),
         );
       const adapter = createCodexCliAdapter({ run });

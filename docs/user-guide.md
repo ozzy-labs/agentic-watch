@@ -6,9 +6,9 @@
 ## インストール
 
 ```bash
-pnpm add -g @ozzylabs/agentic-watch
+pnpm add -g @ozzylabs/feedradar
 # または
-npx @ozzylabs/agentic-watch <command>
+npx @ozzylabs/feedradar <command>
 ```
 
 要件:
@@ -17,7 +17,7 @@ npx @ozzylabs/agentic-watch <command>
 - pnpm（globally install する場合）
 - 監視対象に応じてネットワーク到達性
 
-エージェント CLI は **ユーザー側で別途インストール・認証**しておく必要がある。`agentic-watch` 自体はこれらの CLI を子プロセスとして起動する。
+エージェント CLI は **ユーザー側で別途インストール・認証**しておく必要がある。`radar` 自体はこれらの CLI を子プロセスとして起動する。
 
 ### 対応 agent CLI 一覧
 
@@ -34,20 +34,20 @@ npx @ozzylabs/agentic-watch <command>
 
 ```bash
 mkdir my-watch && cd my-watch
-agentic-watch init
-agentic-watch source add anthropic-sdk \
+radar init
+radar source add anthropic-sdk \
   --kind github-releases \
   --url https://github.com/anthropics/anthropic-sdk-python \
   --keywords "feat,fix,release"
-agentic-watch watch run
-agentic-watch research <item-id> --agent claude-code
+radar watch run
+radar research <item-id> --agent claude-code
 ```
 
 > `--keywords` を省略すると filter で 0 件になり、`watch run` が item を作らない仕様（`filter.ts` は keywords 空 = match nothing）。クイックスタートでは必ず `--keywords` を渡す。
 
 ## コマンド
 
-### `agentic-watch init`
+### `radar init`
 
 カレントディレクトリをワークスペースとして初期化する。
 
@@ -62,7 +62,7 @@ agentic-watch research <item-id> --agent claude-code
 ├── templates/           # 既定テンプレートのコピー (`default.md` が雛形、`--no-templates` で skip)
 ├── CLAUDE.md            # Claude Code 用 workspace instructions (`@AGENTS.md` を import、`--no-claude-md` で skip)
 ├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions (`--no-agents-md` で skip)
-├── AGENTIC_WATCH.md     # 人間向け workspace ガイド (自然言語 / slash による使い方、`--no-agentic-watch-md` で skip)
+├── FEEDRADAR.md     # 人間向け workspace ガイド (自然言語 / slash による使い方、`--no-feedradar-md` で skip)
 ├── .agents/skills/      # engine SKILL (SSoT): research / review / update
 ├── .claude/skills/      # Claude Code / Copilot CLI 用 slash-command 雛形 (薄い wrapper、`--no-claude-skills` で skip)
 ├── .gemini/commands/    # Gemini CLI 用 TOML slash-command 雛形 (`--no-gemini-commands` で skip)
@@ -77,12 +77,12 @@ agentic-watch research <item-id> --agent claude-code
 - `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
 - `sources/` `items/` `state/` `research/` に **`.gitkeep`** を配置（空ディレクトリでも `git add .` で追跡される。`state/*.yaml` の `lastSeenIds` を fresh clone 環境で引き継ぐためにはこれらのディレクトリの git コミットが前提）。既存ファイルは温存され `--force` でも上書きしない
 - **engine SKILL** (`.agents/skills/{research,review,update}/SKILL.md`) を **bundled** からコピー。adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体
-- **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
+- **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `radar <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - **`CLAUDE.md`** (workspace root) を bundled からコピー。Claude Code は `AGENTS.md` を auto-read しないため、最小の `CLAUDE.md` (`@AGENTS.md` を import するだけ) を default で出力し、業界標準の "SSoT は AGENTS.md、CLAUDE.md は再エクスポート" パターンを成立させる。`--no-claude-md` で skip 可 (`--no-agents-md` 指定時は `@AGENTS.md` がリンク切れになるため自動 skip + 警告)
 - **`templates/default.md`** を bundled からコピー。engine `research` SKILL の fallback 構造 (要約 / 詳細 / 出典) と一致する Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
-- **`AGENTIC_WATCH.md`** (workspace root) を bundled からコピー。**人間向け** の workspace ガイドで、AI エージェントへの自然言語指示や slash command による使い方を主、CLI 直叩きを副として説明する。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) とは別レイヤー。`--no-agentic-watch-md` で skip 可
+- **`FEEDRADAR.md`** (workspace root) を bundled からコピー。**人間向け** の workspace ガイドで、AI エージェントへの自然言語指示や slash command による使い方を主、CLI 直叩きを副として説明する。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) とは別レイヤー。`--no-feedradar-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 
 #### AGENTS.md について
@@ -98,11 +98,11 @@ agentic-watch research <item-id> --agent claude-code
 
 `--no-agents-md` を使うべきケース:
 
-- workspace に既に独自の `AGENTS.md` (monorepo 全体の指示等) があり、agentic-watch の boilerplate と衝突させたくない
+- workspace に既に独自の `AGENTS.md` (monorepo 全体の指示等) があり、FeedRadar の boilerplate と衝突させたくない
 - `AGENTS.md` を別ツール (`@ozzylabs/skills` 等) で集中管理している
 
 ```bash
-agentic-watch init --no-agents-md   # AGENTS.md 生成を skip
+radar init --no-agents-md   # AGENTS.md 生成を skip
 ```
 
 Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込んで SSoT を維持するパターンが推奨:
@@ -118,7 +118,7 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 
 #### AI agent interactive での利用 (slash commands)
 
-`init` で配置される slash commands は **4 agent 横断** で利用できる。発火形式と読み取り経路は agent ごとに違うが、最終的にはどれも `agentic-watch <subcommand>` を呼んで engine SKILL (`.agents/skills/<name>/SKILL.md`、SSoT) の procedure に流れる:
+`init` で配置される slash commands は **4 agent 横断** で利用できる。発火形式と読み取り経路は agent ごとに違うが、最終的にはどれも `radar <subcommand>` を呼んで engine SKILL (`.agents/skills/<name>/SKILL.md`、SSoT) の procedure に流れる:
 
 | Agent | 発火形式 | 経路 |
 |---|---|---|
@@ -131,36 +131,36 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 
 | Slash | 動作 | 中身 |
 |---|---|---|
-| `/research <item-id> [--agent ...]` | research を実行 | `agentic-watch research $ARGUMENTS` を呼ぶ |
-| `/review <research-id> [--agent ...]` | review を実行 | `agentic-watch review $ARGUMENTS` を呼ぶ |
-| `/update <research-id> [--agent ...]` | v+1 を生成 | `agentic-watch update $ARGUMENTS` を呼ぶ |
-| `/dismiss <item-id>` | item を dismiss | `agentic-watch dismiss $ARGUMENTS` を呼ぶ (LLM 不要) |
+| `/research <item-id> [--agent ...]` | research を実行 | `radar research $ARGUMENTS` を呼ぶ |
+| `/review <research-id> [--agent ...]` | review を実行 | `radar review $ARGUMENTS` を呼ぶ |
+| `/update <research-id> [--agent ...]` | v+1 を生成 | `radar update $ARGUMENTS` を呼ぶ |
+| `/dismiss <item-id>` | item を dismiss | `radar dismiss $ARGUMENTS` を呼ぶ (LLM 不要) |
 
-各 slash command は **薄い wrapper** で、procedure 本体は engine SKILL (`.agents/skills/<name>/SKILL.md`) を SSoT として参照する。Codex CLI は専用の slash wrapper を持たず、engine SKILL の冒頭 "Invocation modes" セクションが adapter spawn と interactive 起動の両方を捌く (interactive 起動時は `agentic-watch <subcommand>` に shell out)。
+各 slash command は **薄い wrapper** で、procedure 本体は engine SKILL (`.agents/skills/<name>/SKILL.md`) を SSoT として参照する。Codex CLI は専用の slash wrapper を持たず、engine SKILL の冒頭 "Invocation modes" セクションが adapter spawn と interactive 起動の両方を捌く (interactive 起動時は `radar <subcommand>` に shell out)。
 
 #### `--no-claude-skills` を使うべきケース
 
-`@ozzylabs/skills` Renovate preset 等で `.claude/skills/` を集中管理している workspace では、`agentic-watch init --no-claude-skills` で discovery 層 (`.claude/skills/`) を skip すると preset 側との衝突 / 上書き競合を避けられる。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる。
+`@ozzylabs/skills` Renovate preset 等で `.claude/skills/` を集中管理している workspace では、`radar init --no-claude-skills` で discovery 層 (`.claude/skills/`) を skip すると preset 側との衝突 / 上書き競合を避けられる。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる。
 
 #### `--no-gemini-commands` を使うべきケース
 
-`.gemini/commands/` を別の方法で管理している (またはそもそも Gemini CLI を使わない) workspace では、`agentic-watch init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip できる。Gemini CLI interactive session も engine SKILL (`.agents/skills/`) の dual-mode 動作で正しく機能するため、`/research` slash の代わりに `$research` mention 経由になる。
+`.gemini/commands/` を別の方法で管理している (またはそもそも Gemini CLI を使わない) workspace では、`radar init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip できる。Gemini CLI interactive session も engine SKILL (`.agents/skills/`) の dual-mode 動作で正しく機能するため、`/research` slash の代わりに `$research` mention 経由になる。
 
 #### `--no-claude-md` を使うべきケース
 
-workspace に既に独自の `CLAUDE.md` (project 全体の Claude Code 指示等) があり、agentic-watch の boilerplate (`@AGENTS.md` のみを含む最小ファイル) と衝突させたくない場合は `agentic-watch init --no-claude-md` で `CLAUDE.md` 配置のみ skip できる。`AGENTS.md` 側は引き続き生成されるため、CLAUDE.md 内で `@AGENTS.md` 等の取り込みを自前で行うか、別の運用を選べる。
+workspace に既に独自の `CLAUDE.md` (project 全体の Claude Code 指示等) があり、FeedRadar の boilerplate (`@AGENTS.md` のみを含む最小ファイル) と衝突させたくない場合は `radar init --no-claude-md` で `CLAUDE.md` 配置のみ skip できる。`AGENTS.md` 側は引き続き生成されるため、CLAUDE.md 内で `@AGENTS.md` 等の取り込みを自前で行うか、別の運用を選べる。
 
 なお `--no-agents-md` を指定した場合、bundled CLAUDE.md の `@AGENTS.md` import がリンク切れになるため、`CLAUDE.md` も自動的に skip される (warning が出る)。
 
 #### `--no-templates` を使うべきケース
 
-`templates/` を別の方法で管理している、または独自の `templates/default.md` を既に持っている workspace では、`agentic-watch init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (要約 / 詳細 / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
+`templates/` を別の方法で管理している、または独自の `templates/default.md` を既に持っている workspace では、`radar init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (要約 / 詳細 / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
 
-#### `--no-agentic-watch-md` を使うべきケース
+#### `--no-feedradar-md` を使うべきケース
 
-workspace に既に独自の人間向けドキュメント (`README.md` 等) があり、agentic-watch の boilerplate を追加で置きたくない場合は `agentic-watch init --no-agentic-watch-md` で `AGENTIC_WATCH.md` 生成のみを skip できる。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) は引き続き生成されるため、エージェント側の挙動には影響しない (skip するのは人間向けガイドのみ)。
+workspace に既に独自の人間向けドキュメント (`README.md` 等) があり、FeedRadar の boilerplate を追加で置きたくない場合は `radar init --no-feedradar-md` で `FEEDRADAR.md` 生成のみを skip できる。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) は引き続き生成されるため、エージェント側の挙動には影響しない (skip するのは人間向けガイドのみ)。
 
-### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
+### `radar source add <id> --kind <kind> --url <url> [options]`
 
 新規 source を `sources/<id>.yaml` に追加。
 
@@ -182,7 +182,7 @@ GitHub の Releases API (`GET /repos/<owner>/<repo>/releases`) からリリー�
 
 ```bash
 # 例: anthropic-sdk-python の releases を監視する
-agentic-watch source add anthropic-sdk \
+radar source add anthropic-sdk \
   --kind github-releases \
   --url https://github.com/anthropics/anthropic-sdk-python
 ```
@@ -222,7 +222,7 @@ GitHub Releases API は環境変数 `GITHUB_TOKEN` で認証する:
 # Personal Access Token (classic) または Fine-grained PAT を発行し、
 # `repo` 権限（public のみなら不要）を付与する
 export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-agentic-watch watch run --source anthropic-sdk
+radar watch run --source anthropic-sdk
 ```
 
 GitHub Actions 上では自動注入される `GITHUB_TOKEN` (`secrets.GITHUB_TOKEN`) をそのまま使える。
@@ -250,7 +250,7 @@ github-releases adapter: rate limit exhausted for anthropics/anthropic-sdk-pytho
 任意の HTML ページから CSS セレクタで item 一覧を抽出する。RSS が無いブログや変更履歴ページ向け。
 
 ```bash
-agentic-watch source add anthropic-changelog \
+radar source add anthropic-changelog \
   --kind html \
   --url https://docs.anthropic.com/changelog \
   --selector-item "article.changelog-entry" \
@@ -293,7 +293,7 @@ npm パッケージの新バージョン公開を監視する。`registry.npmjs.
 例:
 
 ```bash
-agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
+radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 ```
 
 挙動の要点:
@@ -304,15 +304,15 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 - ETag-based 条件付き GET をサポート。サーバが `304` を返すと items 処理をスキップ
 - 既知バージョンは state の `lastSeenIds` で除外されるため、2 回目以降は新バージョンのみ検出される
 
-### `agentic-watch source list [--enabled-only]`
+### `radar source list [--enabled-only]`
 
 `sources/*.yaml` を一覧表示。
 
-### `agentic-watch source remove <id>`
+### `radar source remove <id>`
 
 `sources/<id>.yaml` を削除。`state/<id>.yaml` と紐づく `items/` は残す（履歴保持）。
 
-### `agentic-watch watch run [--source <id>] [--bootstrap]`
+### `radar watch run [--source <id>] [--bootstrap]`
 
 すべての source（または `--source` で指定）を fetch、filter を適用、新規 item を `items/<sourceId>/<item-id>.yaml` に追加。
 
@@ -329,7 +329,7 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
 
-### `agentic-watch research <item-id> [--agent <agent-id>] [--template <id>]`
+### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
 指定 item に対して、指定 agent で調査レポートを生成。
 
@@ -346,9 +346,9 @@ agentic-watch source add anthropic-sdk-js --kind npm-registry --url @anthropic-a
 - adapter が `research/<YYYYMMDD>_<slug>_v1.md` を書き出す
 - CLI 側で frontmatter を `ResearchFrontmatter` schema で検証する。違反時は exit code 1
 - 検証が通れば `items/<sourceId>/<item-id>.yaml` の `status` を `researched` に遷移
-- 既存ファイルが既にある場合は上書きせずエラー終了する（再実行は `agentic-watch update` 経由）
+- 既存ファイルが既にある場合は上書きせずエラー終了する（再実行は `radar update` 経由）
 
-出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`agentic-watch review` で書き換わる）。agent が誤って `reviewedAt` / `reviewedBy` / `supersedes` を populate した場合、CLI は warning を出しつつ frontmatter を `null` に自動補正する（drift 防止）。
+出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`radar review` で書き換わる）。agent が誤って `reviewedAt` / `reviewedBy` / `supersedes` を populate した場合、CLI は warning を出しつつ frontmatter を `null` に自動補正する（drift 防止）。
 
 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが利用可能 (#19, #44, #45, #32, #46)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
 
@@ -356,7 +356,7 @@ Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起�
 
 Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起動する (`-y` は YOLO mode で承認をスキップ、`--skip-trust` は folder trust チェックを bypass。Claude Code の `--permission-mode bypassPermissions` 相当)。`--skip-trust` は他 3 adapter (`claude-code` / `codex-cli` / `copilot`) と同じ「全権モード起動」の整合性回復であり、新たな権限付与ではない (folder trust は Gemini CLI 側の UI 制約)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
 
-### `agentic-watch dismiss <item-id>`
+### `radar dismiss <item-id>`
 
 検出 (`detected`) 状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。
 
@@ -373,7 +373,7 @@ Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起�
 
 復元 (`undismiss`) や 1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
 
-### `agentic-watch review <research-id> [--agent <agent-id>] [--template <id>]`
+### `radar review <research-id> [--agent <agent-id>] [--template <id>]`
 
 既存 research に対し、指定 agent でレビューを生成。
 
@@ -405,7 +405,7 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 
 #### 再レビュー (re-review)
 
-同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `agentic-watch update` で `_v2.md` を作成してから review し直す。
+同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `radar update` で `_v2.md` を作成してから review し直す。
 
 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが review に対応する。
 
@@ -415,8 +415,8 @@ research を書いた agent と**別の agent** で review を実行すること
 
 ```bash
 # 例: copilot で書いて claude にレビューさせる
-agentic-watch research <item-id> --agent copilot
-agentic-watch review <research-id> --agent claude-code
+radar research <item-id> --agent copilot
+radar review <research-id> --agent claude-code
 ```
 
 なぜクロスチェック:
@@ -427,7 +427,7 @@ agentic-watch review <research-id> --agent claude-code
 
 CLI 側で agent の組合せを強制はしない（ユーザー判断）。`radar.config.yaml` で default agent を指定すれば、`--agent` を毎回付けずに済む（[後述](#radarconfigyaml)）。
 
-### `agentic-watch update <research-id> [--agent <agent-id>] [--template <id>]`
+### `radar update <research-id> [--agent <agent-id>] [--template <id>]`
 
 既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history、[ADR-0003](./adr/0003-output-format-and-versioning.md)）。
 
@@ -457,18 +457,18 @@ CLI 側で agent の組合せを強制はしない（ユーザー判断）。`ra
 
 ```bash
 # v1 を元に v2 を生成（v1 と同じ claude-code で）
-agentic-watch update 20260510_anthropic-news-claude-code_v1 --agent claude-code
+radar update 20260510_anthropic-news-claude-code_v1 --agent claude-code
 
 # v2 を生成しつつ agent を切り替え（v1 は claude-code、v2 は codex-cli）
-agentic-watch update 20260510_anthropic-news-claude-code_v1 --agent codex-cli
+radar update 20260510_anthropic-news-claude-code_v1 --agent codex-cli
 
 # v2 を更に更新 (v3 を生成)
-agentic-watch update 20260510_anthropic-news-claude-code_v2 --agent claude-code
+radar update 20260510_anthropic-news-claude-code_v2 --agent claude-code
 ```
 
 #### v+1 で `reviewedAt` / `reviewedBy` をリセットする理由
 
-v1 に対して `review` を実行した内容は v2 には引き継がない（v2 は v1 と内容が変わっているため、v1 のレビュー結論をそのまま使えない）。v+1 の内容を改めてレビューしたい場合は、`agentic-watch review <new-id> --agent <id>` を v+1 に対して実行する（[`docs/design/skill-design.md` §8.6](./design/skill-design.md)）。
+v1 に対して `review` を実行した内容は v2 には引き継がない（v2 は v1 と内容が変わっているため、v1 のレビュー結論をそのまま使えない）。v+1 の内容を改めてレビューしたい場合は、`radar review <new-id> --agent <id>` を v+1 に対して実行する（[`docs/design/skill-design.md` §8.6](./design/skill-design.md)）。
 
 #### items.yaml の status が動かないことの含意
 
@@ -494,8 +494,8 @@ defaultReviewAgent: claude-code
 
 | フィールド | 対応コマンド | 値 |
 |---|---|---|
-| `defaultResearchAgent` | `agentic-watch research` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot` |
-| `defaultReviewAgent` | `agentic-watch review` | 同上 |
+| `defaultResearchAgent` | `radar research` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot` |
+| `defaultReviewAgent` | `radar review` | 同上 |
 
 両フィールドとも optional。未指定のフィールドはハードコード default にフォールバックする。
 
@@ -510,8 +510,8 @@ defaultReviewAgent: claude-code
 たとえば `defaultResearchAgent: codex-cli` を設定したワークスペースで:
 
 ```bash
-agentic-watch research <item-id>                      # codex-cli が使われる (config)
-agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われる (明示優先)
+radar research <item-id>                      # codex-cli が使われる (config)
+radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明示優先)
 ```
 
 ### エラー時の挙動
@@ -525,12 +525,12 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ## スケジュール実行
 
-`agentic-watch` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。
+`radar` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。
 
 | フラグ | 生成先 | 用途 |
 |---|---|---|
-| `agentic-watch init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
-| `agentic-watch init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch) |
+| `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch) |
 
 既存ファイル保護 + `--force` 上書きは bundled skills と同じ挙動。
 
@@ -543,10 +543,10 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 生成された `.github/workflows/watch.yaml` を実 cron で動かして items / state が更新されることを確認する手順:
 
-1. `agentic-watch init --with-actions` で workspace 直下に雛形が出来ていることを確認する
+1. `radar init --with-actions` で workspace 直下に雛形が出来ていることを確認する
 2. workspace を GitHub に push する（`sources/` `items/` `state/` も含めて commit）
 3. リポジトリ設定で secret `ANTHROPIC_API_KEY` を登録する（[Settings → Secrets and variables → Actions](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions)）
-4. **Actions タブから `agentic-watch` workflow を `Run workflow` で手動実行**する（`workflow_dispatch` トリガー）
+4. **Actions タブから `radar` workflow を `Run workflow` で手動実行**する（`workflow_dispatch` トリガー）
 5. ジョブが緑になり、`watch run` が新着 item を検出した場合は `items/` / `state/` の更新を含む commit が自動 push されることを確認する
 6. cron スケジュール (`"0 0 * * *"`) を必要に応じて編集する。次回 cron 起動時に同様に動くはず
 
@@ -554,7 +554,7 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ### Claude Routines 雛形の検証手順
 
-1. `agentic-watch init --with-routines` で `claude/routines/watch-daily.md` が生成される
+1. `radar init --with-routines` で `claude/routines/watch-daily.md` が生成される
 2. Claude Routines に routine を登録する（取り込み方法は Claude Routines 側の手順に従う）
 3. Routine 実行画面で API キー (`ANTHROPIC_API_KEY` 等) を secret として渡す
 4. 1 回手動実行（Routines UI から）して `watch run` が成功すること、`items/` / `state/` の commit が push されることを確認する
@@ -569,7 +569,7 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ### 全 adapter は「全権モード」で起動する
 
-`agentic-watch research` / `agentic-watch review` が起動する 4 種類の agent CLI は、いずれも tool 承認なしで自動実行できるモードで spawn される（headless / 非対話実行を成立させるための前提）:
+`radar research` / `radar review` が起動する 4 種類の agent CLI は、いずれも tool 承認なしで自動実行できるモードで spawn される（headless / 非対話実行を成立させるための前提）:
 
 | adapter | 起動モード |
 |---|---|
@@ -582,7 +582,7 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 
 ### 信頼できる feed source のみ登録する
 
-現時点では agentic-watch 側に包括的な prompt injection sanitize レイヤーを持たない ([ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a の regex pre-filter は audit-only)。ユーザー側の運用で feed source を選別することが第一の防御線になる。
+現時点では FeedRadar 側に包括的な prompt injection sanitize レイヤーを持たない ([ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a の regex pre-filter は audit-only)。ユーザー側の運用で feed source を選別することが第一の防御線になる。
 
 **推奨される source**:
 
@@ -597,11 +597,11 @@ agentic-watch research <item-id> --agent gemini-cli   # gemini-cli が使われ�
 - ユーザー投稿型のフォーラム / コメント欄を含む feed
 - 信頼境界が不明確な mirror / aggregator サイト
 
-これらを source として登録する場合、item content 内に「Ignore previous instructions and ...」「以下を実行してください: ...」といった prompt injection 文字列が混入する可能性を許容したうえで運用する必要がある。少なくとも `agentic-watch research` 実行時のワークスペースには機密情報（`.env`、認証 token、秘密鍵など）を置かないこと。
+これらを source として登録する場合、item content 内に「Ignore previous instructions and ...」「以下を実行してください: ...」といった prompt injection 文字列が混入する可能性を許容したうえで運用する必要がある。少なくとも `radar research` 実行時のワークスペースには機密情報（`.env`、認証 token、秘密鍵など）を置かないこと。
 
 ### 包括的な sanitize 対策
 
-agentic-watch 全体での prompt injection 緩和レイヤー（item content の sanitize、agent prompt の分離、出力検証など）は別 Phase で取り組む予定（[#49](https://github.com/ozzy-labs/agentic-watch/issues/49)）。それまでは上記の運用ガイドラインで mitigate する。
+FeedRadar 全体での prompt injection 緩和レイヤー（item content の sanitize、agent prompt の分離、出力検証など）は別 Phase で取り組む予定（[#49](https://github.com/ozzy-labs/feedradar/issues/49)）。それまでは上記の運用ガイドラインで mitigate する。
 
 ### `trustLevel`: 信頼境界の opt-in
 
@@ -625,13 +625,13 @@ filters:
   keywords: ["release", "changelog"]
 ```
 
-`trustLevel` 未指定の既存 YAML（[#17](https://github.com/ozzy-labs/agentic-watch/pull/17) 以前に作成したもの）は schema が default `"untrusted"` を補うため、migration は不要。
+`trustLevel` 未指定の既存 YAML（[#17](https://github.com/ozzy-labs/feedradar/pull/17) 以前に作成したもの）は schema が default `"untrusted"` を補うため、migration は不要。
 
-**現時点の挙動**: 本フィールドは schema のみの拡張で、実際の policy 分岐（regex 検出感度の調整、prompt builder の boundary marker 強度など）はまだ実装されていない。すべての source は `trustLevel` の値に関わらず untrusted 扱いで運用される。downstream で `trustLevel` を参照するロジックは [#49](https://github.com/ozzy-labs/agentic-watch/issues/49) 配下の sub-issue で順次入れていく。それまで `trustLevel: trusted` を設定しても挙動上の差は出ない（将来の policy 分岐に備えた宣言として機能する）。
+**現時点の挙動**: 本フィールドは schema のみの拡張で、実際の policy 分岐（regex 検出感度の調整、prompt builder の boundary marker 強度など）はまだ実装されていない。すべての source は `trustLevel` の値に関わらず untrusted 扱いで運用される。downstream で `trustLevel` を参照するロジックは [#49](https://github.com/ozzy-labs/feedradar/issues/49) 配下の sub-issue で順次入れていく。それまで `trustLevel: trusted` を設定しても挙動上の差は出ない（将来の policy 分岐に備えた宣言として機能する）。
 
 ### prompt injection の audit ログ (`injectionFlags`)
 
-`agentic-watch watch run` 実行時、各 item の `title` / `summary` / `raw` に対し best-effort の regex pre-filter を走らせる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a / M5a — Adopt）。検出された pattern label の一覧は `items/<sourceId>/<item-id>.yaml` の `injectionFlags` フィールドに記録される。
+`radar watch run` 実行時、各 item の `title` / `summary` / `raw` に対し best-effort の regex pre-filter を走らせる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a / M5a — Adopt）。検出された pattern label の一覧は `items/<sourceId>/<item-id>.yaml` の `injectionFlags` フィールドに記録される。
 
 検出対象 (8 種類):
 
@@ -668,14 +668,14 @@ filters:
    cat items/<sourceId>/<item-id>.yaml
 
    # 攻撃ペイロードだと判断したら dismiss (detected → dismissed)
-   agentic-watch dismiss <item-id>
+   radar dismiss <item-id>
    ```
 
 2. **誤検知 (false positive) だと判断したらそのまま research を進める**:
 
    ```bash
    # flag が立っていても research は普通に動作する（audit-only）
-   agentic-watch research <item-id>
+   radar research <item-id>
    ```
 
    `injectionFlags` は `items/<id>.yaml` に残るので、後から `grep -rE '^injectionFlags:$' items/` で監査ログを追える。
@@ -683,7 +683,7 @@ filters:
 3. **source 自体が信頼できないと判断したら source を外す**:
 
    ```bash
-   agentic-watch source remove <sourceId>
+   radar source remove <sourceId>
    ```
 
    `items/<sourceId>/` 配下は履歴として残る（ADR-0008）。
@@ -693,6 +693,6 @@ filters:
 | 症状 | 対処 |
 |---|---|
 | agent CLI が見つからない | `claude` / `codex` / `gemini` / `copilot` が `PATH` に存在し認証済みであることを確認 |
-| `codex login` / `gemini` OAuth / `copilot auth login` が未完了でエラー | 該当 agent CLI を一度対話起動して認証を完了させる。`agentic-watch` は子プロセスとして spawn するだけで認証ループは持たない |
+| `codex login` / `gemini` OAuth / `copilot auth login` が未完了でエラー | 該当 agent CLI を一度対話起動して認証を完了させる。`radar` は子プロセスとして spawn するだけで認証ループは持たない |
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
-| workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/agentic-watch/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
+| workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |

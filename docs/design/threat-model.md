@@ -1,6 +1,6 @@
 # Threat Model: Prompt Injection via External Feeds
 
-agentic-watch が外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡し、それらが **YOLO / skip-permissions モード**で起動されるという設計上の前提から発生する攻撃シナリオと、その緩和策の整理。
+FeedRadar が外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡し、それらが **YOLO / skip-permissions モード**で起動されるという設計上の前提から発生する攻撃シナリオと、その緩和策の整理。
 
 実装は本書では決めず、選択した緩和策の採否は [ADR-0009](../adr/0009-untrusted-external-content-handling.md) で決定する。本書は **threat surface のカタログ**として運用し、新しい source kind や agent CLI を追加する際の差分判定に使う。
 
@@ -8,19 +8,19 @@ agentic-watch が外部 feed (RSS / HTML / GitHub Releases / npm-registry) か�
 
 - **対象**: 外部 feed から item content を取得し agent CLI に渡す経路の悪用 (indirect prompt injection)
 - **対象外**:
-  - 直接 prompt injection (user 自身が悪意あるプロンプトを書くケース) — agentic-watch の脅威モデル上は user が運用者であり攻撃者ではない前提
+  - 直接 prompt injection (user 自身が悪意あるプロンプトを書くケース) — FeedRadar の脅威モデル上は user が運用者であり攻撃者ではない前提
   - agent CLI 自体のバグ / supply chain 攻撃 — 上流ベンダー責務
-  - agentic-watch コード本体への悪意ある PR / dependency confusion — `standards/conventional-commits` と Renovate / Trivy の lefthook フックで別途扱う
+  - FeedRadar コード本体への悪意ある PR / dependency confusion — `standards/conventional-commits` と Renovate / Trivy の lefthook フックで別途扱う
 
 ## 関連 prior art
 
 - **knowledge MCP** [`ai/practice/prompt-injection`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md) — 6 layers の防御階層、lethal trifecta、OWASP LLM01:2025
 - **OWASP Top 10 for LLM Applications 2025** — LLM01:2025 Prompt Injection (direct / indirect 二分類)
 - **Anthropic Mitigate jailbreaks** — Harmlessness screens / Input validation / Chain safeguards
-- **agentic-watch 内**:
-  - [#48](https://github.com/ozzy-labs/agentic-watch/issues/48) docs 警告 (user-guide.md 末尾) — ユーザー側責務移譲方針
-  - [#50](https://github.com/ozzy-labs/agentic-watch/pull/50) gemini-cli `--skip-trust` の出所コメント
-  - PR [#19](https://github.com/ozzy-labs/agentic-watch/pull/19) / [#45](https://github.com/ozzy-labs/agentic-watch/pull/45) / [#46](https://github.com/ozzy-labs/agentic-watch/pull/46) / [#47](https://github.com/ozzy-labs/agentic-watch/pull/47) — 4 adapter の YOLO 起動フラグの出所
+- **FeedRadar 内**:
+  - [#48](https://github.com/ozzy-labs/feedradar/issues/48) docs 警告 (user-guide.md 末尾) — ユーザー側責務移譲方針
+  - [#50](https://github.com/ozzy-labs/feedradar/pull/50) gemini-cli `--skip-trust` の出所コメント
+  - PR [#19](https://github.com/ozzy-labs/feedradar/pull/19) / [#45](https://github.com/ozzy-labs/feedradar/pull/45) / [#46](https://github.com/ozzy-labs/feedradar/pull/46) / [#47](https://github.com/ozzy-labs/feedradar/pull/47) — 4 adapter の YOLO 起動フラグの出所
 
 ## 攻撃面 (attack surface)
 
@@ -33,7 +33,7 @@ agentic-watch が外部 feed (RSS / HTML / GitHub Releases / npm-registry) か�
 | `github-releases` | リポジトリ owner / collaborator | OSS リリースノート | 中 (PR description / release body は contributors が書ける) |
 | `npm-registry` | パッケージ maintainer | packument | 中 (typosquat / 乗っ取り maintainer による update notes 改竄) |
 
-**共通点**: いずれも `agentic-watch` 自身ではコンテンツを保証できない。**運営者が善意であっても**:
+**共通点**: いずれも `radar` 自身ではコンテンツを保証できない。**運営者が善意であっても**:
 
 - maintainer アカウント乗っ取り
 - contributor の悪意ある PR description
@@ -68,7 +68,7 @@ agent prompt の構成上、`title` / `summary` / `raw` の 3 フィールドが
 | copilot | `--allow-all-paths --allow-all-tools` | path / tool 全許可 |
 | gemini-cli | `-y --skip-trust` | YOLO + folder trust bypass |
 
-これは [ADR-0001](../adr/0001-agent-adapter-interface.md) で「outputPath への書き込みは agent 側に委ねる」と決めた以上必然 (非対話モード完結のため)。`agentic-watch` 側で human-in-the-loop は構造的に挿入できない。
+これは [ADR-0001](../adr/0001-agent-adapter-interface.md) で「outputPath への書き込みは agent 側に委ねる」と決めた以上必然 (非対話モード完結のため)。`radar` 側で human-in-the-loop は構造的に挿入できない。
 
 → **agent CLI が item content の中の指示を実行すれば、その agent のユーザーホスト上での全権限が攻撃者に渡る**。
 
@@ -80,7 +80,7 @@ agent prompt の構成上、`title` / `summary` / `raw` の 3 フィールドが
 2. **sensitive data へのアクセス** ✅ 成立 — agent CLI は user ホーム配下を read 可能 (`~/.ssh/`, `~/.aws/credentials`, `~/.gemini/settings.json`, `.env`)
 3. **exfiltration mechanism** ✅ 成立 — agent CLI は HTTP fetch tool / file write tool / shell tool すべて持つ
 
-3 条件すべて揃っている。**1 つでも切れば防げる**が、agentic-watch の現設計はどれも切っていない。
+3 条件すべて揃っている。**1 つでも切れば防げる**が、FeedRadar の現設計はどれも切っていない。
 
 ### 想定攻撃チェーン
 
@@ -88,10 +88,10 @@ agent prompt の構成上、`title` / `summary` / `raw` の 3 フィールドが
 攻撃者 ──(injection を埋め込んだ feed item)
                 │
                 ▼
-agentic-watch watch run ──(item を items/<id>.yaml に保存)
+radar watch run ──(item を items/<id>.yaml に保存)
                 │
                 ▼
-agentic-watch research <item> --agent claude-code
+radar research <item> --agent claude-code
                 │
                 ▼
 adapter spawn → claude-code が item を読む → 注入指示を実行
@@ -181,9 +181,9 @@ defense-in-depth を full stack で入れても、**完全防御は不可能**:
 - sandbox を入れない限り lethal trifecta の "sensitive data access" + "exfiltration" は切れない
 - sandbox を入れても agent CLI が想定外の方法でホストにアクセスする経路は残り得る
 
-→ **user 側の最終責務**として `docs/user-guide.md` の警告 ([#48](https://github.com/ozzy-labs/agentic-watch/issues/48) で実装済み) は **継続して必須**:
+→ **user 側の最終責務**として `docs/user-guide.md` の警告 ([#48](https://github.com/ozzy-labs/feedradar/issues/48) で実装済み) は **継続して必須**:
 
-- agentic-watch は 信頼境界が user ホストにある
+- FeedRadar は 信頼境界が user ホストにある
 - 機密ファイルは別ユーザー / 別ホスト / dedicated dev container で運用すること
 - `~/.ssh/`, `~/.aws/credentials`, `.env` 等は agent から読まれ得る前提で配置
 

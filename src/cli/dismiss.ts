@@ -41,7 +41,7 @@ function parseArgs(args: string[]): DismissArgs {
 }
 
 function printHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch dismiss <item-id>");
+  log("Usage: radar dismiss <item-id>");
   log("");
   log("Arguments:");
   log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
@@ -76,7 +76,7 @@ async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | n
 }
 
 /**
- * Implementation of `agentic-watch dismiss <item-id>`.
+ * Implementation of `radar dismiss <item-id>`.
  *
  * Triggers the `detected → dismissed` state transition (ADR-0008). The command
  * is intentionally agent-free: it only mutates `items/<sourceId>/<item-id>.yaml`

@@ -1,9 +1,9 @@
 # Skill Design — `.agents/skills/` Bundling and Agent Invocation
 
-Status: **draft v3** (Phase 5 — `update` design pin, [#40](https://github.com/ozzy-labs/agentic-watch/issues/40))
-Tracks: [#9](https://github.com/ozzy-labs/agentic-watch/issues/9) §2 / §3 (subset)
+Status: **draft v3** (Phase 5 — `update` design pin, [#40](https://github.com/ozzy-labs/feedradar/issues/40))
+Tracks: [#9](https://github.com/ozzy-labs/feedradar/issues/9) §2 / §3 (subset)
 
-This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pinned `review`; Phase 5 pins the `update` design contract (this revision). The `update` CLI/adapter implementation shipped in Sub-issue B ([#41](https://github.com/ozzy-labs/agentic-watch/issues/41), merged); this revision froze the design so that implementation could proceed against a stable target.
+This document is the implementation-side companion to [ADR-0001](../adr/0001-agent-adapter-interface.md), [ADR-0003](../adr/0003-output-format-and-versioning.md), and [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md). It pins down the concrete contract between the CLI, the bundled SKILL.md files, and each agent CLI's child process. Phase 1 pinned `research`; Phase 2 pinned `review`; Phase 5 pins the `update` design contract (this revision). The `update` CLI/adapter implementation shipped in Sub-issue B ([#41](https://github.com/ozzy-labs/feedradar/issues/41), merged); this revision froze the design so that implementation could proceed against a stable target.
 
 ## 1. Research SKILL.md — prompt body
 
@@ -36,7 +36,7 @@ Constraints:
 
 Rationale:
 
-- **Procedure stays in SKILL.md.** The wrapper says "execute this skill", not "do these steps". Future tweaks to the procedure ship via a SKILL.md update through `@ozzylabs/skills` and `agentic-watch init --force`.
+- **Procedure stays in SKILL.md.** The wrapper says "execute this skill", not "do these steps". Future tweaks to the procedure ship via a SKILL.md update through `@ozzylabs/skills` and `radar init --force`.
 - **Inputs travel on stdin as one JSON document.** Argv has length limits and quoting hazards; env vars leak into agent tool calls; stdin is universally supported by every agent CLI's `-p` invocation. Tests can produce the JSON deterministically.
 - **`outputPath` is repeated in the prompt** even though it is also in the stdin JSON. Empirically, agents key on the human-readable phrasing for filesystem writes; the JSON keeps it machine-readable. The duplication is cheap.
 
@@ -105,25 +105,25 @@ We do not implement the override path in Phase 1 — `research` calls the base S
 
 | Layer | Path | Role | Bundle source | Opt-out |
 |---|---|---|---|---|
-| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | Adapter spawn target — agent CLIs read this procedure body when spawned by `agentic-watch`. The "Invocation modes" header at the top routes interactive invocations (no stdin JSON, `$ARGUMENTS` present) back through `agentic-watch <subcommand>` so a Codex CLI `$research` mention / `/skills` panel re-enters via the adapter spawn path. | `src/skills/` | (SSoT, no opt-out) |
-| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Thin wrapper exposing `/research`, `/review`, `/update`, `/dismiss` slash commands in Claude Code interactive sessions. Shells out to `agentic-watch <subcommand>` only. | `src/claude-skills/` | `--no-claude-skills` |
-| **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Thin wrapper exposing the same four slash commands in Gemini CLI interactive sessions, via TOML `prompt = "agentic-watch <subcommand> {{args}}"`. | `src/gemini-commands/` | `--no-gemini-commands` |
+| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | Adapter spawn target — agent CLIs read this procedure body when spawned by `radar`. The "Invocation modes" header at the top routes interactive invocations (no stdin JSON, `$ARGUMENTS` present) back through `radar <subcommand>` so a Codex CLI `$research` mention / `/skills` panel re-enters via the adapter spawn path. | `src/skills/` | (SSoT, no opt-out) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Thin wrapper exposing `/research`, `/review`, `/update`, `/dismiss` slash commands in Claude Code interactive sessions. Shells out to `radar <subcommand>` only. | `src/claude-skills/` | `--no-claude-skills` |
+| **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Thin wrapper exposing the same four slash commands in Gemini CLI interactive sessions, via TOML `prompt = "radar <subcommand> {{args}}"`. | `src/gemini-commands/` | `--no-gemini-commands` |
 | **AGENTS.md** | `<cwd>/AGENTS.md` | Agent-agnostic instructions auto-read by Codex CLI / Gemini CLI / GitHub Copilot CLI on session start. Lists workspace overview, primary commands, typical workflow, docs pointers. | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
 | **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | Templates for connecting to a recurring scheduler ([ADR-0004](../adr/0004-schedule-strategy.md)). | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
 
-The engine SKILL is the **single source of truth for procedure**. The Claude discovery layer and Gemini commands layer are intentionally **thin wrappers** — they only carry slash-command metadata and `agentic-watch <subcommand>` shell-outs. No procedure text is duplicated across layers (drift prevention). Re-bundling on `init --force` flows through one place: edit `src/skills/<name>/SKILL.md`, then publish a new agentic-watch release.
+The engine SKILL is the **single source of truth for procedure**. The Claude discovery layer and Gemini commands layer are intentionally **thin wrappers** — they only carry slash-command metadata and `radar <subcommand>` shell-outs. No procedure text is duplicated across layers (drift prevention). Re-bundling on `init --force` flows through one place: edit `src/skills/<name>/SKILL.md`, then publish a new FeedRadar release.
 
 For agent adapters that spawn the CLI as a subprocess, the working directory is the workspace root and the SKILL is read via `Read` against `.agents/skills/<name>/SKILL.md`. Every supported agent CLI honours this — there is no path-resolution branching inside the adapter.
 
 ### Historical note: the original single-copy design
 
-[Issue #11](https://github.com/ozzy-labs/agentic-watch/issues/11) (Phase 1) initially decided that `init` writes a **single canonical copy** under `.agents/skills/` and deliberately does **not** write to `.claude/skills/`, on the grounds that (1) the [`@ozzylabs/skills`](https://github.com/ozzy-labs/skills) Renovate preset would clobber any local copy on the next bump, and (2) Phase 1 SKILLs are workspace-scoped (research/review/update), not org-wide skill primitives, so they do not belong in that preset.
+[Issue #11](https://github.com/ozzy-labs/feedradar/issues/11) (Phase 1) initially decided that `init` writes a **single canonical copy** under `.agents/skills/` and deliberately does **not** write to `.claude/skills/`, on the grounds that (1) the [`@ozzylabs/skills`](https://github.com/ozzy-labs/skills) Renovate preset would clobber any local copy on the next bump, and (2) Phase 1 SKILLs are workspace-scoped (research/review/update), not org-wide skill primitives, so they do not belong in that preset.
 
 Subsequent revisions extended the bundle layer by layer as agent-discovery gaps surfaced:
 
-- **Revision (a)** (2026-05-17, [#75](https://github.com/ozzy-labs/agentic-watch/issues/75)) — added the Claude discovery SKILL (`.claude/skills/<name>/SKILL.md`) after manual-symlink friction was reported. The wrappers shell out to the `agentic-watch` CLI rather than duplicating the engine procedure. See [ADR-0007 § Revision (a)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-75).
-- **Revision (b)** (2026-05-17 b, [#77](https://github.com/ozzy-labs/agentic-watch/issues/77)) — added `AGENTS.md` (Codex / Gemini / Copilot auto-read instructions). See [ADR-0007 § Revision (b)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-b-77).
-- **Revision (c)** (2026-05-17 c, [#78](https://github.com/ozzy-labs/agentic-watch/issues/78)) — added Gemini commands (`.gemini/commands/<name>.toml`) and dual-mode-ified the engine SKILL so Codex CLI auto-discovery via `$<name>` mention also works without duplicating the procedure. See [ADR-0007 § Revision (c)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-c-78).
+- **Revision (a)** (2026-05-17, [#75](https://github.com/ozzy-labs/feedradar/issues/75)) — added the Claude discovery SKILL (`.claude/skills/<name>/SKILL.md`) after manual-symlink friction was reported. The wrappers shell out to the `radar` CLI rather than duplicating the engine procedure. See [ADR-0007 § Revision (a)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-75).
+- **Revision (b)** (2026-05-17 b, [#77](https://github.com/ozzy-labs/feedradar/issues/77)) — added `AGENTS.md` (Codex / Gemini / Copilot auto-read instructions). See [ADR-0007 § Revision (b)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-b-77).
+- **Revision (c)** (2026-05-17 c, [#78](https://github.com/ozzy-labs/feedradar/issues/78)) — added Gemini commands (`.gemini/commands/<name>.toml`) and dual-mode-ified the engine SKILL so Codex CLI auto-discovery via `$<name>` mention also works without duplicating the procedure. See [ADR-0007 § Revision (c)](../adr/0007-skill-bundling-and-init-distribution.md#revision-2026-05-17-c-78).
 
 The original single-copy rationale (preset clobber avoidance, scope separation between workspace-scoped and org-wide skills) still holds for the **engine SKILL** layer — the preset never owns `.agents/skills/`. The Claude discovery / Gemini commands layers are deliberately thin wrappers (no procedure body) so the same preset-clobber concern does not apply; if a workspace prefers the preset's wrappers, `--no-claude-skills` / `--no-gemini-commands` opt them out without disabling the SSoT.
 
@@ -131,19 +131,19 @@ The original single-copy rationale (preset clobber avoidance, scope separation b
 
 | Decision | Value | Source |
 |---|---|---|
-| Skill discovery path | `.agents/skills/<name>/SKILL.md` | [#11](https://github.com/ozzy-labs/agentic-watch/issues/11), [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md) |
+| Skill discovery path | `.agents/skills/<name>/SKILL.md` | [#11](https://github.com/ozzy-labs/feedradar/issues/11), [ADR-0007](../adr/0007-skill-bundling-and-init-distribution.md) |
 | Prompt body | thin wrapper, no procedure inlined | this doc §1 |
 | Input transport | JSON on stdin | this doc §1 |
 | `outputPath` location | mentioned in prompt **and** stdin JSON | this doc §1 |
 | Template loading | CLI reads `templates/<id>.md`, passes `templateBody` via stdin | [ADR-0001](../adr/0001-agent-adapter-interface.md) `ResearchRequest.templateBody` |
 | Output validation | CLI parses generated frontmatter against `ResearchFrontmatterSchema`; failure → exit 1 | [src/schemas/research.ts](../../src/schemas/research.ts) |
-| Re-run policy | refuse to overwrite an existing `_v1.md`; use `agentic-watch update` for new versions | [ADR-0003](../adr/0003-output-format-and-versioning.md) |
+| Re-run policy | refuse to overwrite an existing `_v1.md`; use `radar update` for new versions | [ADR-0003](../adr/0003-output-format-and-versioning.md) |
 | `reviewedAt` / `reviewedBy` on first write | **always `null`** | this doc §1 + [ADR-0003](../adr/0003-output-format-and-versioning.md) |
 | Status transition | CLI sets `items/<id>.yaml` `status: detected → researched` after frontmatter validation | [ADR-0008](../adr/0008-status-state-machine.md) |
 
 ## 7. `review` skill body and CLI contract
 
-[`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) is the canonical procedure for the `review` command and ships to workspaces under `.agents/skills/review/SKILL.md` (Phase 2, [#29](https://github.com/ozzy-labs/agentic-watch/issues/29)). The CLI-side wrapper prompt — emitted by [`src/agents/claude-code.ts`](../../src/agents/claude-code.ts) — mirrors `research`'s thin-wrapper style: it points the agent at the SKILL, names the file the agent must modify, and re-states the filesystem invariants.
+[`src/skills/review/SKILL.md`](../../src/skills/review/SKILL.md) is the canonical procedure for the `review` command and ships to workspaces under `.agents/skills/review/SKILL.md` (Phase 2, [#29](https://github.com/ozzy-labs/feedradar/issues/29)). The CLI-side wrapper prompt — emitted by [`src/agents/claude-code.ts`](../../src/agents/claude-code.ts) — mirrors `research`'s thin-wrapper style: it points the agent at the SKILL, names the file the agent must modify, and re-states the filesystem invariants.
 
 ### 7.1 Prompt body and stdin contract
 
@@ -204,7 +204,7 @@ Rollback is **best-effort**: if `restoreSnapshot` itself fails (e.g. the filesys
 The CLI does **not** enforce "different agent for review than research". The SKILL body and [`docs/user-guide.md`](../user-guide.md) steer towards a cross-agent flow (write with `codex-cli`, review with `claude-code`, etc.) because the blind-spot-mitigation value comes from a different model running the second pass. We keep enforcement out of code for two reasons:
 
 - Single-account workspaces may only have one agent configured. Hard-erroring on same-agent review would block legitimate solo use.
-- `radar.config.yaml` will land a `researchAgent` / `reviewAgent` default in a separate Phase 2 sub-issue ([#25](https://github.com/ozzy-labs/agentic-watch/issues/25) tracks the parent epic). Once that lands, the default config can suggest the cross-agent pairing without making it a hard rule.
+- `radar.config.yaml` will land a `researchAgent` / `reviewAgent` default in a separate Phase 2 sub-issue ([#25](https://github.com/ozzy-labs/feedradar/issues/25) tracks the parent epic). Once that lands, the default config can suggest the cross-agent pairing without making it a hard rule.
 
 ### 7.4 Review perspective set
 
@@ -217,13 +217,13 @@ The Phase 2 SKILL ships a **four-axis rubric**:
 
 Workspaces that need a different rubric can drop a `templates/<id>.md` and call `review --template <id>`. The CLI passes `templateBody` through stdin unchanged; an empty string means "use the SKILL's built-in rubric".
 
-We do **not** adopt the [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) multi-perspective Schema v1 yet. The handbook ADR targets *code* review (correctness, security, architecture etc.), whereas the `agentic-watch` review is a *content* review of an existing Markdown report. Phase 5 (`update`) may need a stable parse-able structure inside the review block; until then the free-form Japanese-heading layout in §3 of the SKILL is the contract.
+We do **not** adopt the [handbook ADR-0025](https://github.com/ozzy-labs/handbook/blob/main/adr/0025-skills-review-multi-perspective.md) multi-perspective Schema v1 yet. The handbook ADR targets *code* review (correctness, security, architecture etc.), whereas the `radar` review is a *content* review of an existing Markdown report. Phase 5 (`update`) may need a stable parse-able structure inside the review block; until then the free-form Japanese-heading layout in §3 of the SKILL is the contract.
 
 ### 7.5 Re-review semantics
 
 ADR-0008 leaves "re-review after `update`" undefined. Phase 2 makes the following concrete decisions, scoped to a single research file version:
 
-- **Same-version re-review is refused.** Running `agentic-watch review` on a research file whose frontmatter already has `reviewedAt != null` exits non-zero with `review: research '<id>' is already reviewed`. This guarantees a single canonical review block per file and avoids appending stale critiques.
+- **Same-version re-review is refused.** Running `radar review` on a research file whose frontmatter already has `reviewedAt != null` exits non-zero with `review: research '<id>' is already reviewed`. This guarantees a single canonical review block per file and avoids appending stale critiques.
 - **Cross-version re-review semantics are pinned by Phase 5 §8.6.** When `update` lands and produces `_v2.md`, the new file's frontmatter resets `reviewedAt` / `reviewedBy` to `null` (per [§8.3](#83-frontmatter-relationship-to-predecessors)). A fresh `review` over `_v2.md` is allowed and treated as a brand-new review pass.
 
 ### 7.6 Implementation pointers
@@ -239,7 +239,7 @@ ADR-0008 leaves "re-review after `update`" undefined. Phase 2 makes the followin
 
 ## 8. `update` skill body and diff-detection strategy — Phase 5 pin
 
-[`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) is a Phase 1 stub. The body is exercised by `agentic-watch update <research-id> --agent <agent-id>` (Phase 5, Sub-issue B [#41](https://github.com/ozzy-labs/agentic-watch/issues/41)). This revision (Sub-issue A [#40](https://github.com/ozzy-labs/agentic-watch/issues/40)) pins the design ahead of implementation so #41 can be reviewed against a stable target.
+[`src/skills/update/SKILL.md`](../../src/skills/update/SKILL.md) is a Phase 1 stub. The body is exercised by `radar update <research-id> --agent <agent-id>` (Phase 5, Sub-issue B [#41](https://github.com/ozzy-labs/feedradar/issues/41)). This revision (Sub-issue A [#40](https://github.com/ozzy-labs/feedradar/issues/40)) pins the design ahead of implementation so #41 can be reviewed against a stable target.
 
 ### 8.1 What counts as "new information" — adopted signal set
 
@@ -268,7 +268,7 @@ The agent decides materiality. Empirically, an LLM is better at judging *whether
 
 - **(a) `item.summary` 変化**: `summary` is derived by the feed adapter from the upstream page; if the page changed in a way that altered the summary, signal (d) already fires. Treating (a) as an independent trigger creates false positives whenever a feed parser refines summary extraction without the underlying article changing. We keep `summary` as **evidence** the agent may consult, but not as the trigger.
 - **(b) 関連 item 追加 (`itemIds` 追加)**: Adding a sibling item is a different operation than updating an existing report — semantically it's "this v1 report now also covers item X". The cleaner design is a separate "merge items into existing research" flow (out of scope for Phase 5); routing it through `update` would conflate two operations and complicate `supersedes` lineage. Phase 5 defers this; users who need to extend `itemIds` regenerate v2 manually or wait for a dedicated `merge` skill.
-- **(c) 時間経過**: A purely time-based trigger ("re-research after 30 days") generates an update whether or not anything changed upstream. That is exactly the no-op write that §8.5 explicitly forbids. Time-based scheduling belongs at the **cron / routine layer** (the user can schedule `agentic-watch update --all-stale`), not in the SKILL's materiality judgement.
+- **(c) 時間経過**: A purely time-based trigger ("re-research after 30 days") generates an update whether or not anything changed upstream. That is exactly the no-op write that §8.5 explicitly forbids. Time-based scheduling belongs at the **cron / routine layer** (the user can schedule `radar update --all-stale`), not in the SKILL's materiality judgement.
 
 ### 8.2 Old version handling: rewrite vs diff-only — rewrite-and-supersede confirmed
 
@@ -277,7 +277,7 @@ Two strategies were on the table during Phase 1:
 - **Strategy A (rewrite-and-supersede):** generate a complete new `_v(N+1).md` that stands alone. `supersedes: <previous id>` in frontmatter links back to v1. v1 is immutable per [ADR-0003](../adr/0003-output-format-and-versioning.md). Pros: each file is self-contained, easy to read in isolation. Cons: redundant text across versions.
 - **Strategy B (diff-only block):** v(N+1) contains only a "Changes since v\<N\>" block plus updated metadata. Cons: requires readers to chase the v1 file for context; breaks "self-contained" reading; complicates static-site renderings.
 
-**Phase 5 default: Strategy A (rewrite-and-supersede).** Phase 1 [#20](https://github.com/ozzy-labs/agentic-watch/pull/20) already marked Strategy A as default; this revision re-confirms it now that the schema is in place. Self-contained files match user expectation when reading from a static-site generator or grep; the redundancy is acceptable because the v1 file is immutable and remains as the historical record.
+**Phase 5 default: Strategy A (rewrite-and-supersede).** Phase 1 [#20](https://github.com/ozzy-labs/feedradar/pull/20) already marked Strategy A as default; this revision re-confirms it now that the schema is in place. Self-contained files match user expectation when reading from a static-site generator or grep; the redundancy is acceptable because the v1 file is immutable and remains as the historical record.
 
 Implementation notes for the agent:
 
@@ -319,7 +319,7 @@ Field-by-field contract:
 | `reviewedBy` | `null` | Reset |
 | `supersedes` | v1's `id` (no `.md`) | New value |
 
-`supersedes` is the **id** (filename minus `.md`), not the filename. This matches every other reference to a research record in the codebase (Item Schema's `researchPath` is the only place we use a literal path; everywhere else "research id" is the canonical handle). Storing the bare id makes downstream tooling (`agentic-watch list-versions <root-id>` etc., should they land) trivial to implement against the schema.
+`supersedes` is the **id** (filename minus `.md`), not the filename. This matches every other reference to a research record in the codebase (Item Schema's `researchPath` is the only place we use a literal path; everywhere else "research id" is the canonical handle). Storing the bare id makes downstream tooling (`radar list-versions <root-id>` etc., should they land) trivial to implement against the schema.
 
 Schema implementation: [`src/schemas/research.ts`](../../src/schemas/research.ts) defines `supersedes: z.string().min(1).nullable().default(null)`. The `.default(null)` allows pre-Phase-5 v1 frontmatter (which omits the field) to remain valid after the schema bump — they parse to `supersedes: null`, which is semantically identical to "no predecessor".
 
@@ -333,7 +333,7 @@ Schema implementation: [`src/schemas/research.ts`](../../src/schemas/research.ts
 | `reviewed` | `reviewed` (unchanged) | The v1 review event still happened; that fact must not be overwritten. The user can re-run `review` against v2 to record a new review event |
 | `detected` / `dismissed` | (rejected) | `update` requires an existing research file; the CLI refuses with a non-zero exit code if the item has not been researched yet (or has been dismissed) |
 
-Consequence: it is possible to have an item at `reviewed` whose **latest** research (v2) has `reviewedAt: null`. This is by design — the v1 review is a real historical event we do not invalidate. Users who want the latest research reviewed must run `agentic-watch review <new-id> --agent <id>` explicitly. The `agentic-watch list-stale` / similar surfacing is out of scope for Phase 5.
+Consequence: it is possible to have an item at `reviewed` whose **latest** research (v2) has `reviewedAt: null`. This is by design — the v1 review is a real historical event we do not invalidate. Users who want the latest research reviewed must run `radar review <new-id> --agent <id>` explicitly. The `radar list-stale` / similar surfacing is out of scope for Phase 5.
 
 ### 8.5 No-op suppression
 

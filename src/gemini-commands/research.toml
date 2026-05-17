@@ -1,2 +1,2 @@
-prompt = "Run `agentic-watch research {{args}}` to generate a research report for the specified item. Surface the resulting file path and any errors from stdout/stderr. The canonical procedure lives in `.agents/skills/research/SKILL.md` (SSoT); this command is a thin wrapper that delegates to the CLI."
-description = "Generate a research report for a detected item via agentic-watch."
+prompt = "Run `radar research {{args}}` to generate a research report for the specified item. Surface the resulting file path and any errors from stdout/stderr. The canonical procedure lives in `.agents/skills/research/SKILL.md` (SSoT); this command is a thin wrapper that delegates to the CLI."
+description = "Generate a research report for a detected item via FeedRadar."

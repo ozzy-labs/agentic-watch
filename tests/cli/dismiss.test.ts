@@ -56,7 +56,7 @@ describe("cli/dismiss", () => {
   let workdir: string;
 
   beforeEach(async () => {
-    workdir = await mkdtemp(join(tmpdir(), "agentic-watch-dismiss-"));
+    workdir = await mkdtemp(join(tmpdir(), "feedradar-dismiss-"));
     await mkdir(join(workdir, "items"), { recursive: true });
   });
 
@@ -129,7 +129,7 @@ describe("cli/dismiss", () => {
 
   it("errors when the items/ directory does not exist at all", async () => {
     // Fresh workspace with no items/ dir.
-    const empty = await mkdtemp(join(tmpdir(), "agentic-watch-dismiss-empty-"));
+    const empty = await mkdtemp(join(tmpdir(), "feedradar-dismiss-empty-"));
     const { io, captured } = captureIo();
 
     const code = await runDismiss(["anything"], { cwd: empty, io });
@@ -149,7 +149,7 @@ describe("cli/dismiss", () => {
     const { io, captured } = captureIo();
     const code = await runDismiss(["--help"], { cwd: workdir, io });
     expect(code).toBe(0);
-    expect(captured.log.some((m) => m.includes("Usage: agentic-watch dismiss"))).toBe(true);
+    expect(captured.log.some((m) => m.includes("Usage: radar dismiss"))).toBe(true);
     expect(captured.log.some((m) => m.includes("detected"))).toBe(true);
     expect(captured.log.some((m) => m.includes("dismissed"))).toBe(true);
   });

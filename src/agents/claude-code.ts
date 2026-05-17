@@ -205,7 +205,7 @@ async function runClaudeCli(prompt: string, options: SpawnOptions): Promise<Spaw
       reject(
         new Error(
           err.message.includes("ENOENT")
-            ? "claude CLI not found in PATH — install Claude Code and authenticate before running `agentic-watch research`."
+            ? "claude CLI not found in PATH — install Claude Code and authenticate before running `radar research`."
             : `claude CLI failed to start: ${err.message}`,
         ),
       );

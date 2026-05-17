@@ -3,7 +3,7 @@ import { ItemSchema } from "../../schemas/index.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
 import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
 
-const USER_AGENT = "agentic-watch/0.0.0 (+https://github.com/ozzy-labs/agentic-watch)";
+const USER_AGENT = "feedradar/0.0.0 (+https://github.com/ozzy-labs/feedradar)";
 const REGISTRY_BASE = "https://registry.npmjs.org";
 
 /**

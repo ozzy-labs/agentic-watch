@@ -66,7 +66,7 @@ function buildResearchFileContent(fm: ResearchFrontmatter): string {
 async function setupWorkspace(
   overrides: { itemStatus?: Item["status"]; preReviewedAt?: string | null } = {},
 ): Promise<{ workdir: string; researchPath: string }> {
-  const workdir = await mkdtemp(join(tmpdir(), "agentic-watch-review-"));
+  const workdir = await mkdtemp(join(tmpdir(), "feedradar-review-"));
   await mkdir(join(workdir, "items", SAMPLE_ITEM.sourceId), { recursive: true });
   await mkdir(join(workdir, "research"), { recursive: true });
   await mkdir(join(workdir, "templates"), { recursive: true });

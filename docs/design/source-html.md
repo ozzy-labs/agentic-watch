@@ -2,7 +2,7 @@
 
 > **Status**: accepted (2026-05-12)
 > 関連 ADR: [ADR-0002](../adr/0002-source-adapter-plugin-pattern.md) Source Adapter Plug-in Pattern
-> 関連 Issue: [#36](https://github.com/ozzy-labs/agentic-watch/issues/36)
+> 関連 Issue: [#36](https://github.com/ozzy-labs/feedradar/issues/36)
 
 ADR-0002 で導入した `FeedAdapter` インタフェースに準拠する HTML adapter (`src/core/feeds/html.ts`) の設計メモ。本ドキュメントは parser の選定根拠と selector schema の契約を記録する。
 
@@ -13,7 +13,7 @@ HTML adapter は `Source.selectors` の CSS セレクタを使って item を抽
 1. **CSS セレクタが標準搭載** — 別途 `css-select` を組み合わせる構成は依存が増える
 2. **メンテナンス継続** — 直近 1 年以内に release 実績がある
 3. **ESM ネイティブ** または ESM 互換 — 本プロジェクトは `"type": "module"`
-4. **小さい install footprint** — agentic-watch 本体は CLI で end-user に install される
+4. **小さい install footprint** — FeedRadar 本体は CLI で end-user に install される
 
 ### 候補比較
 
@@ -68,7 +68,7 @@ HTML adapter は `Source.selectors` の CSS セレクタを使って item を抽
 2. `url`: link selector の抽出結果（item の正規 URL）
 3. `fallbackHashInputs`: `[title, publishedAt]`
 
-これにより `Item.id` は `<title-slug>-<8 hex>` 形式 ([#24](https://github.com/ozzy-labs/agentic-watch/pull/24) 互換) になり、URL が変わらない限り再 fetch 後も同一 id が再現する。
+これにより `Item.id` は `<title-slug>-<8 hex>` 形式 ([#24](https://github.com/ozzy-labs/feedradar/pull/24) 互換) になり、URL が変わらない限り再 fetch 後も同一 id が再現する。
 
 ## 再 fetch 戦略
 

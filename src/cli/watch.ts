@@ -45,7 +45,7 @@ function parseRunArgs(args: string[]): WatchRunArgs {
 }
 
 function printWatchHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch watch <run> [options]");
+  log("Usage: radar watch <run> [options]");
   log("");
   log("Subcommands:");
   log("  run [--source <id>] [--bootstrap]   Fetch sources and produce items");

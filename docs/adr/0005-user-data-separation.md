@@ -6,7 +6,7 @@ Accepted（2026-05-11）
 
 ## Context
 
-agentic-watch は CLI engine（コード）とユーザーデータ（sources / items / state / research / templates）の両方を扱う。これらを **同一リポジトリ**に置くか、**分離する**かを決める必要がある。
+FeedRadar は CLI engine（コード）とユーザーデータ（sources / items / state / research / templates）の両方を扱う。これらを **同一リポジトリ**に置くか、**分離する**かを決める必要がある。
 
 OzzyLabs 内の先行例:
 
@@ -17,9 +17,9 @@ OzzyLabs 内の先行例:
 
 **engine（npm パッケージ）と user data を分離する**。
 
-- `agentic-watch` リポジトリには **コードのみ**を置く（`src/` `tests/` `docs/` 等）
+- `radar` リポジトリには **コードのみ**を置く（`src/` `tests/` `docs/` 等）
 - `sources/` `items/` `state/` `research/` `templates/` `.commons/sync.yaml` 等の **user data は npm パッケージに含めない**
-- ユーザーは `agentic-watch init` を**任意のディレクトリ**で実行し、そのディレクトリが user workspace になる
+- ユーザーは `radar init` を**任意のディレクトリ**で実行し、そのディレクトリが user workspace になる
 - ユーザーがその workspace を git 管理するかどうかは自由（個人 private repo / 共有 repo / 管理しない 全て可）
 
 ### `package.json` の `files`
@@ -38,7 +38,7 @@ OzzyLabs 内の先行例:
 
 ### 良い面
 
-- engine の更新（`pnpm up -g @ozzylabs/agentic-watch`）が user data に影響しない
+- engine の更新（`pnpm up -g @ozzylabs/feedradar`）が user data に影響しない
 - 個人データを含む workspace を private に、engine を public に**それぞれ独立**して扱える
 - writing-studio が抱える「コードと個人データの同居問題」を**構造的に回避**
 - 業務利用（プロプライエタリな sources / research を扱うチーム）でも engine を共有可能
@@ -60,7 +60,7 @@ OzzyLabs 内の先行例:
 
 ### 案 B: monorepo（`packages/engine` + `packages/sample-workspace`）
 
-- 却下理由: 単一 CLI のため workspace 化のメリットが薄い。サンプル workspace は別途 `agentic-watch-examples` 等のリポで提供可能（将来）
+- 却下理由: 単一 CLI のため workspace 化のメリットが薄い。サンプル workspace は別途 `feedradar-examples` 等のリポで提供可能（将来）
 
 ## 関連
 

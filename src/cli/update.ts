@@ -76,7 +76,7 @@ function parseArgs(args: string[]): UpdateArgs {
 }
 
 function printHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch update <research-id> [--agent <agent-id>] [--template <template-id>]");
+  log("Usage: radar update <research-id> [--agent <agent-id>] [--template <template-id>]");
   log("");
   log("Arguments:");
   log("  <research-id>         Research id (basename of research/<id>.md without .md)");
@@ -158,9 +158,9 @@ async function findItemsForResearch(cwd: string, itemIds: string[]): Promise<Ite
 }
 
 /**
- * Implementation of `agentic-watch update <research-id>`.
+ * Implementation of `radar update <research-id>`.
  *
- * High-level flow (Phase 5, [#41](https://github.com/ozzy-labs/agentic-watch/issues/41)):
+ * High-level flow (Phase 5, [#41](https://github.com/ozzy-labs/feedradar/issues/41)):
  *   1. Parse + validate args (agent defaults to `claude-code`, template to `default`).
  *   2. Resolve `research/<research-id>.md` and parse its frontmatter.
  *   3. Compute the new id `<base>_v<n+1>` and refuse to overwrite an existing

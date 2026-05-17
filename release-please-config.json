@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "@ozzylabs/agentic-watch",
+      "package-name": "@ozzylabs/feedradar",
       "include-component-in-tag": false,
       "initial-version": "0.1.0",
       "bump-minor-pre-major": true,

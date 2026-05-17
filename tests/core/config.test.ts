@@ -11,7 +11,7 @@ import {
 } from "../../src/core/config.js";
 
 async function makeWorkspace(content?: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "agentic-watch-config-"));
+  const dir = await mkdtemp(join(tmpdir(), "feedradar-config-"));
   if (content !== undefined) {
     await writeFile(join(dir, CONFIG_FILENAME), content, "utf8");
   }
