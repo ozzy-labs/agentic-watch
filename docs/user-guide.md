@@ -35,10 +35,15 @@ npx @ozzylabs/agentic-watch <command>
 ```bash
 mkdir my-watch && cd my-watch
 agentic-watch init
-agentic-watch source add anthropic-news --kind rss --url https://anthropic.com/news/rss.xml --keywords "Claude Code,agents"
+agentic-watch source add anthropic-sdk \
+  --kind github-releases \
+  --url https://github.com/anthropics/anthropic-sdk-python \
+  --keywords "feat,fix,release"
 agentic-watch watch run
 agentic-watch research <item-id> --agent claude-code
 ```
+
+> `--keywords` を省略すると filter で 0 件になり、`watch run` が item を作らない仕様（`filter.ts` は keywords 空 = match nothing）。クイックスタートでは必ず `--keywords` を渡す。
 
 ## コマンド
 

@@ -27,11 +27,17 @@ npm i -g @ozzylabs/agentic-watch
 ## 使い方
 
 ```bash
-agentic-watch init                    # ワークスペース初期化
-agentic-watch source add <id> ...     # フィードソースを追加
+# クイックスタート (anthropics/anthropic-sdk-python の GitHub Releases を監視)
+agentic-watch init
+agentic-watch source add anthropic-sdk \
+  --kind github-releases \
+  --url https://github.com/anthropics/anthropic-sdk-python \
+  --keywords "feat,fix,release"
+agentic-watch watch run
+agentic-watch research <item-id>
+
+# その他のサブコマンド
 agentic-watch source list             # ソース一覧
-agentic-watch watch run               # 取得 + フィルタ
-agentic-watch research <item-id>      # AI エージェントに調査レポート作成を委譲
 agentic-watch dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
 agentic-watch review <research-id>    # レポートを別エージェントで相互レビュー
 agentic-watch update <research-id>    # 既存レポートを最新 item で更新（v+1）
@@ -53,7 +59,7 @@ pnpm agentic-watch --help        # = node dist/index.js --help (package.json scr
 node dist/index.js --help        # 等価
 ```
 
-> ローカルの `pnpm agentic-watch <cmd>` は `package.json` の `scripts.agentic-watch`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/agentic-watch`) でユーザーが直接叩く `agentic-watch <cmd>` は `package.json` の `bin.agentic-watch` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。
+> ローカルの `pnpm agentic-watch <cmd>` は `package.json` の `scripts.agentic-watch`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/agentic-watch`) でユーザーが直接叩く `agentic-watch <cmd>` は `package.json` の `bin.agentic-watch` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> agentic-watch <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
 
 ## アーキテクチャ概要
 
