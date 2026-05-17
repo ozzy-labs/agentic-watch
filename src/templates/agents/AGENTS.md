@@ -16,9 +16,21 @@
 ├── research/          # 調査レポート (Markdown + frontmatter)
 ├── templates/         # Markdown テンプレート (編集可)
 ├── .agents/skills/    # 4 CLI 共通 engine SKILL (SSoT)
-├── .claude/skills/    # Claude Code 用 slash-command 雛形
-└── .gemini/commands/  # Gemini CLI 用 slash-command 定義 (TOML)
+├── .claude/skills/    # Claude Code / Copilot CLI 用 slash-command 雛形
+├── .gemini/commands/  # Gemini CLI 用 slash-command 定義 (TOML)
+└── AGENTIC_WATCH.md   # 人間向け workspace ガイド (本 AGENTS.md とは別レイヤー)
 ```
+
+## エージェントへの基本指示
+
+ユーザーは「最新の Anthropic news を research して」「この item は不要だから dismiss」のような **自然言語** で依頼してきます。CLI コマンドを覚えて打つのはユーザーの責務ではありません。エージェントは以下のように振る舞ってください:
+
+1. **自然言語の意図を slash command にマップする** — research / review / update / dismiss のいずれに該当するか判断する
+2. **必要な引数 (item-id / research-id) を解決する** — ユーザーが正確な id を知らない場合、`items/` / `research/` を読んで該当するものを特定する
+3. **slash command を実行する** — `/research <item-id>` 等を呼び、結果をユーザーに報告する
+4. **複数候補がある場合は確認する** — 「直近の item」が複数あれば候補を提示してユーザーに選ばせる
+
+slash command 経由で呼ぶことで、CLI 側の schema 検証 / status 遷移 / rollback がすべて効きます。直接 `items/*.yaml` を編集する等の low-level 操作は避け、必ず slash 経由で行ってください。
 
 ## 主要コマンド
 
@@ -51,9 +63,9 @@ agentic-watch dismiss <item-id>                       # LLM 不要、item を di
 
 `<agent>` の値: `claude-code` / `codex-cli` / `gemini-cli` / `copilot`
 
-## 利用可能な slash commands (Claude Code 等)
+## 利用可能な slash commands (4 agent 共通)
 
-`init` 時に `.claude/skills/` 配下に配置される薄い wrapper です。Claude Code interactive session で以下が呼べます (`--no-claude-skills` 指定時は生成されません):
+`init` 時に配置される薄い wrapper です。Claude Code / Copilot CLI / Gemini CLI / Codex CLI のいずれの interactive session でも呼べます (発火形式と読み取り経路は agent によって異なるが、最終的に同じ `agentic-watch <subcommand>` に解決されます):
 
 | Slash | 動作 |
 |---|---|
@@ -62,18 +74,42 @@ agentic-watch dismiss <item-id>                       # LLM 不要、item を di
 | `/update <research-id> [--agent ...]` | `agentic-watch update` を呼ぶ |
 | `/dismiss <item-id>` | `agentic-watch dismiss` を呼ぶ (LLM 不要) |
 
+| Agent | 発火形式 | 読まれるファイル |
+|---|---|---|
+| Claude Code | `/research <id>` | `.claude/skills/research/SKILL.md` |
+| Copilot CLI | `/research <id>` | `.claude/skills/` および `.agents/skills/` (両方) |
+| Gemini CLI | `/research <id>` | `.gemini/commands/research.toml` |
+| Codex CLI | `$research` mention / `/skills` panel | `.agents/skills/research/SKILL.md` (dual-mode) |
+
 procedure 本体は `.agents/skills/<name>/SKILL.md` (engine SKILL) を SSoT として参照します。
 
 ## 典型ワークフロー
 
+**ユーザー対話中 (interactive、エージェント駆動):**
+
 ```text
-1. agentic-watch watch run             # 新着検出 (items/*.yaml に detected で書く)
-2. agentic-watch research <item-id>    # AI agent が調査レポートを生成
-3. agentic-watch review <research-id>  # 別 agent でクロスレビュー (推奨)
-4. agentic-watch update <research-id>  # (任意) 最新情報で v+1 を生成
+1. ユーザー: 「最新の Anthropic news で気になるやつ research して」
+   → エージェント: items/ を読んで該当 item を選び、/research <item-id> を実行
+
+2. ユーザー: 「いまのレポートを別エージェントでレビューしたい」
+   → エージェント: 直前の research-id を覚えていれば /review <research-id> --agent <別 agent> を実行
+                  覚えていなければ research/ から最新を特定
+
+3. ユーザー: 「v1 が古いから update」
+   → エージェント: /update <research-id> を実行 (新 _v2.md が生成される、v1 は immutable)
+
+4. ユーザー: 「この item 不要」
+   → エージェント: /dismiss <item-id> を実行
 ```
 
-不要な item は `agentic-watch dismiss <item-id>` で dismissed に遷移させます。
+**スケジュール実行 / CI (CLI 直叩き):**
+
+```text
+agentic-watch watch run               # 新着検出 (items/*.yaml に detected で書く)
+agentic-watch research <item-id>      # 自動 triage は推奨しない (ユーザー判断が必要)
+```
+
+`watch run` は cron / GitHub Actions / Claude Routines から呼ぶことを想定しています。`research` / `review` / `update` / `dismiss` は人間の判断が伴うため、interactive session 経由を推奨します。
 
 ## エージェント選択ガイド (cross-agent review)
 

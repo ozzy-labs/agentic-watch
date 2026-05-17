@@ -170,6 +170,15 @@ interface InitOptions {
    */
   noTemplates?: boolean;
   /**
+   * Skip writing `<cwd>/AGENTIC_WATCH.md` (human-facing workspace guide).
+   * By default `init` emits this file at the workspace root to teach the
+   * user how to drive the workspace via natural-language requests to AI
+   * agents (primary) or CLI direct invocation (secondary). Useful for
+   * workspaces that already have their own user-facing documentation, or
+   * that manage this file via another mechanism.
+   */
+  noAgenticWatchMd?: boolean;
+  /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
    */
@@ -315,6 +324,25 @@ const CLAUDE_MD_SCAFFOLD = {
 const DEFAULT_TEMPLATE_SCAFFOLD = {
   src: "default.md",
   dest: ["templates", "default.md"] as const,
+} as const;
+
+/**
+ * Bundled human-facing workspace guide emitted by default at the workspace
+ * root. Distinct from `AGENTS.md` / `CLAUDE.md`, which are AI-agent-facing
+ * instruction files auto-read by the respective CLIs. `AGENTIC_WATCH.md`
+ * is for the human who ran `init` and needs to learn what they can do in
+ * this workspace — with skills-based / natural-language agent invocation
+ * as the primary path and CLI direct invocation as the secondary
+ * (scheduler / CI) path.
+ *
+ * Named `AGENTIC_WATCH.md` (not `README.md`) so it does not collide with
+ * a workspace that already has its own README, and so its purpose is
+ * obvious from the filename. Same warning+skip + `--force` overwrite
+ * policy as all other bundled files.
+ */
+const AGENTIC_WATCH_MD_SCAFFOLD = {
+  src: "agentic-watch.md",
+  dest: ["AGENTIC_WATCH.md"] as const,
 } as const;
 
 /**
@@ -516,6 +544,18 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
+  if (!options.noAgenticWatchMd) {
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: AGENTIC_WATCH_MD_SCAFFOLD,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
+  }
+
   if (options.withRoutines) {
     await emitScaffold({
       cwd,
@@ -547,6 +587,13 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   }
   if (skippedFiles.length > 0) {
     info(`init: files skipped: ${skippedFiles.join(", ")}`);
+  }
+  // Next-step hint: AGENTIC_WATCH.md is the canonical entry point for the
+  // human who just ran init. Point them at it (when present) so they don't
+  // have to hunt for usage docs. Skip the hint when the file wasn't written
+  // (workspace owner chose --no-agentic-watch-md or pre-existing protected).
+  if (copiedFiles.includes("AGENTIC_WATCH.md")) {
+    info("init: next steps — read AGENTIC_WATCH.md for natural-language and slash usage.");
   }
 
   return { createdDirs, copiedFiles, skippedFiles };
@@ -598,6 +645,7 @@ interface ParsedArgs {
   noAgentsMd: boolean;
   noClaudeMd: boolean;
   noTemplates: boolean;
+  noAgenticWatchMd: boolean;
   help: boolean;
 }
 
@@ -610,6 +658,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let noAgentsMd = false;
   let noClaudeMd = false;
   let noTemplates = false;
+  let noAgenticWatchMd = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -628,6 +677,8 @@ function parseArgs(args: string[]): ParsedArgs {
       noClaudeMd = true;
     } else if (arg === "--no-templates") {
       noTemplates = true;
+    } else if (arg === "--no-agentic-watch-md") {
+      noAgenticWatchMd = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
@@ -641,6 +692,7 @@ function parseArgs(args: string[]): ParsedArgs {
     noAgentsMd,
     noClaudeMd,
     noTemplates,
+    noAgenticWatchMd,
     help,
   };
 }
@@ -658,12 +710,14 @@ export const initCommand: Command = {
       noAgentsMd,
       noClaudeMd,
       noTemplates,
+      noAgenticWatchMd,
       help,
     } = parseArgs(args);
     if (help) {
       console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
       console.log("                          [--no-claude-skills] [--no-gemini-commands]");
       console.log("                          [--no-agents-md] [--no-claude-md] [--no-templates]");
+      console.log("                          [--no-agentic-watch-md]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
@@ -681,6 +735,9 @@ export const initCommand: Command = {
       );
       console.log(
         "  - Starter report template: templates/default.md (editable; mirrors research SKILL fallback)",
+      );
+      console.log(
+        "  - Human-facing workspace guide: AGENTIC_WATCH.md (natural-language / slash usage)",
       );
       console.log("");
       console.log("Options:");
@@ -718,6 +775,10 @@ export const initCommand: Command = {
       console.log(
         "                         (research engine SKILL falls back to its built-in structure)",
       );
+      console.log("  --no-agentic-watch-md  Skip writing AGENTIC_WATCH.md at the workspace root");
+      console.log(
+        "                         (useful if the workspace already has its own user-facing docs)",
+      );
       return 0;
     }
     await initWorkspace({
@@ -730,6 +791,7 @@ export const initCommand: Command = {
       noAgentsMd,
       noClaudeMd,
       noTemplates,
+      noAgenticWatchMd,
     });
     return 0;
   },
