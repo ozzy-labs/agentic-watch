@@ -775,7 +775,7 @@ export const initCommand: Command = {
       console.log(
         "                         (research engine SKILL falls back to its built-in structure)",
       );
-      console.log("  --no-feedradar-md  Skip writing FEEDRADAR.md at the workspace root");
+      console.log("  --no-feedradar-md      Skip writing FEEDRADAR.md at the workspace root");
       console.log(
         "                         (useful if the workspace already has its own user-facing docs)",
       );
