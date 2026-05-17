@@ -59,7 +59,7 @@ pnpm radar --help        # = node dist/index.js --help (package.json scripts の
 node dist/index.js --help        # 等価
 ```
 
-> ローカルの `pnpm FeedRadar <cmd>` は `package.json` の `scripts.FeedRadar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `FeedRadar <cmd>` は `package.json` の `bin.FeedRadar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> FeedRadar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
+> ローカルの `pnpm radar <cmd>` は `package.json` の `scripts.radar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `radar <cmd>` は `package.json` の `bin.radar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> radar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
 
 ## アーキテクチャ概要
 
