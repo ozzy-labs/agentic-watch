@@ -8,10 +8,10 @@ import { AgentIdSchema } from "./research.js";
  * Fields are intentionally minimal in Phase 2; the config is designed to grow
  * one field at a time as new defaults are needed (per [#25] Phase 2 epic).
  *
- * - `defaultResearchAgent`: agent used when `agentic-watch research` is run
+ * - `defaultResearchAgent`: agent used when `radar research` is run
  *   without an explicit `--agent`. Falls through to the hard-coded default
  *   (`claude-code`) when unset.
- * - `defaultReviewAgent`: same idea for `agentic-watch review`.
+ * - `defaultReviewAgent`: same idea for `radar review`.
  *
  * Out-of-scope (tracked separately):
  *   - default agent for `update` (Phase 5)

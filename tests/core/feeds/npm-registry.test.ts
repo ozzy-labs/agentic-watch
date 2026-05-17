@@ -227,7 +227,7 @@ describe("core/feeds/npm-registry — adapter", () => {
     const result = await npmRegistryAdapter.fetch(makeSource(), { fetch: fetchImpl });
     expect(observedUrl).toBe("https://registry.npmjs.org/@anthropic-ai/sdk");
     expect(observedHeaders?.accept).toBe("application/json");
-    expect(observedHeaders?.["user-agent"]).toMatch(/^agentic-watch/);
+    expect(observedHeaders?.["user-agent"]).toMatch(/^feedradar/);
     expect(result.notModified).toBeFalsy();
     expect(result.items).toHaveLength(1);
     expect(result.state.lastEtag).toBe('"v1"');

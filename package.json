@@ -1,5 +1,5 @@
 {
-  "name": "@ozzylabs/agentic-watch",
+  "name": "@ozzylabs/feedradar",
   "version": "0.0.0",
   "description": "Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports",
   "type": "module",
@@ -13,7 +13,7 @@
     "README.md"
   ],
   "bin": {
-    "agentic-watch": "dist/index.js"
+    "radar": "dist/index.js"
   },
   "scripts": {
     "build": "tsc && pnpm run build:skills",
@@ -22,7 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "agentic-watch": "node dist/index.js",
+    "radar": "node dist/index.js",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
@@ -40,24 +40,27 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ozzy-labs/agentic-watch.git"
+    "url": "git+https://github.com/ozzy-labs/feedradar.git"
   },
-  "homepage": "https://github.com/ozzy-labs/agentic-watch#readme",
+  "homepage": "https://github.com/ozzy-labs/feedradar#readme",
   "bugs": {
-    "url": "https://github.com/ozzy-labs/agentic-watch/issues"
+    "url": "https://github.com/ozzy-labs/feedradar/issues"
   },
   "keywords": [
-    "agentic",
+    "feedradar",
+    "radar",
+    "feed",
+    "rss",
+    "release-notes",
     "ai",
     "ai-agents",
+    "agentic",
     "claude-code",
     "codex",
     "gemini",
     "copilot",
     "cli",
     "multi-agent",
-    "rss",
-    "release-notes",
     "research",
     "markdown"
   ],

@@ -93,7 +93,7 @@ describe("cli/watch run", () => {
   let workdir: string;
 
   beforeEach(async () => {
-    workdir = await mkdtemp(join(tmpdir(), "agentic-watch-watch-"));
+    workdir = await mkdtemp(join(tmpdir(), "feedradar-watch-"));
     await mkdir(join(workdir, "sources"), { recursive: true });
     await mkdir(join(workdir, "state"), { recursive: true });
     await mkdir(join(workdir, "items"), { recursive: true });

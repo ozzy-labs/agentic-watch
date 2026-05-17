@@ -53,7 +53,7 @@ const SAMPLE_ITEM: Item = ItemSchema.parse({
 });
 
 async function setupWorkspace(): Promise<string> {
-  const workdir = await mkdtemp(join(tmpdir(), "agentic-watch-research-"));
+  const workdir = await mkdtemp(join(tmpdir(), "feedradar-research-"));
   await mkdir(join(workdir, "items", SAMPLE_ITEM.sourceId), { recursive: true });
   await mkdir(join(workdir, "research"), { recursive: true });
   await mkdir(join(workdir, "templates"), { recursive: true });

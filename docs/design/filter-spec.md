@@ -1,6 +1,6 @@
 # Filter Specification
 
-> **Status:** v1 — Phase 1 で実装した `agentic-watch` の filter 仕様詳細。設計判断の根拠は [ADR-0006](../adr/0006-filter-specification.md) を参照。
+> **Status:** v1 — Phase 1 で実装した `radar` の filter 仕様詳細。設計判断の根拠は [ADR-0006](../adr/0006-filter-specification.md) を参照。
 
 `Source.filters` は、watch run が fetch した item を「items として書き出すか / 捨てるか」を決める唯一の決定機構。本ドキュメントは ADR-0006 の意思決定をユーザー視点の仕様書として記述する。
 

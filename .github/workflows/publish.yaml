@@ -32,7 +32,7 @@ jobs:
         run: pnpm run build
 
       # 多層防御 (PR #93 の self-link incident への regression guard):
-      # workspace 内に self-link (`@ozzylabs/agentic-watch: "link:"`) が
+      # workspace 内に self-link (`@ozzylabs/feedradar: "link:"`) が
       # 紛れ込んだ場合、`pnpm pack` で出来上がる package.json にもそれが
       # 残り、downstream の `npm i` で resolution が壊れる。publish 前に
       # tarball を inspect して link: が含まれていないことを確認する。
@@ -40,7 +40,7 @@ jobs:
         run: |
           shopt -s nullglob
           pnpm pack --pack-destination /tmp
-          tarballs=(/tmp/ozzylabs-agentic-watch-*.tgz)
+          tarballs=(/tmp/ozzylabs-feedradar-*.tgz)
           if (( ${#tarballs[@]} == 0 )); then
             echo "ERROR: pnpm pack produced no tarball."
             exit 1

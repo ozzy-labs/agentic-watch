@@ -204,7 +204,7 @@ async function runCopilotCli(prompt: string, options: SpawnOptions): Promise<Spa
       reject(
         new Error(
           err.message.includes("ENOENT")
-            ? "copilot CLI not found in PATH — install GitHub Copilot CLI and authenticate (`copilot auth login`) before running `agentic-watch research --agent copilot`."
+            ? "copilot CLI not found in PATH — install GitHub Copilot CLI and authenticate (`copilot auth login`) before running `radar research --agent copilot`."
             : `copilot CLI failed to start: ${err.message}`,
         ),
       );

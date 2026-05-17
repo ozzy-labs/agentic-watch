@@ -1,14 +1,14 @@
 ---
 name: research
-description: Generate a research report for a detected item via the agentic-watch CLI.
+description: Generate a research report for a detected item via the FeedRadar CLI.
 argument-hint: <item-id> [--agent claude-code|codex-cli|gemini-cli|copilot] [--template <id>]
 ---
 
 # research
 
-Generate a Markdown research report for an `agentic-watch` workspace item.
+Generate a Markdown research report for an `radar` workspace item.
 
-This skill is a thin wrapper: it delegates to the `agentic-watch` CLI, which
+This skill is a thin wrapper: it delegates to the `radar` CLI, which
 handles item lookup, template loading, adapter dispatch (spawning the chosen
 agent CLI), schema validation, and the `detected → researched` status
 transition. The canonical research procedure (frontmatter format, body
@@ -21,14 +21,14 @@ adapter that the CLI spawns. Do not duplicate that procedure here.
 1. Resolve `$ARGUMENTS`. If empty or `--help`, run:
 
    ```bash
-   agentic-watch research --help
+   radar research --help
    ```
 
    and report the usage. Otherwise pass `$ARGUMENTS` through verbatim.
 2. Execute:
 
    ```bash
-   agentic-watch research $ARGUMENTS
+   radar research $ARGUMENTS
    ```
 
 3. Report the resulting research file path (printed on stdout by the CLI as

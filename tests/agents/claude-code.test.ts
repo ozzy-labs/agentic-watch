@@ -49,8 +49,8 @@ function buildResearchRequest(overrides: Partial<ResearchRequest> = {}): Researc
     templateId: "default",
     templateBody: "",
     items: [SAMPLE_ITEM],
-    outputPath: "/tmp/agentic-watch-test/research/sample_v1.md",
-    cwd: "/tmp/agentic-watch-test",
+    outputPath: "/tmp/feedradar-test/research/sample_v1.md",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -60,10 +60,10 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     agent: "claude-code",
     templateId: "default",
     templateBody: "",
-    researchPath: "/tmp/agentic-watch-test/research/sample_v1.md",
+    researchPath: "/tmp/feedradar-test/research/sample_v1.md",
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nid: sample\n---\n# v1 body\n",
-    cwd: "/tmp/agentic-watch-test",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -79,8 +79,8 @@ function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReque
     },
     items: [SAMPLE_ITEM],
     outputPath:
-      "/tmp/agentic-watch-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
-    cwd: "/tmp/agentic-watch-test",
+      "/tmp/feedradar-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
+    cwd: "/tmp/feedradar-test",
     ...overrides,
   };
 }
@@ -173,7 +173,7 @@ describe("agents/claude-code adapter", () => {
         .fn()
         .mockRejectedValue(
           new Error(
-            "claude CLI not found in PATH — install Claude Code and authenticate before running `agentic-watch research`.",
+            "claude CLI not found in PATH — install Claude Code and authenticate before running `radar research`.",
           ),
         );
       const adapter = createClaudeCodeAdapter({ run });

@@ -42,8 +42,8 @@ function buildResearchRequest(): ResearchRequest {
     templateId: "default",
     templateBody: "# Default template\n",
     items: [SAMPLE_ITEM],
-    outputPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
-    cwd: "/tmp/agentic-watch",
+    outputPath: "/tmp/feedradar/research/20260510_demo_v1.md",
+    cwd: "/tmp/feedradar",
   };
 }
 
@@ -52,10 +52,10 @@ function buildReviewRequest(): ReviewRequest {
     agent: "gemini-cli",
     templateId: "default",
     templateBody: "",
-    researchPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+    researchPath: "/tmp/feedradar/research/20260510_demo_v1.md",
     researchFrontmatter: SAMPLE_FRONTMATTER,
     researchBody: "---\nid: demo\n---\n\n# body\n",
-    cwd: "/tmp/agentic-watch",
+    cwd: "/tmp/feedradar",
   };
 }
 
@@ -69,8 +69,8 @@ function buildUpdateRequest(): UpdateRequest {
       body: "---\nid: demo\n---\n\n# v1 body\n",
     },
     items: [SAMPLE_ITEM],
-    outputPath: "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
-    cwd: "/tmp/agentic-watch",
+    outputPath: "/tmp/feedradar/research/20260510_anthropic-news-claude-code-shiny_v2.md",
+    cwd: "/tmp/feedradar",
   };
 }
 
@@ -121,7 +121,7 @@ describe("agents/gemini-cli", () => {
       // lives in `.agents/skills/research/SKILL.md`, not here.
       expect(call.prompt).toContain(".agents/skills/research/SKILL.md");
       expect(call.prompt).toContain(SAMPLE_ITEM.id);
-      expect(call.prompt).toContain("/tmp/agentic-watch/research/20260510_demo_v1.md");
+      expect(call.prompt).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
 
       // Item title / summary / raw must sit inside the boundary marker pair
       // (ADR-0009 M1c) so the LLM treats the upstream-sourced content as data.
@@ -130,7 +130,7 @@ describe("agents/gemini-cli", () => {
       expect(call.prompt).toContain(SAMPLE_ITEM.title);
 
       // The cwd is forwarded so the spawned CLI sees workspace-relative paths.
-      expect(call.cwd).toBe("/tmp/agentic-watch");
+      expect(call.cwd).toBe("/tmp/feedradar");
     });
 
     it("forwards the structured payload as JSON on stdin", async () => {
@@ -144,7 +144,7 @@ describe("agents/gemini-cli", () => {
         templateId: "default",
         templateBody: "# Default template\n",
         items: [SAMPLE_ITEM],
-        outputPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+        outputPath: "/tmp/feedradar/research/20260510_demo_v1.md",
       });
     });
 
@@ -202,7 +202,7 @@ describe("agents/gemini-cli", () => {
       expect(calls).toHaveLength(1);
       const call = calls[0];
       expect(call.prompt).toContain(".agents/skills/review/SKILL.md");
-      expect(call.prompt).toContain("/tmp/agentic-watch/research/20260510_demo_v1.md");
+      expect(call.prompt).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
       expect(call.prompt).toContain("gemini-cli");
       // The review prompt should NOT re-trigger the research SKILL.
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
@@ -224,7 +224,7 @@ describe("agents/gemini-cli", () => {
         agent: "gemini-cli",
         templateId: "default",
         templateBody: "",
-        researchPath: "/tmp/agentic-watch/research/20260510_demo_v1.md",
+        researchPath: "/tmp/feedradar/research/20260510_demo_v1.md",
         researchFrontmatter: SAMPLE_FRONTMATTER,
         researchBody: "---\nid: demo\n---\n\n# body\n",
       });
@@ -274,9 +274,9 @@ describe("agents/gemini-cli", () => {
       expect(call.prompt).toContain(SAMPLE_FRONTMATTER.id);
       expect(call.prompt).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
       expect(call.prompt).toContain(
-        "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
+        "/tmp/feedradar/research/20260510_anthropic-news-claude-code-shiny_v2.md",
       );
-      expect(call.cwd).toBe("/tmp/agentic-watch");
+      expect(call.cwd).toBe("/tmp/feedradar");
       // update prompt must NOT re-trigger the research SKILL (would generate v1, not v2).
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
 
@@ -303,7 +303,7 @@ describe("agents/gemini-cli", () => {
           body: "---\nid: demo\n---\n\n# v1 body\n",
         },
         items: [SAMPLE_ITEM],
-        outputPath: "/tmp/agentic-watch/research/20260510_anthropic-news-claude-code-shiny_v2.md",
+        outputPath: "/tmp/feedradar/research/20260510_anthropic-news-claude-code-shiny_v2.md",
       });
     });
 

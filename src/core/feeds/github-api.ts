@@ -1,6 +1,6 @@
 import type { FetchLike } from "./types.js";
 
-const USER_AGENT = "agentic-watch/0.0.0 (+https://github.com/ozzy-labs/agentic-watch)";
+const USER_AGENT = "feedradar/0.0.0 (+https://github.com/ozzy-labs/feedradar)";
 const GITHUB_API_BASE = "https://api.github.com";
 
 /**

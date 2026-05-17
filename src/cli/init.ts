@@ -43,7 +43,7 @@ async function resolveTemplatesRoot(): Promise<string> {
  * discovery skills land at `<cwd>/.claude/skills/<name>/SKILL.md` so that
  * Claude Code, when opened in the workspace, surfaces `/research` /
  * `/review` / `/update` / `/dismiss` as invocable slash commands. The
- * discovery skills are thin wrappers — they shell out to the `agentic-watch`
+ * discovery skills are thin wrappers — they shell out to the `radar`
  * CLI rather than duplicating the engine procedure.
  *
  * See ADR-0007 (revised 2026-05-17) for the policy and `docs/design/
@@ -66,7 +66,7 @@ async function resolveClaudeSkillsRoot(): Promise<string> {
  * Code discovery wrappers at `dist/claude-skills/`. Gemini CLI surfaces slash
  * commands from `.gemini/commands/<name>.toml` (TOML format with `prompt` and
  * `description` keys). The bundled TOMLs are thin wrappers — they tell Gemini
- * to shell out to the `agentic-watch` CLI with `{{args}}` interpolation; the
+ * to shell out to the `radar` CLI with `{{args}}` interpolation; the
  * canonical procedure stays in the engine SKILLs (SSoT) under
  * `.agents/skills/`.
  *
@@ -106,7 +106,7 @@ interface InitOptions {
    * Skip writing Claude Code slash-command wrappers to
    * `<cwd>/.claude/skills/`. Useful for workspaces that already manage that
    * directory via the `@ozzylabs/skills` Renovate preset and don't want
-   * agentic-watch's discovery skills to land alongside the preset ones.
+   * FeedRadar's discovery skills to land alongside the preset ones.
    *
    * The engine SKILLs at `<cwd>/.agents/skills/` (which the agent adapter
    * reads when the CLI spawns the agent) are always written regardless of
@@ -133,7 +133,7 @@ interface InitOptions {
    * the moment a user opens an interactive session.
    *
    * Useful for workspaces that already manage their own AGENTS.md (e.g. a
-   * monorepo with project-wide instructions) and don't want agentic-watch's
+   * monorepo with project-wide instructions) and don't want FeedRadar's
    * boilerplate to land at the root.
    *
    * See ADR-0007 (revised 2026-05-17 b) for the four-layer init bundle
@@ -170,14 +170,14 @@ interface InitOptions {
    */
   noTemplates?: boolean;
   /**
-   * Skip writing `<cwd>/AGENTIC_WATCH.md` (human-facing workspace guide).
+   * Skip writing `<cwd>/FEEDRADAR.md` (human-facing workspace guide).
    * By default `init` emits this file at the workspace root to teach the
    * user how to drive the workspace via natural-language requests to AI
    * agents (primary) or CLI direct invocation (secondary). Useful for
    * workspaces that already have their own user-facing documentation, or
    * that manage this file via another mechanism.
    */
-  noAgenticWatchMd?: boolean;
+  noFeedradarMd?: boolean;
   /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
@@ -228,13 +228,13 @@ const BUNDLED_SKILLS = ["research", "review", "update"] as const;
  * Claude Code discovery SKILLs: thin slash-command wrappers that surface
  * `/research` / `/review` / `/update` / `/dismiss` inside Claude Code
  * interactive sessions opened in the workspace. They land at
- * `<cwd>/.claude/skills/<name>/SKILL.md` and delegate to the `agentic-watch`
+ * `<cwd>/.claude/skills/<name>/SKILL.md` and delegate to the `radar`
  * CLI; they do not duplicate the engine procedure.
  *
  * Note `dismiss` is here but NOT in `BUNDLED_SKILLS` — the dismiss command
  * does not invoke an agent (no LLM call), so there is no engine SKILL for
  * it. The slash-command wrapper is purely a UX affordance for Claude Code
- * users (vs typing `agentic-watch dismiss` in a terminal).
+ * users (vs typing `radar dismiss` in a terminal).
  *
  * See ADR-0007 (revised 2026-05-17) for the SSoT vs discovery split.
  */
@@ -244,7 +244,7 @@ const CLAUDE_DISCOVERY_SKILLS = ["research", "review", "update", "dismiss"] as c
  * Gemini CLI slash commands: thin TOML wrappers that surface `/research` /
  * `/review` / `/update` / `/dismiss` inside Gemini CLI interactive sessions
  * opened in the workspace. They land at `<cwd>/.gemini/commands/<name>.toml`
- * and delegate to the `agentic-watch` CLI via `{{args}}` interpolation; they
+ * and delegate to the `radar` CLI via `{{args}}` interpolation; they
  * do not duplicate the engine procedure.
  *
  * Note `dismiss` is here but NOT in `BUNDLED_SKILLS` — the dismiss command
@@ -262,7 +262,7 @@ const GEMINI_COMMANDS = ["research", "review", "update", "dismiss"] as const;
  * - `src`: bundled template path under `<templatesRoot>/`
  * - `dest`: where the file lands in the user's workspace
  *
- * See ADR-0004 for the policy: `agentic-watch` does not run schedules
+ * See ADR-0004 for the policy: `radar` does not run schedules
  * itself; these scaffolds wire it into Claude Routines / GitHub Actions.
  */
 const SCHEDULE_SCAFFOLDS = {
@@ -329,24 +329,24 @@ const DEFAULT_TEMPLATE_SCAFFOLD = {
 /**
  * Bundled human-facing workspace guide emitted by default at the workspace
  * root. Distinct from `AGENTS.md` / `CLAUDE.md`, which are AI-agent-facing
- * instruction files auto-read by the respective CLIs. `AGENTIC_WATCH.md`
+ * instruction files auto-read by the respective CLIs. `FEEDRADAR.md`
  * is for the human who ran `init` and needs to learn what they can do in
  * this workspace — with skills-based / natural-language agent invocation
  * as the primary path and CLI direct invocation as the secondary
  * (scheduler / CI) path.
  *
- * Named `AGENTIC_WATCH.md` (not `README.md`) so it does not collide with
+ * Named `FEEDRADAR.md` (not `README.md`) so it does not collide with
  * a workspace that already has its own README, and so its purpose is
  * obvious from the filename. Same warning+skip + `--force` overwrite
  * policy as all other bundled files.
  */
-const AGENTIC_WATCH_MD_SCAFFOLD = {
-  src: "agentic-watch.md",
-  dest: ["AGENTIC_WATCH.md"] as const,
+const FEEDRADAR_MD_SCAFFOLD = {
+  src: "feedradar.md",
+  dest: ["FEEDRADAR.md"] as const,
 } as const;
 
 /**
- * Initialize the current directory as an agentic-watch workspace.
+ * Initialize the current directory as a FeedRadar workspace.
  *
  * Creates the canonical workspace directories and copies bundled SKILL.md
  * files into `.agents/skills/<name>/SKILL.md`. Existing files are protected
@@ -357,7 +357,7 @@ const AGENTIC_WATCH_MD_SCAFFOLD = {
  * thin slash-command wrappers to `.claude/skills/` so that Claude Code,
  * when opened interactively in the workspace, surfaces `/research` /
  * `/review` / `/update` / `/dismiss`. The wrappers delegate to the
- * `agentic-watch` CLI rather than duplicating the engine procedure (the
+ * `radar` CLI rather than duplicating the engine procedure (the
  * engine SKILL at `.agents/skills/<name>/SKILL.md` remains the SSoT).
  * Existing files are protected, so workspaces that already manage
  * `.claude/skills/` via the `@ozzylabs/skills` Renovate preset won't be
@@ -375,7 +375,7 @@ const AGENTIC_WATCH_MD_SCAFFOLD = {
  * Gemini CLI slash commands (ADR-0007, revised 2026-05-17 c via #78):
  * `init` writes Gemini CLI's native slash command TOMLs at
  * `<cwd>/.gemini/commands/{research,review,update,dismiss}.toml`. These
- * thin wrappers shell out to the `agentic-watch` CLI through Gemini's
+ * thin wrappers shell out to the `radar` CLI through Gemini's
  * `{{args}}` interpolation, surfacing `/research` etc. inside Gemini CLI
  * interactive sessions. Opt out via `--no-gemini-commands` (engine SKILLs
  * remain in place via the dual-mode "Invocation modes" fallback). This
@@ -544,12 +544,12 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
-  if (!options.noAgenticWatchMd) {
+  if (!options.noFeedradarMd) {
     await emitScaffold({
       cwd,
       force,
       templatesRoot: options.templatesRoot,
-      scaffold: AGENTIC_WATCH_MD_SCAFFOLD,
+      scaffold: FEEDRADAR_MD_SCAFFOLD,
       copiedFiles,
       skippedFiles,
       warn,
@@ -588,12 +588,12 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   if (skippedFiles.length > 0) {
     info(`init: files skipped: ${skippedFiles.join(", ")}`);
   }
-  // Next-step hint: AGENTIC_WATCH.md is the canonical entry point for the
+  // Next-step hint: FEEDRADAR.md is the canonical entry point for the
   // human who just ran init. Point them at it (when present) so they don't
   // have to hunt for usage docs. Skip the hint when the file wasn't written
-  // (workspace owner chose --no-agentic-watch-md or pre-existing protected).
-  if (copiedFiles.includes("AGENTIC_WATCH.md")) {
-    info("init: next steps — read AGENTIC_WATCH.md for natural-language and slash usage.");
+  // (workspace owner chose --no-feedradar-md or pre-existing protected).
+  if (copiedFiles.includes("FEEDRADAR.md")) {
+    info("init: next steps — read FEEDRADAR.md for natural-language and slash usage.");
   }
 
   return { createdDirs, copiedFiles, skippedFiles };
@@ -645,7 +645,7 @@ interface ParsedArgs {
   noAgentsMd: boolean;
   noClaudeMd: boolean;
   noTemplates: boolean;
-  noAgenticWatchMd: boolean;
+  noFeedradarMd: boolean;
   help: boolean;
 }
 
@@ -658,7 +658,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let noAgentsMd = false;
   let noClaudeMd = false;
   let noTemplates = false;
-  let noAgenticWatchMd = false;
+  let noFeedradarMd = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -677,8 +677,8 @@ function parseArgs(args: string[]): ParsedArgs {
       noClaudeMd = true;
     } else if (arg === "--no-templates") {
       noTemplates = true;
-    } else if (arg === "--no-agentic-watch-md") {
-      noAgenticWatchMd = true;
+    } else if (arg === "--no-feedradar-md") {
+      noFeedradarMd = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
@@ -692,7 +692,7 @@ function parseArgs(args: string[]): ParsedArgs {
     noAgentsMd,
     noClaudeMd,
     noTemplates,
-    noAgenticWatchMd,
+    noFeedradarMd,
     help,
   };
 }
@@ -710,14 +710,14 @@ export const initCommand: Command = {
       noAgentsMd,
       noClaudeMd,
       noTemplates,
-      noAgenticWatchMd,
+      noFeedradarMd,
       help,
     } = parseArgs(args);
     if (help) {
-      console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
+      console.log("Usage: radar init [--force] [--with-routines] [--with-actions]");
       console.log("                          [--no-claude-skills] [--no-gemini-commands]");
       console.log("                          [--no-agents-md] [--no-claude-md] [--no-templates]");
-      console.log("                          [--no-agentic-watch-md]");
+      console.log("                          [--no-feedradar-md]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
@@ -737,7 +737,7 @@ export const initCommand: Command = {
         "  - Starter report template: templates/default.md (editable; mirrors research SKILL fallback)",
       );
       console.log(
-        "  - Human-facing workspace guide: AGENTIC_WATCH.md (natural-language / slash usage)",
+        "  - Human-facing workspace guide: FEEDRADAR.md (natural-language / slash usage)",
       );
       console.log("");
       console.log("Options:");
@@ -775,7 +775,7 @@ export const initCommand: Command = {
       console.log(
         "                         (research engine SKILL falls back to its built-in structure)",
       );
-      console.log("  --no-agentic-watch-md  Skip writing AGENTIC_WATCH.md at the workspace root");
+      console.log("  --no-feedradar-md  Skip writing FEEDRADAR.md at the workspace root");
       console.log(
         "                         (useful if the workspace already has its own user-facing docs)",
       );
@@ -791,7 +791,7 @@ export const initCommand: Command = {
       noAgentsMd,
       noClaudeMd,
       noTemplates,
-      noAgenticWatchMd,
+      noFeedradarMd,
     });
     return 0;
   },

@@ -1,13 +1,13 @@
 ---
 name: watch-daily
 schedule: "0 0 * * *"
-description: Run agentic-watch daily to detect new items across configured sources.
+description: Run FeedRadar daily to detect new items across configured sources.
 ---
 
 # watch-daily
 
 Claude Routines が cron スケジュール (`schedule` frontmatter) で実行する routine 定義。
-詳細は [ADR-0004 Schedule Strategy](https://github.com/ozzy-labs/agentic-watch/blob/main/docs/adr/0004-schedule-strategy.md) を参照。
+詳細は [ADR-0004 Schedule Strategy](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0004-schedule-strategy.md) を参照。
 
 ## 前提
 
@@ -15,7 +15,7 @@ Routines はクラウド側 (Anthropic 管理 VM) で **fresh clone** される�
 
 ```bash
 git add sources/ items/ state/ templates/
-git commit -m "chore: add agentic-watch workspace"
+git commit -m "chore: add feedradar workspace"
 git push
 ```
 
@@ -23,12 +23,12 @@ API キー (`ANTHROPIC_API_KEY` 等) は Routine 側の secret として登録�
 
 ## 手順
 
-1. `agentic-watch watch run` を実行して新着 item を検出する
+1. `radar watch run` を実行して新着 item を検出する
 2. 変更があれば `items/` / `state/` を git commit して push する (次回 fresh clone で前回の `lastSeenIds` を引き継ぐため)
 3. 検出件数 / エラー有無を簡潔に報告する
 
 ```bash
-agentic-watch watch run
+radar watch run
 if ! git diff --quiet items/ state/; then
   git add items/ state/
   git commit -m "chore(watch): detected items $(date -u +%Y-%m-%d)"

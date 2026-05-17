@@ -166,7 +166,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     if (options.sourceId) {
       warn(`watch run: no source with id '${options.sourceId}'`);
     } else {
-      log("watch run: no sources defined (use `agentic-watch source add ...`)");
+      log("watch run: no sources defined (use `radar source add ...`)");
     }
     return { detected: {}, states: {}, errors: [] };
   }
@@ -244,7 +244,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       // Surface a per-source audit summary for items that tripped the
       // injection pre-filter (ADR-0009 M1a). We log once per source rather
       // than per item to keep the watch output readable when a feed has many
-      // hits; the per-item view is available via `agentic-watch research` /
+      // hits; the per-item view is available via `radar research` /
       // `review` / `update` logs and in `items/<id>.yaml` directly.
       const flagged = fresh.filter((i) => i.injectionFlags.length > 0);
       if (flagged.length > 0) {
@@ -272,7 +272,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
  * Legacy convenience: fetch every source serially without any state I/O.
  *
  * Kept for callers that just want the raw items (e.g. the placeholder
- * `agentic-watch watch` invocation). The real CLI now goes through
+ * `radar watch` invocation). The real CLI now goes through
  * `watchRun`, which threads state and filters.
  */
 export async function watch(sources: Source[]): Promise<Item[]> {

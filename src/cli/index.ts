@@ -25,9 +25,9 @@ const commands: Command[] = [
 const VERSION = "0.0.0";
 
 function printHelp(): void {
-  console.log("agentic-watch — Multi-agent CLI for blog/release feed research");
+  console.log("FeedRadar — Multi-agent CLI for blog/release feed research");
   console.log("");
-  console.log("Usage: agentic-watch <command> [options]");
+  console.log("Usage: radar <command> [options]");
   console.log("");
   console.log("Commands:");
   for (const c of commands) {
@@ -53,8 +53,8 @@ export async function run(argv: string[]): Promise<void> {
   }
   const command = commands.find((c) => c.name === first);
   if (!command) {
-    console.error(`agentic-watch: unknown command '${first}'`);
-    console.error("Run 'agentic-watch --help' for available commands.");
+    console.error(`radar: unknown command '${first}'`);
+    console.error("Run 'radar --help' for available commands.");
     process.exit(2);
   }
   const code = await command.run(rest);

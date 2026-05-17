@@ -207,7 +207,7 @@ function parseRemoveArgs(args: string[]): RemoveArgs {
 }
 
 function printAddHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch source add <id> --kind <kind> --url <url> [options]");
+  log("Usage: radar source add <id> --kind <kind> --url <url> [options]");
   log("");
   log("Options:");
   log("  --kind <kind>            rss | html | github-releases | npm-registry");
@@ -222,7 +222,7 @@ function printAddHelp(log: (m: string) => void): void {
 }
 
 function printListHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch source list [--enabled-only] [-v|--verbose]");
+  log("Usage: radar source list [--enabled-only] [-v|--verbose]");
   log("");
   log("Lists sources/*.yaml in tabular form: id / kind / url / tags.");
   log("");
@@ -233,13 +233,13 @@ function printListHelp(log: (m: string) => void): void {
 }
 
 function printRemoveHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch source remove <id>");
+  log("Usage: radar source remove <id>");
   log("");
   log("Deletes sources/<id>.yaml. state/<id>.yaml and items/ are preserved.");
 }
 
 function printSourceHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch source <add|list|remove> [...]");
+  log("Usage: radar source <add|list|remove> [...]");
   log("");
   log("Subcommands:");
   log("  add <id> --kind <kind> --url <url> [...]");
@@ -452,7 +452,7 @@ export async function listSources(
 
   const dir = sourcesDir(cwd);
   if (!(await pathExists(dir))) {
-    log("source list: no sources directory (run `agentic-watch init` first)");
+    log("source list: no sources directory (run `radar init` first)");
     return 0;
   }
 
@@ -466,7 +466,7 @@ export async function listSources(
 
   const yamlFiles = entries.filter((f) => f.endsWith(".yaml")).sort();
   if (yamlFiles.length === 0) {
-    log("source list: no sources defined (use `agentic-watch source add ...`)");
+    log("source list: no sources defined (use `radar source add ...`)");
     return 0;
   }
 
@@ -596,7 +596,7 @@ export async function removeSource(
 }
 
 /**
- * Top-level dispatcher for `agentic-watch source <subcommand>`.
+ * Top-level dispatcher for `radar source <subcommand>`.
  *
  * Sub-commands are kept as named functions (addSource/listSources/removeSource)
  * so tests can call them directly with injected IO sinks without spawning the

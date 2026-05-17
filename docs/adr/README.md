@@ -1,6 +1,6 @@
-# Architecture Decision Records (agentic-watch)
+# Architecture Decision Records (FeedRadar)
 
-agentic-watch プロジェクト**内部の**設計判断を記録する。OzzyLabs 横断の方針は [handbook/adr/](https://github.com/ozzy-labs/handbook/tree/main/adr) を参照（2 階層 ADR 構成）。
+FeedRadar プロジェクト**内部の**設計判断を記録する。OzzyLabs 横断の方針は [handbook/adr/](https://github.com/ozzy-labs/handbook/tree/main/adr) を参照（2 階層 ADR 構成）。
 
 ## ファイル命名
 

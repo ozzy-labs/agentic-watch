@@ -6,17 +6,17 @@ Accepted（2026-05-11）
 
 ## Context
 
-agentic-watch は手動実行（`agentic-watch watch run`）が必須要件だが、**定期実行**も想定される。Claude Code 系では複数の選択肢があり、認証ポリシー・実行環境・実行間隔の制約が異なる。
+FeedRadar は手動実行（`radar watch run`）が必須要件だが、**定期実行**も想定される。Claude Code 系では複数の選択肢があり、認証ポリシー・実行環境・実行間隔の制約が異なる。
 
 詳細な比較表は ozzy-labs 内 knowledge MCP の [`ai/practice/scheduled-tasks`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/scheduled-tasks.md) を参照。
 
 ## Decision
 
-`agentic-watch` 本体は **schedule 機構を内蔵せず**、外部 scheduler への接続点だけを `init` で生成する。
+`radar` 本体は **schedule 機構を内蔵せず**、外部 scheduler への接続点だけを `init` で生成する。
 
 | 用途 | 推奨 | `init` で生成 |
 |---|---|---|
-| 手動実行 | `agentic-watch watch run` | （CLI 自体） |
+| 手動実行 | `radar watch run` | （CLI 自体） |
 | クラウド定期実行 | **GitHub Actions** + `ANTHROPIC_API_KEY` 等の API キー認証 | `.github/workflows/watch.yaml` |
 | ローカル PC 定期 | Claude Routines（クラウド側）or Desktop scheduled tasks | `claude/routines/watch-daily.md`（`--with-routines` 指定時） |
 
@@ -53,7 +53,7 @@ GitHub Actions workflow 雛形 `.github/workflows/watch.yaml` を生成。
 ### 良い面
 
 - スケジューラーの選択をユーザーに委ねられる（クラウド使うか、ローカルで完結させるか）
-- agentic-watch コア実装が小さく保たれる
+- FeedRadar コア実装が小さく保たれる
 - `init` で雛形を吐くため、ユーザーは選んだ scheduler の boilerplate を毎回書く必要がない
 
 ### 悪い面 / 制約
@@ -67,7 +67,7 @@ GitHub Actions workflow 雛形 `.github/workflows/watch.yaml` を生成。
 
 ## Alternatives
 
-### 案 A: agentic-watch 自体に内蔵 daemon（cron 風）
+### 案 A: FeedRadar 自体に内蔵 daemon（cron 風）
 
 - 却下理由: ユーザーの PC が常時起動している前提を強制してしまう。既存 scheduler（GitHub Actions / Routines / cron）を活用するほうが筋
 

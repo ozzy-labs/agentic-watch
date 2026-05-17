@@ -75,7 +75,7 @@ function parseArgs(args: string[]): ReviewArgs {
 }
 
 function printHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch review <research-id> [--agent <agent-id>] [--template <template-id>]");
+  log("Usage: radar review <research-id> [--agent <agent-id>] [--template <template-id>]");
   log("");
   log("Arguments:");
   log("  <research-id>         Research id (basename of research/<id>.md without .md)");
@@ -171,7 +171,7 @@ async function restoreSnapshot(snapshot: AtomicSnapshot): Promise<Error[]> {
 }
 
 /**
- * Implementation of `agentic-watch review <research-id>`.
+ * Implementation of `radar review <research-id>`.
  *
  * High-level flow (Phase 2):
  *   1. Parse + validate args (agent defaults to `claude-code`, template to `default`).

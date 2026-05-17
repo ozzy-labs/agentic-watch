@@ -230,7 +230,7 @@ async function runCodexCli(prompt: string, options: SpawnOptions): Promise<Spawn
       reject(
         new Error(
           err.message.includes("ENOENT")
-            ? "codex CLI not found in PATH — install Codex CLI and authenticate (`codex login`) before running `agentic-watch research` / `review`."
+            ? "codex CLI not found in PATH — install Codex CLI and authenticate (`codex login`) before running `radar research` / `review`."
             : `codex CLI failed to start: ${err.message}`,
         ),
       );

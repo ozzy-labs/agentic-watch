@@ -11,7 +11,7 @@
 
 ## プロジェクト概要
 
-`agentic-watch`: Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports.
+**FeedRadar** (`radar` CLI): Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports.
 
 主要機能: 4 種の AI agent adapter (Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI) と 4 種の feed kind (RSS / HTML / GitHub Releases / npm registry) をサポート。`research` / `dismiss` / `review` / `update` で item を triage し、ADR-0009 M1c の prompt injection 緩和（regex pre-filter + audit + `_boundary` wrap）を組み込む。
 
@@ -21,7 +21,7 @@
 - Language: TypeScript
 - Package manager: pnpm
 - Version management: mise (`.mise.toml`)
-- 配布: npm `@ozzylabs/agentic-watch`（OIDC Trusted Publishers、`bin: agentic-watch`）
+- 配布: npm `@ozzylabs/feedradar`（OIDC Trusted Publishers、`bin: radar`）
 - Test: vitest
 
 ## データ管理ポリシー
@@ -35,7 +35,7 @@ pnpm install               # 依存関係インストール
 pnpm run build             # tsc でビルド（dist/ 出力）
 pnpm run typecheck         # 型チェック
 pnpm run test              # vitest run
-node dist/index.js --help  # CLI 動作確認（bin: agentic-watch）
+node dist/index.js --help  # CLI 動作確認（bin: radar）
 ```
 
 ## 検証（必須）

@@ -14,7 +14,7 @@ import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from
  * The Gemini CLI is non-interactive when launched with `-p`. We additionally
  * pass `-y` (YOLO mode / approval skip) so the agent can read/write files
  * without prompting for tool approvals — required for headless invocation
- * from `agentic-watch research`.
+ * from `radar research`.
  *
  * Stdin payload schema (JSON):
  *   {
@@ -230,7 +230,7 @@ function looksLikeAuthError(text: string): boolean {
  * `process.env` mutation and is easier to assert in tests.
  *
  * On `ENOENT` we report a missing-CLI error pointing at the install + auth
- * step (`agentic-watch research` cannot proceed without an authenticated
+ * step (`radar research` cannot proceed without an authenticated
  * Gemini CLI on PATH).
  */
 async function runGeminiCli(prompt: string, options: SpawnOptions): Promise<SpawnResult> {
@@ -251,7 +251,7 @@ async function runGeminiCli(prompt: string, options: SpawnOptions): Promise<Spaw
       reject(
         new Error(
           err.message.includes("ENOENT")
-            ? "gemini CLI not found in PATH — install Gemini CLI and authenticate (`gemini` once interactively, or set GEMINI_API_KEY) before running `agentic-watch research --agent gemini-cli`."
+            ? "gemini CLI not found in PATH — install Gemini CLI and authenticate (`gemini` once interactively, or set GEMINI_API_KEY) before running `radar research --agent gemini-cli`."
             : `gemini CLI failed to start: ${err.message}`,
         ),
       );

@@ -42,7 +42,7 @@ supersedes: null      # v1 は null。v+1 は前版 id を記録（後述）
 <!-- review コメントは本文末尾に追記される -->
 ```
 
-`reviewedAt` / `reviewedBy` は `agentic-watch review` 実行時に書き込まれる。レビューコメントは本文末尾に追記する（frontmatter には summary を持たない）。
+`reviewedAt` / `reviewedBy` は `radar review` 実行時に書き込まれる。レビューコメントは本文末尾に追記する（frontmatter には summary を持たない）。
 
 `supersedes` は版間の系譜を表す（v1=null、v+1=前版 id）。詳細は後述「Update 系譜と `supersedes` フィールド」節を参照。Phase 5 より前に作成された v1 frontmatter（フィールド自体を持たない）も schema 違反にならないよう、`ResearchFrontmatterSchema` 側で `.nullable().default(null)` を指定している（[`src/schemas/research.ts`](../../src/schemas/research.ts)）。
 
@@ -65,7 +65,7 @@ research/<YYYYMMDD>_<slug>_v<n>.md
 
 ### Update 系譜と `supersedes` フィールド
 
-`agentic-watch update <research-id>` は v+1 ファイル (`_v<N+1>.md`) を**新規作成**する操作で、旧版ファイルには一切手を加えない（immutable history）。版間の系譜は frontmatter の `supersedes` で表す:
+`radar update <research-id>` は v+1 ファイル (`_v<N+1>.md`) を**新規作成**する操作で、旧版ファイルには一切手を加えない（immutable history）。版間の系譜は frontmatter の `supersedes` で表す:
 
 | 版 | `supersedes` 値 |
 |---|---|
@@ -97,7 +97,7 @@ supersedes: 20260612_anthropic-claude-3-7_v1   # 直前版の id
 
 **v+1 ファイルで reset する項目**:
 
-- `reviewedAt` / `reviewedBy`: `null` に reset。v1 に対する review は v+1 には引き継がれない。v+1 の内容を review したい場合は改めて `agentic-watch review` を v+1 に対して実行する（[ADR-0008](./0008-status-state-machine.md) と `docs/design/skill-design.md` §7.5 参照）
+- `reviewedAt` / `reviewedBy`: `null` に reset。v1 に対する review は v+1 には引き継がれない。v+1 の内容を review したい場合は改めて `radar review` を v+1 に対して実行する（[ADR-0008](./0008-status-state-machine.md) と `docs/design/skill-design.md` §7.5 参照）
 
 **`supersedes` のスキーマ表現**:
 
@@ -105,11 +105,11 @@ supersedes: 20260612_anthropic-claude-3-7_v1   # 直前版の id
 
 ### `update` 実行と `items.yaml` の `status` 不変仕様
 
-`agentic-watch update` は research ファイルの v+1 を作る操作であり、**`items/<sourceId>/<itemId>.yaml` の `status` は不変**とする（[ADR-0008](./0008-status-state-machine.md) で正式化）。
+`radar update` は research ファイルの v+1 を作る操作であり、**`items/<sourceId>/<itemId>.yaml` の `status` は不変**とする（[ADR-0008](./0008-status-state-machine.md) で正式化）。
 
 | 状態の保持 | 理由 |
 |---|---|
-| 既に `reviewed` だった item は `reviewed` のまま | v1 に対する review 事実は失われない。v+1 の review を行う場合は別途 `agentic-watch review` を v+1 に対して実行する |
+| 既に `reviewed` だった item は `reviewed` のまま | v1 に対する review 事実は失われない。v+1 の review を行う場合は別途 `radar review` を v+1 に対して実行する |
 | `researched` だった item は `researched` のまま | item ライフサイクルは research 版数とは独立に管理される |
 | `detected` / `dismissed` に対する `update` は禁止 | research が存在しない or 取り下げ済の item に対する v+1 は意味を成さないため CLI 側で reject |
 
@@ -122,7 +122,7 @@ supersedes: 20260612_anthropic-claude-3-7_v1   # 直前版の id
 
 `Research` schema 自体には `status` フィールドを持たない。**ライフサイクル状態は item.yaml の `status` で管理**（[ADR-0008](./0008-status-state-machine.md)）。
 
-`agentic-watch review` 実行時の更新先は**二箇所**:
+`radar review` 実行時の更新先は**二箇所**:
 
 | 更新先 | 内容 |
 |---|---|
@@ -130,14 +130,14 @@ supersedes: 20260612_anthropic-claude-3-7_v1   # 直前版の id
 | `research/<id>.md` frontmatter | `reviewedAt` / `reviewedBy` |
 | `research/<id>.md` 本文末尾 | レビューコメント本文 |
 
-両方の更新は同一 review コマンド実行内でアトミックに行う（部分失敗時は両方ロールバック）。詳細実装は `docs/design/skill-design.md`（[issue #9](https://github.com/ozzy-labs/agentic-watch/issues/9)）で固める。
+両方の更新は同一 review コマンド実行内でアトミックに行う（部分失敗時は両方ロールバック）。詳細実装は `docs/design/skill-design.md`（[issue #9](https://github.com/ozzy-labs/feedradar/issues/9)）で固める。
 
 ## Consequences
 
 ### 良い面
 
 - git で diff レビューが自然
-- 履歴復元は `git log` + 旧版ファイルで完結（agentic-watch 自身は履歴管理機構を持たない）
+- 履歴復元は `git log` + 旧版ファイルで完結（FeedRadar 自身は履歴管理機構を持たない）
 - agent ごと / template ごとに異なる出力を**別ファイル**として並列保持可能（同 item に対し v1 を claude、v1.b を codex、のようなパターンは将来サポート余地）
 - `supersedes` チェーンを辿れば「どの v1 から派生したか」が CLI/外部スクリプトから機械的に解決できる
 
@@ -149,7 +149,7 @@ supersedes: 20260612_anthropic-claude-3-7_v1   # 直前版の id
 
 ### 中立
 
-- レビューコメントを research ファイル末尾に追記する設計（`agentic-watch review`）。本 ADR の versioning とは独立
+- レビューコメントを research ファイル末尾に追記する設計（`radar review`）。本 ADR の versioning とは独立
 
 ## Alternatives
 

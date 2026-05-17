@@ -1,4 +1,4 @@
-# agentic-watch
+# FeedRadar
 
 > **Status: alpha** — Phase 1-5 まで実装済み（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策）。Phase 6（OIDC Trusted Publishers での `0.1.0` npm publish）待機中。
 
@@ -6,20 +6,20 @@
 
 ## 解決する課題
 
-複数の公式ブログ・ドキュメント・リリースノートを横断的に追い、変更点を要約する作業は AI エージェントとの相性が良いが、ソース管理・差分検出・テンプレート適用・複数エージェントへの委譲を毎回手作業で組むのは煩雑になる。`agentic-watch` はこのループを CLI として固定化し、ユーザーの調査ディレクトリに Markdown レポートを蓄積する。
+複数の公式ブログ・ドキュメント・リリースノートを横断的に追い、変更点を要約する作業は AI エージェントとの相性が良いが、ソース管理・差分検出・テンプレート適用・複数エージェントへの委譲を毎回手作業で組むのは煩雑になる。`radar` はこのループを CLI として固定化し、ユーザーの調査ディレクトリに Markdown レポートを蓄積する。
 
 ## 主な特徴
 
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
 - **複数フィード種別**: RSS / HTML スクレイプ / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
-- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/agentic-watch` を公開予定（Phase 6）。
+- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開予定（Phase 6）。
 
 ## インストール（予定）
 
 ```bash
 # 初版公開後に有効化される
-npm i -g @ozzylabs/agentic-watch
+npm i -g @ozzylabs/feedradar
 ```
 
 開発中は本リポを clone し、`pnpm install && pnpm run build` で `dist/index.js` を生成して `node dist/index.js <command>` で起動する。
@@ -28,20 +28,20 @@ npm i -g @ozzylabs/agentic-watch
 
 ```bash
 # クイックスタート (anthropics/anthropic-sdk-python の GitHub Releases を監視)
-agentic-watch init
-agentic-watch source add anthropic-sdk \
+radar init
+radar source add anthropic-sdk \
   --kind github-releases \
   --url https://github.com/anthropics/anthropic-sdk-python \
   --keywords "feat,fix,release"
-agentic-watch watch run
-agentic-watch research <item-id>
+radar watch run
+radar research <item-id>
 
 # その他のサブコマンド
-agentic-watch source list             # ソース一覧
-agentic-watch dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
-agentic-watch review <research-id>    # レポートを別エージェントで相互レビュー
-agentic-watch update <research-id>    # 既存レポートを最新 item で更新（v+1）
-agentic-watch --help                  # ヘルプ
+radar source list             # ソース一覧
+radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
+radar review <research-id>    # レポートを別エージェントで相互レビュー
+radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
+radar --help                  # ヘルプ
 ```
 
 全 7 サブコマンドが実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
@@ -55,11 +55,11 @@ pnpm run typecheck      # 型チェック
 pnpm run test           # vitest run
 
 # ローカルで CLI を呼ぶ場合 (build 後)
-pnpm agentic-watch --help        # = node dist/index.js --help (package.json scripts の alias)
+pnpm radar --help        # = node dist/index.js --help (package.json scripts の alias)
 node dist/index.js --help        # 等価
 ```
 
-> ローカルの `pnpm agentic-watch <cmd>` は `package.json` の `scripts.agentic-watch`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/agentic-watch`) でユーザーが直接叩く `agentic-watch <cmd>` は `package.json` の `bin.agentic-watch` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> agentic-watch <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
+> ローカルの `pnpm FeedRadar <cmd>` は `package.json` の `scripts.FeedRadar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `FeedRadar <cmd>` は `package.json` の `bin.FeedRadar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> FeedRadar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
 
 ## アーキテクチャ概要
 
@@ -88,14 +88,14 @@ src/
 
 - [docs/architecture.md](./docs/architecture.md) — システム全体図 / モジュール責務 / データフロー / Phase 別スコープ
 - [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様
-- [docs/adr/](./docs/adr/README.md) — agentic-watch 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling）
+- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling）
 
 ## 規約
 
 - **言語**: TypeScript ESM / Node.js 22+ / pnpm
 - **コミット**: Conventional Commits（`commitlint` で強制）
 - **ブランチ**: GitHub Flow（`main` + feature branch、squash merge のみ）
-- **配布**: npm `@ozzylabs/agentic-watch`、OIDC Trusted Publishers（`NPM_TOKEN` は使わない）
+- **配布**: npm `@ozzylabs/feedradar`、OIDC Trusted Publishers（`NPM_TOKEN` は使わない）
 - **共通設定**: [`ozzy-labs/commons`](https://github.com/ozzy-labs/commons) から `sync.sh` で配布。
 - **共通スキル**: [`ozzy-labs/skills`](https://github.com/ozzy-labs/skills) を `@ozzylabs/skills` Renovate preset で取り込み。
 

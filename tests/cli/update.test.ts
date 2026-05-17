@@ -91,7 +91,7 @@ interface SetupOptions {
 async function setupWorkspace(
   opts: SetupOptions = {},
 ): Promise<{ workdir: string; v1Path: string }> {
-  const workdir = await mkdtemp(join(tmpdir(), "agentic-watch-update-"));
+  const workdir = await mkdtemp(join(tmpdir(), "feedradar-update-"));
   await mkdir(join(workdir, "items", SAMPLE_ITEM.sourceId), { recursive: true });
   await mkdir(join(workdir, "research"), { recursive: true });
   await mkdir(join(workdir, "templates"), { recursive: true });
