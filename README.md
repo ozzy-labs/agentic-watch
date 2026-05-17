@@ -1,6 +1,6 @@
 # FeedRadar
 
-> **Status: alpha** — Phase 1-6 完了（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策 + OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 公開）。
+> **Status: alpha** — Phase 1-5 まで実装済み（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策）。Phase 6（OIDC Trusted Publishers での `0.1.0` npm publish）待機中。
 
 ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex / Gemini / Copilot) に渡して **Markdown 調査レポートを書かせる CLI**。
 
@@ -13,11 +13,12 @@
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
 - **複数フィード種別**: RSS / HTML スクレイプ / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
-- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開。
+- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開予定（Phase 6）。
 
-## インストール
+## インストール（予定）
 
 ```bash
+# 初版公開後に有効化される
 npm i -g @ozzylabs/feedradar
 ```
 
