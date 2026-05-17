@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-export const SourceKindSchema = z.enum(["rss", "html", "github-releases", "npm-registry"]);
+export const SourceKindSchema = z.enum([
+  "rss",
+  "html",
+  "html-js",
+  "github-releases",
+  "npm-registry",
+]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
 
 /**
@@ -76,6 +82,33 @@ export const SourceSelectorsSchema = z.object({
 export type SourceSelectors = z.infer<typeof SourceSelectorsSchema>;
 
 /**
+ * Optional JS rendering options for `kind: html-js` sources (ADR-0010).
+ *
+ * The adapter delegates fetching to a headless Chromium via Playwright. These
+ * options expose the few knobs users actually need to tune per source; all
+ * hardening policy (headless / acceptDownloads / fresh context / viewport)
+ * is hardcoded in the adapter and intentionally NOT user-configurable.
+ *
+ * - `waitFor`: CSS selector to wait for before reading `page.content()`.
+ *   Defaults at adapter level to `selectors.item` so the common case "wait
+ *   until the item list has rendered" needs no extra config.
+ * - `waitUntil`: Playwright `page.goto()` lifecycle event. `networkidle` is
+ *   the safest default for SPA/CSR pages where item data arrives via XHR
+ *   after the document has loaded.
+ * - `timeout`: Per-step timeout (goto, waitForSelector) in milliseconds.
+ *   Caps OOM / infinite-loop risk on pathological pages.
+ * - `userAgent`: Optional UA override. Most sites accept the default
+ *   Chromium UA; override only when a site gates content behind a UA check.
+ */
+export const SourceJsOptionsSchema = z.object({
+  waitFor: z.string().optional(),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).default("networkidle"),
+  timeout: z.number().int().positive().default(30000),
+  userAgent: z.string().optional(),
+});
+export type SourceJsOptions = z.infer<typeof SourceJsOptionsSchema>;
+
+/**
  * Validate `Source.url` per kind.
  *
  * Every kind except `npm-registry` requires a fully-qualified `http(s)` URL.
@@ -110,11 +143,15 @@ export const SourceSchema = z
       matchFields: ["title", "summary"],
       caseSensitive: false,
     }),
-    // `selectors` is required for `kind: html` and ignored for the other
-    // kinds. We model it as optional at the field level and enforce the
-    // "required when html" rule via a refinement so the same Source type
-    // serializes cleanly for both cases.
+    // `selectors` is required for `kind: html` and `kind: html-js`, ignored
+    // for the other kinds. We model it as optional at the field level and
+    // enforce the "required when html / html-js" rule via a refinement so the
+    // same Source type serializes cleanly for both cases.
     selectors: SourceSelectorsSchema.optional(),
+    // `js` is only consulted by the `html-js` adapter. Marked optional so
+    // existing source YAMLs (and `kind: html` ones) parse unchanged; the
+    // adapter applies defaults when the field is omitted entirely.
+    js: SourceJsOptionsSchema.optional(),
     // `trustLevel` defaults to `"untrusted"` so existing source YAMLs (which
     // omit the field entirely) keep their current treatment. Per ADR-0009 M4
     // this is schema-only; policy branches that read `trustLevel` arrive in a
@@ -129,11 +166,11 @@ export const SourceSchema = z
         message: "Invalid url",
       });
     }
-    if (value.kind === "html" && value.selectors === undefined) {
+    if ((value.kind === "html" || value.kind === "html-js") && value.selectors === undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["selectors"],
-        message: "selectors is required when kind is 'html'",
+        message: `selectors is required when kind is '${value.kind}'`,
       });
     }
   });
