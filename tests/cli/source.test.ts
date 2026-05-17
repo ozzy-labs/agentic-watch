@@ -153,6 +153,57 @@ describe("cli/source", () => {
       });
     });
 
+    it("creates an html-js source with selectors", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "example-js",
+          "--kind",
+          "html-js",
+          "--url",
+          "https://example.com/changelog",
+          "--selector-item",
+          ".item",
+          "--selector-title",
+          "h3",
+          "--selector-link",
+          "a",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(
+        await readFile(join(workdir, "sources", "example-js.yaml"), "utf8"),
+      );
+      expect(parsed).toMatchObject({
+        id: "example-js",
+        kind: "html-js",
+        url: "https://example.com/changelog",
+        selectors: { item: ".item", title: "h3", link: "a" },
+      });
+    });
+
+    it("rejects an html-js source without selectors", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["bad-js", "--kind", "html-js", "--url", "https://example.com"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("selectors"))).toBe(true);
+      expect(await pathExists(join(workdir, "sources", "bad-js.yaml"))).toBe(false);
+    });
+
+    it("error message for unknown --kind includes html-js as a valid option", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(["bad", "--kind", "atom", "--url", "https://example.com"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("html-js"))).toBe(true);
+    });
+
     it("rejects an html source without selectors", async () => {
       const { io, captured } = captureIo();
       const code = await addSource(["bad", "--kind", "html", "--url", "https://example.com"], {
