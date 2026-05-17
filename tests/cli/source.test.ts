@@ -1,9 +1,16 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { addSource, listSources, removeSource, runSource } from "../../src/cli/source.js";
+import {
+  addSource,
+  listSources,
+  removeSource,
+  runSource,
+  testSource,
+} from "../../src/cli/source.js";
+import type { FetchLike } from "../../src/core/feeds/types.js";
 
 interface Captured {
   log: string[];
@@ -566,6 +573,199 @@ describe("cli/source", () => {
     });
   });
 
+  describe("test", () => {
+    const RSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test</title>
+    <link>https://example.com</link>
+    <description>x</description>
+    <item>
+      <title>Claude Code releases agents</title>
+      <link>https://example.com/a</link>
+      <description>Anthropic announced new agents features.</description>
+      <guid isPermaLink="false">a</guid>
+      <pubDate>Mon, 12 May 2026 09:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Unrelated post</title>
+      <link>https://example.com/b</link>
+      <description>Nothing to see here.</description>
+      <guid isPermaLink="false">b</guid>
+      <pubDate>Mon, 12 May 2026 10:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>
+`;
+
+    function fetchReturning(body: string, status = 200, headers: Record<string, string> = {}) {
+      const impl: FetchLike = async () => ({
+        status,
+        headers: {
+          get(name: string): string | null {
+            const lower = name.toLowerCase();
+            for (const [k, v] of Object.entries(headers)) {
+              if (k.toLowerCase() === lower) return v;
+            }
+            return null;
+          },
+        },
+        text: async () => body,
+      });
+      return impl;
+    }
+
+    it("prints matched output to stdout (happy path)", async () => {
+      // Register a source with a single matching keyword. `source add` lays
+      // down the canonical YAML so we exercise the same code path users hit.
+      await addSource(
+        ["blog", "--kind", "rss", "--url", "https://example.com/blog.xml", "--keywords", "agents"],
+        { cwd: workdir, io: captureIo().io },
+      );
+
+      const { io, captured } = captureIo();
+      const code = await testSource(["blog"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+      const out = captured.log.join("\n");
+      // Summary line reports the canonical fetched/filtered/matched breakdown.
+      expect(out).toMatch(/fetched:\s*2/);
+      expect(out).toMatch(/filtered:\s*1/);
+      expect(out).toMatch(/matched:\s*1/);
+      // Matched item title + URL + matchedKeywords should appear in stdout.
+      expect(out).toContain("Claude Code releases agents");
+      expect(out).toContain("https://example.com/a");
+      expect(out).toContain("agents");
+    });
+
+    it("does not create state/<id>.yaml or items/<id>/ entries (dry-run)", async () => {
+      await addSource(
+        ["blog", "--kind", "rss", "--url", "https://example.com/blog.xml", "--keywords", "agents"],
+        { cwd: workdir, io: captureIo().io },
+      );
+
+      const { io } = captureIo();
+      const code = await testSource(["blog"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+
+      // No state file was written for this source.
+      expect(await pathExists(join(workdir, "state", "blog.yaml"))).toBe(false);
+      // The items directory for this source either does not exist or is empty
+      // — either way, no item YAML must have been persisted.
+      const itemDir = join(workdir, "items", "blog");
+      if (await pathExists(itemDir)) {
+        const files = await readdir(itemDir);
+        expect(files).toEqual([]);
+      }
+    });
+
+    it("respects --limit when more matches exist", async () => {
+      const MULTI_RSS = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Multi</title>
+    <link>https://example.com</link>
+    <description>x</description>
+    <item><title>agents post one</title><link>https://example.com/1</link><guid isPermaLink="false">1</guid></item>
+    <item><title>agents post two</title><link>https://example.com/2</link><guid isPermaLink="false">2</guid></item>
+    <item><title>agents post three</title><link>https://example.com/3</link><guid isPermaLink="false">3</guid></item>
+  </channel>
+</rss>
+`;
+      await addSource(
+        [
+          "multi",
+          "--kind",
+          "rss",
+          "--url",
+          "https://example.com/multi.xml",
+          "--keywords",
+          "agents",
+        ],
+        { cwd: workdir, io: captureIo().io },
+      );
+
+      const { io, captured } = captureIo();
+      const code = await testSource(["multi", "--limit", "2"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(MULTI_RSS) as never,
+      });
+      expect(code).toBe(0);
+      const out = captured.log.join("\n");
+      expect(out).toMatch(/matched:\s*3/);
+      // Only the first two items are listed.
+      expect(out).toContain("agents post one");
+      expect(out).toContain("agents post two");
+      expect(out).not.toContain("agents post three");
+      // The trailing "N more" hint surfaces the truncation.
+      expect(out).toMatch(/1 more/);
+    });
+
+    it("includes body content when --show-content is set", async () => {
+      await addSource(
+        ["blog", "--kind", "rss", "--url", "https://example.com/blog.xml", "--keywords", "agents"],
+        { cwd: workdir, io: captureIo().io },
+      );
+
+      const { io, captured } = captureIo();
+      const code = await testSource(["blog", "--show-content"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+      const out = captured.log.join("\n");
+      // RSS description should surface as the content preview.
+      expect(out).toContain("Anthropic announced new agents features");
+    });
+
+    it("exits 1 for an unknown source id (no YAML on disk)", async () => {
+      const { io, captured } = captureIo();
+      const code = await testSource(["ghost"], { cwd: workdir, io });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("not found"))).toBe(true);
+      expect(captured.error.some((m) => m.includes("ghost"))).toBe(true);
+    });
+
+    it("exits 2 when <id> is missing", async () => {
+      const { io, captured } = captureIo();
+      const code = await testSource([], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("missing <id>"))).toBe(true);
+    });
+
+    it("exits 2 on an unsafe id (path traversal)", async () => {
+      const { io, captured } = captureIo();
+      const code = await testSource(["../escape"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("invalid <id>"))).toBe(true);
+    });
+
+    it("exits 2 on a bad --limit value", async () => {
+      const { io, captured } = captureIo();
+      const code = await testSource(["blog", "--limit", "abc"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--limit"))).toBe(true);
+    });
+
+    it("prints help with --help", async () => {
+      const { io, captured } = captureIo();
+      const code = await testSource(["--help"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("Usage:"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("--limit"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("--show-content"))).toBe(true);
+    });
+  });
+
   describe("full cycle", () => {
     it("supports add -> list -> remove without state leakage", async () => {
       const ioBox = captureIo();
@@ -590,7 +790,7 @@ describe("cli/source", () => {
   });
 
   describe("dispatcher", () => {
-    it("routes to add/list/remove subcommands", async () => {
+    it("routes to add/list/remove/test subcommands", async () => {
       const ioBox = captureIo();
       expect(
         await runSource(["add", "router", "--kind", "rss", "--url", "https://r.example/feed.xml"], {
@@ -602,6 +802,12 @@ describe("cli/source", () => {
       const listBox = captureIo();
       expect(await runSource(["list"], { cwd: workdir, io: listBox.io })).toBe(0);
       expect(listBox.captured.log.some((m) => m.includes("router"))).toBe(true);
+
+      // `test --help` is the cheapest way to prove the dispatcher hands off
+      // to `testSource` without needing a working fetch stub here.
+      const testBox = captureIo();
+      expect(await runSource(["test", "--help"], { cwd: workdir, io: testBox.io })).toBe(0);
+      expect(testBox.captured.log.some((m) => m.includes("source test"))).toBe(true);
 
       const removeBox = captureIo();
       expect(await runSource(["remove", "router"], { cwd: workdir, io: removeBox.io })).toBe(0);
