@@ -11,7 +11,7 @@
 ## 主な特徴
 
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
-- **複数フィード種別**: RSS / HTML スクレイプ / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
+- **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
@@ -20,6 +20,15 @@
 ```bash
 npm i -g @ozzylabs/feedradar
 ```
+
+`kind: html-js` adapter（JS 実行後に DOM が組み立てられる SPA / CSR ページ向け）を使う場合は Playwright を別途 install する。Playwright は **optional peer dep** として宣言されているため、RSS / static HTML のみ使うユーザーには ~300MB の Chromium footprint を強いない（[ADR-0010](./docs/adr/0010-html-js-adapter-and-distribution.md)）:
+
+```bash
+npm i -g playwright
+npx playwright install chromium
+```
+
+`html-js` source を追加する前に `radar doctor` で Playwright / Chromium が検出できるか確認できる。CI で使う場合の具体例は [docs/user-guide.md → `--kind html-js` → CI で使う](./docs/user-guide.md#ci-で使う) を参照。
 
 開発中は本リポを clone し、`pnpm install && pnpm run build` で `dist/index.js` を生成して `node dist/index.js <command>` で起動する。
 
@@ -40,10 +49,11 @@ radar source list             # ソース一覧
 radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
 radar review <research-id>    # レポートを別エージェントで相互レビュー
 radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
+radar doctor                  # workspace / agent CLI / Playwright の health check
 radar --help                  # ヘルプ
 ```
 
-全 7 サブコマンドが実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
+全 8 サブコマンドが実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
 
 ## 開発
 
@@ -74,7 +84,7 @@ src/
     state.ts            state/<sourceId>.yaml の load / save
     config.ts           radar.config.yaml の load / 検証
     injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
-    feeds/              rss / html / github-releases / npm-registry
+    feeds/              rss / html / html-js / github-releases / npm-registry
   agents/               4 CLI adapters（claude-code / codex-cli / gemini-cli / copilot）
   schemas/              Zod スキーマ（Source / Item / State / Research）
   skills/               engine SKILL bundle (research / review / update; init で .agents/skills/ に配布)

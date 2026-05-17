@@ -166,7 +166,7 @@ workspace に既に独自の人間向けドキュメント (`README.md` 等) が
 | 引数 | 説明 |
 |---|---|
 | `<id>` | source 識別子（slug） |
-| `--kind` | `rss` / `html` / `github-releases` / `npm-registry` |
+| `--kind` | `rss` / `html` / `html-js` / `github-releases` / `npm-registry` |
 | `--url` | fetch 対象の URL |
 | `--name` | 表示名（省略時は `<id>`） |
 | `--tags` | カンマ区切りタグ |
@@ -279,6 +279,156 @@ radar source add anthropic-changelog \
 - title / link が解決できない item は silent drop（RSS adapter 同様の fail-soft）
 
 詳細な設計判断 (parser 選定、selector contract) は [`docs/design/source-html.md`](./design/source-html.md) を参照。
+
+#### `--kind html-js`
+
+JavaScript で DOM が組み立てられる SPA / CSR 系のページ（Next.js / Notion 埋め込み / Algolia DocSearch など、初期 HTML に item 要素が含まれないページ）から item を抽出する。fetcher のみ headless Chromium (Playwright) に差し替え、selector の評価ロジックは `kind: html` と共有する（[ADR-0010](./adr/0010-html-js-adapter-and-distribution.md)）。
+
+##### いつ使うか
+
+- `kind: html` で空配列が返る／item 数が明らかに少ない（static HTML に item が含まれない）
+- 対象ページが Next.js / React / Vue 等の SPA で、`<script>` 実行後に DOM が組み立てられる
+- Notion 埋め込み / Algolia DocSearch など、XHR でコンテンツが後から差し込まれる
+
+「まず `kind: html` を試して空ならば `kind: html-js` に切り替える」運用が推奨。`kind: html` で取れる static HTML サイトに対して `kind: html-js` を使うと Chromium 起動コストが無駄になる。
+
+##### `kind: html` との違い
+
+| 項目 | `kind: html` | `kind: html-js` |
+|---|---|---|
+| Fetcher | `fetch()` + `node-html-parser` | headless Chromium (Playwright) |
+| selectors の評価対象 | サーバから返る static HTML | **JS 実行後の DOM** (`page.content()`) |
+| 依存パッケージ | なし（npm 単体配布の範囲内） | `playwright` (optional peer dep)、Chromium バイナリ |
+| HTTP ETag による dedup | ✅ サーバが返せば利用 | ❌ 不可（`page.content()` から ETag は観察できない） |
+| Content hash dedup | ✅ ETag フォールバック | ✅ 唯一の dedup signal |
+| 起動コスト | 数百 ms | 数秒〜（Chromium 起動 + page render） |
+
+> **selector の意味が変わる点に注意**: `kind: html` の selector は HTTP 応答の static HTML に対して評価するが、`kind: html-js` の selector は **JS 実行後の DOM** に対して評価する。同じ URL でも初期 HTML と最終 DOM では構造が違うため、`kind: html` 用の selector がそのまま動くとは限らない。ブラウザの DevTools で「Elements パネルに見えている DOM」を基準に selector を組み直すこと。
+
+##### セットアップ手順
+
+`html-js` adapter は Playwright を **optional peer dep** として参照する。`kind: html-js` を使うユーザーのみ Playwright と Chromium バイナリを別途 install する。`kind: rss` / `kind: html` のみ使うユーザーには影響しない（ADR-0010 §D3）。
+
+```bash
+# 1. Playwright npm package を install (user project または global)
+npm i playwright
+# または global install:
+npm i -g playwright
+
+# 2. Chromium バイナリを install
+npx playwright install chromium
+```
+
+`radar` 自体は Chromium バイナリの自動 install を行わない。`postinstall` hook 経由の暗黙 download は CI cache 戦略 / オフライン install と衝突するため、ユーザー側で明示的に実行する設計（ADR-0010 §D4）。
+
+不在検出は 2 箇所で行う:
+
+- **`radar doctor`**: `html-js` source が登録された状態で実行すると、Playwright module と Chromium binary の存在確認結果を `ok` / `warn` / `error` で報告する
+- **`radar watch run`**: `html-js` source を処理する直前に lazy detection。不在なら当該 source のみ skip し、他 source の処理は継続する。エラーメッセージで `npm i -g playwright && npx playwright install chromium` を案内する
+
+CI 等で自動 install したい場合は環境変数 `RADAR_AUTO_INSTALL_CHROMIUM=1` を設定すると `radar` が `npx playwright install chromium` を spawn して install を試みる（Playwright npm package 自体の install は代行しない）。
+
+##### 設定例（YAML を直接編集）
+
+`--kind html-js` は `radar source add --kind html-js` で雛形を作れるが、`js:` ブロックは `source add` の flag で渡せないため、生成後に YAML を直接編集する。
+
+```yaml
+# sources/anthropic-changelog-js.yaml
+id: anthropic-changelog-js
+kind: html-js
+url: https://example.com/changelog
+selectors:
+  item: ".changelog-item"
+  title: "h3"
+  link: "a"
+  publishedAt: "time"
+js:
+  waitFor: ".changelog-item"   # 省略時は selectors.item を使う
+  waitUntil: networkidle       # load | domcontentloaded | networkidle (default: networkidle)
+  timeout: 30000               # 1 step (goto / waitForSelector) ごとの timeout (ms)
+  # userAgent: "Mozilla/5.0 ..."  # 通常は default Chromium UA で OK
+filters:
+  keywords: ["release", "fix"]
+trustLevel: untrusted
+```
+
+`js.*` フィールドは optional:
+
+| フィールド | 既定値 | 説明 |
+|---|---|---|
+| `waitFor` | `selectors.item` | `page.content()` を読む前に待つ CSS selector |
+| `waitUntil` | `networkidle` | Playwright `page.goto()` の lifecycle event。XHR で item が後から到達する SPA は `networkidle` が安全 |
+| `timeout` | `30000` (ms) | 1 step ごとの timeout。pathological page による OOM / 無限 loop を防ぐキャップ |
+| `userAgent` | Chromium default | UA gating を行うサイト向けの上書き。通常は不要 |
+
+##### 挙動の要点
+
+- selector の評価は `kind: html` と同一実装を共有する (`parseHtmlDocument`)。`Item.id` は `<title-slug>-<8 hex>`、`stableKey` は URL（ADR-0002）
+- dedup は **content hash のみ**。`page.content()` を sha256 し、`state.lastEtag` slot に `sha256:` プレフィックス付きで保存する（`kind: html` で ETag を返さないサーバ向けと同じ slot を流用）
+- 1 fetch ごとに fresh `browser context` を起動し、Service Worker / IndexedDB / localStorage 経由の状態混入を防ぐ
+- title / link が解決できない item は silent drop（`kind: html` 同様の fail-soft）
+
+##### Chromium hardening（オーバーライド不可）
+
+`html-js` adapter は以下の policy を **ハードコード** で強制する（ADR-0010 §D5）。ユーザー設定 (`source.js.*`) からは触れない:
+
+| Policy | 値 | 理由 |
+|---|---|---|
+| `headless` | `true` 強制 | UI 表示は CI 不可、operator UI 偶発操作のリスク回避 |
+| `acceptDownloads` | `false` 強制 | drive-by download (page JS が file 保存を triggers する経路) を遮断 |
+| context 再利用 | しない (fetch ごとに fresh context) | SW / IndexedDB / localStorage に injection payload を永続化させない、cross-source の状態混入を防ぐ |
+| `page.close()` | `finally` で必ず実行 | page leak によるメモリ蓄積を防ぐ |
+| viewport | Playwright default (1280x720) | 過剰に大きい viewport で巨大 DOM を生成しない |
+
+これらは脅威モデル上の前提（ADR-0009 / `docs/design/threat-model.md`）であり、緩めるオプションは提供しない。
+
+##### セキュリティ注意
+
+- **任意 origin の JavaScript を Chromium で実行する**。signature 検証は無く、対象サイトの JS が「`fetch()` 経由で外部に何かを送信する」「巨大 DOM で OOM を引き起こす」等の振る舞いをしても止められない。`trustLevel: untrusted` 前提で運用すること
+- 上記の hardening により drive-by download / SW persistence は遮断されるが、**Chromium バイナリ自体の脆弱性追跡はユーザー責任**。`npm audit` では拾えない（Chromium は npm package ではない）。週次目安で `npx playwright install chromium` を再実行し、最新の Chromium 系列に追随することを推奨（ADR-0010 §"悪い面"）
+- `kind: html-js` source の workspace では特に、`.env` / 認証 token / 秘密鍵を CWD 配下に置かないこと（万一 prompt injection が agent 起動経路に到達した場合の被害範囲を限定する）
+
+##### トラブルシュート
+
+| 症状 | 対処 |
+|---|---|
+| `kind: html` で空配列が返る | `kind: html-js` を試す。selector は JS 実行後の DOM に合わせて組み直す |
+| `html-js adapter: failed to load Playwright (...)` | `npm i -g playwright` (または user project に `npm i playwright`) を実行 |
+| `Executable doesn't exist at ...chromium...` | `npx playwright install chromium` を実行 |
+| `waitForSelector timeout` | `js.waitFor` を実際に DOM に出現する selector に変更する／`js.timeout` を伸ばす／`js.waitUntil` を `domcontentloaded` 等に切り替える |
+| `radar watch run` が html-js source を skip し他は完走 | lazy detection が Playwright / Chromium 不在を検知した。`radar doctor` で詳細を確認 |
+| 巨大ページで Chromium が hang する | `js.timeout` を短く設定する（既定 30 秒）。それでも改善しないなら `kind: html` 対象外サイトとして dismiss を検討 |
+
+詳細な設計判断は [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) を参照。
+
+##### CI で使う
+
+GitHub Actions で `kind: html-js` source を含む workspace の `watch run` を回す場合、Chromium binary を cache すると 2 回目以降の install 時間を大幅に短縮できる。
+
+```yaml
+# .github/workflows/watch.yaml の steps 抜粋
+- uses: actions/checkout@v4
+
+- uses: actions/setup-node@v4
+  with:
+    node-version: "22"
+
+- run: npm i -g @ozzylabs/feedradar playwright
+
+# 同じ Playwright バージョンが lock されている限り Chromium バイナリを再利用
+- uses: actions/cache@v4
+  with:
+    path: ~/.cache/ms-playwright
+    key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json', 'pnpm-lock.yaml') }}
+
+- run: npx playwright install --with-deps chromium
+
+- run: radar watch run
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+`--with-deps` は OS パッケージ (libnss3 / libatk1.0-0 等の Chromium 実行に必要な shared library) を `apt-get install` する。Ubuntu runner では推奨。
 
 #### `--kind npm-registry`
 
@@ -481,6 +631,25 @@ v1 に対して `review` を実行した内容は v2 には引き継がない（
 #### update の対象が無い場合 (no-op suppression)
 
 agent が最新情報を取得しても material な変更が無いと判断した場合は、v+1 ファイルを作らずスキップする（[`docs/design/skill-design.md` §8.5](./design/skill-design.md)）。空 diff の v+1 を作らない設計のため、再実行で v3, v4 が無限に増えることはない。
+
+### `radar doctor`
+
+ワークスペース / 依存ツールの health check を実行する。`html-js` source を使う前の事前確認や、`watch run` / `research` が想定どおり動かないときの切り分け用。
+
+実行内容（[#114](https://github.com/ozzy-labs/feedradar/issues/114)）:
+
+1. `radar.config.yaml` / `sources/*.yaml` の妥当性確認（schema 違反を列挙）
+2. agent CLI (`claude` / `codex` / `gemini` / `copilot`) の install 確認 (`which` 相当)
+3. **`html-js` source が登録されている場合のみ**:
+   - `import("playwright")` を試行 → 失敗なら `npm i -g playwright` を案内
+   - Chromium binary の存在確認 (`playwright` の `chromium.executablePath()`) → 失敗なら `npx playwright install chromium` を案内
+4. workspace ディレクトリ (`sources/` `items/` `state/` `research/` `templates/`) の存在確認
+
+出力フォーマットは各チェックを `ok` / `warn` / `error` の 3 段階で列挙し、最後に集計サマリ。warn は exit code に影響しない、error が 1 件でもあれば exit code `1`。
+
+CI で自動 install したい場合は環境変数 `RADAR_AUTO_INSTALL_CHROMIUM=1` を `radar watch run` 側でセットすると Chromium 不在時に `npx playwright install chromium` を spawn する（`radar doctor` 自体は read-only で install を行わない）。Playwright npm package 自体の install (`npm i -g playwright`) は radar が代行しない（global npm install の権限問題を避けるため、ユーザー側で実行を強制する設計）。
+
+> このサブコマンドの実装は #114 で進行中（2026-05-17 時点）。実装が確定したら本ドキュメントの記述と差異があれば別 follow-up PR で同期する。
 
 ## radar.config.yaml
 
@@ -696,7 +865,9 @@ filters:
 
 | 症状 | 対処 |
 |---|---|
-| agent CLI が見つからない | `claude` / `codex` / `gemini` / `copilot` が `PATH` に存在し認証済みであることを確認 |
+| agent CLI が見つからない | `claude` / `codex` / `gemini` / `copilot` が `PATH` に存在し認証済みであることを確認。`radar doctor` で各 agent の install 状況を確認できる |
 | `codex login` / `gemini` OAuth / `copilot auth login` が未完了でエラー | 該当 agent CLI を一度対話起動して認証を完了させる。`radar` は子プロセスとして spawn するだけで認証ループは持たない |
+| `html-js` source が空配列を返す / item が取れない | selector を JS 実行後の DOM に合わせて組み直す。詳細は「[`--kind html-js` のトラブルシュート](#--kind-html-js)」 |
+| `html-js adapter: failed to load Playwright (...)` | `npm i -g playwright` を実行し、`npx playwright install chromium` で Chromium も install。詳細は「[`--kind html-js` のセットアップ手順](#--kind-html-js)」。`radar doctor` でも検出される |
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
 | workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
