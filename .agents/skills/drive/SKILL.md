@@ -168,6 +168,7 @@ wave を順に実行する。
 
 - **隔離:** worktree 隔離で起動する（必須。並列実行時の作業ディレクトリ衝突防止）
 - **委譲粒度:** subagent には `.agents/skills/drive/SKILL.md` を Read させ、target #N について単一モードのワークフロー（Phase 1-5）を実行するよう指示する。slash command は subagent からは呼べないため、SKILL.md を直接実行する
+- **main への checkout 禁止:** subagent は自 worktree branch で完結する。`git checkout main` / `git switch main` / `git checkout HEAD~` 等で worktree の HEAD を移動させない。worktree は親の Phase Final で削除されるため、main へ戻す必要はない。共有 git directory 経由で親 worktree の `HEAD` / `index` が汚染されるリスクを避けるため、自 branch 以外を触らないこと
 - **ベースブランチ:**
   - 依存元 wave がない target → main からブランチを作る
   - 依存元 wave がある target → 依存元 PR の `headRefName` をベースにブランチを作る（stacked PR）。`--merge` 指定時は依存元がマージ済みのため main をベースにできるが、未指定時はこの stacked 構造が必須
@@ -218,6 +219,29 @@ wave を順に実行する。
 - 独立した（依存関係のない）他 task には影響させない
 
 ### Phase Final: 集約レポート
+
+集約レポートを出力する前に、**親 worktree の整合性を確認する**。subagent が共有 git directory 経由で親の `HEAD` / `index` を汚染するケースに備えるための fail-safe（[Issue #66](https://github.com/ozzy-labs/skills/issues/66) 由来）。
+
+1. `git rev-parse HEAD` と `git rev-parse $(git symbolic-ref HEAD)` が一致するか（HEAD が detached でないこと）
+2. `git diff HEAD --stat` が空か（index が HEAD と乖離していないか）
+3. `git status --short` が空か（working tree が clean か）
+4. 親のベースブランチ（通常 `main`）が `git rev-parse origin/<base-branch>` と一致するか、または `--merge` で merged された PR の SHA を含むか
+
+いずれかが不一致なら、集約レポート末尾に warning を出す:
+
+```text
+⚠️ Parent worktree drift detected:
+  HEAD:          <sha> (expected branch: <branch>)
+  index diff:    <files>
+  working tree:  <files>
+  Recovery:
+    git checkout HEAD -- .
+    git reset HEAD
+    # または変更を捨ててよい場合:
+    git reset --hard origin/main
+```
+
+整合性チェックが通った場合は、通常どおり集約レポートを出力する:
 
 ```text
 drive 完了 (3/5 merged, 1 merge-ready, 1 skipped):

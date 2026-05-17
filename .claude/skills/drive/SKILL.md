@@ -37,6 +37,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, AskUser
 - **isolation:** `"worktree"`（必須）
 - **subagent_type:** `general-purpose`
 - **prompt:** subagent から slash command は呼べないため、`.agents/skills/drive/SKILL.md` を Read させ、target #N について単一モードのワークフロー（Phase 1-5）を実行するよう指示する。`--merge` 指定時は Phase 4 まで完了し、自 PR の merged まで polling して終了させる。最終結果は JSON で返させる
+- **main への checkout 禁止（必ず prompt に明記）:** subagent は自 worktree branch で完結する。`git checkout main` / `git switch main` / `git checkout HEAD~` 等で HEAD を移動させない。worktree は親側で削除されるため main へ戻す必要はない。これを怠ると共有 git directory 経由で親 worktree の `HEAD` / `index` が汚染される（[Issue #66](https://github.com/ozzy-labs/skills/issues/66) 参照）
 - **依存元 wave がある場合のベースブランチ:**
   - `--merge` 指定 + 依存元が merged → main から作成
   - `--merge` 指定 + 依存元が auto-merge enabled（未マージ）→ main を pull してから作成（取り込まれていれば main ベース、未取り込みなら依存元 headRefName ベース）
