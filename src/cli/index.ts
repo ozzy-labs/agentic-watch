@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { dismissCommand } from "./dismiss.js";
 import { initCommand } from "./init.js";
 import { researchCommand } from "./research.js";
@@ -22,7 +25,13 @@ const commands: Command[] = [
   updateCommand,
 ];
 
-const VERSION = "0.0.0";
+// Read the installed package's version at runtime so `radar --version`
+// tracks release-please bumps without a parallel source edit. The bin
+// ships as dist/cli/index.js with package.json two levels up; the path
+// is identical in both npm-installed and local-built layouts because
+// tsc preserves src/ → dist/ structure.
+const PKG_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
+const VERSION = (JSON.parse(readFileSync(PKG_PATH, "utf8")) as { version: string }).version;
 
 function printHelp(): void {
   console.log("FeedRadar — Multi-agent CLI for blog/release feed research");

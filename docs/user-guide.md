@@ -304,9 +304,14 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 - ETag-based 条件付き GET をサポート。サーバが `304` を返すと items 処理をスキップ
 - 既知バージョンは state の `lastSeenIds` で除外されるため、2 回目以降は新バージョンのみ検出される
 
-### `radar source list [--enabled-only]`
+### `radar source list [-v|--verbose] [--enabled-only]`
 
 `sources/*.yaml` を一覧表示。
+
+| オプション | 説明 |
+|---|---|
+| `-v`, `--verbose` | source ごとに `keywords` / `excludeKeywords` / `trustLevel` / `lastFetchedAt` を含む詳細ブロックを表示する。キーワード未設定の source の発見にも使う |
+| `--enabled-only` | 将来の `enabled: false` フラグ向けに予約 (現状 no-op、将来追加予定) |
 
 ### `radar source remove <id>`
 
