@@ -78,10 +78,14 @@ jobs:
             const data = JSON.parse(readFileSync('pack.json', 'utf8'));
             const entry = Array.isArray(data) ? data[0] : data;
             const files = (entry.files ?? []).map(f => f.path);
+            // README* / LICENSE* / CHANGELOG* / package.json は npm の仕様で
+            // files allowlist 無視で常に tarball に含まれる。README.ja.md は
+            // multilingual docs として故意に同梱する。
             const allowed = (p) => (
               p === 'package.json' ||
               p === 'LICENSE' ||
               p === 'README.md' ||
+              p === 'README.ja.md' ||
               p.startsWith('dist/')
             );
             const unexpected = files.filter(p => !allowed(p));
