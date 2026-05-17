@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -400,4 +401,233 @@ describe("e2e/cli (binary smoke)", () => {
       expect(v1Fm.supersedes).toBeNull();
     });
   });
+
+  describe("scenario F: watch run --source <id> (RSS fixture via local HTTP server)", () => {
+    // Phase 1 fetch path (#18) covered through the binary boundary. tests/core/feeds/rss
+    // exercises the adapter with vi.spyOn(fetch); that mock cannot survive a child
+    // subprocess so we serve the same fixture over a local HTTP server bound to port
+    // 0 (kernel-assigned, no collision risk under parallel vitest workers).
+    it("fetches an RSS source through the built binary and writes items/<sourceId>/<itemId>.yaml", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-watch-"));
+      await runCli(["init"], { cwd: workdir });
+
+      // Minimal RSS 2.0 envelope with one item that matches the keyword we
+      // configure below. Two items would exercise dedup but mask the
+      // "did any item land?" failure mode we actually care about here.
+      const rssXml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<rss version="2.0">',
+        "  <channel>",
+        "    <title>Smoke Blog</title>",
+        "    <link>https://example.com/</link>",
+        "    <description>e2e fixture</description>",
+        "    <item>",
+        "      <title>claude code update v0.1</title>",
+        "      <link>https://example.com/posts/claude-code-v0-1</link>",
+        '      <guid isPermaLink="false">smoke-e2e-1</guid>',
+        "      <pubDate>Sun, 10 May 2026 00:00:00 GMT</pubDate>",
+        "      <description>release notes for claude code</description>",
+        "    </item>",
+        "  </channel>",
+        "</rss>",
+      ].join("\n");
+
+      // Set up the local HTTP server. The first listen happens before we
+      // know the port, so url is captured inside the handler via
+      // `server.address()` after listen() resolves.
+      let server: Server | null = null;
+      try {
+        server = createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "application/rss+xml; charset=utf-8" });
+          res.end(rssXml);
+        });
+        await new Promise<void>((resolveListen, rejectListen) => {
+          server?.once("error", rejectListen);
+          server?.listen(0, "127.0.0.1", () => resolveListen());
+        });
+        const port = (server.address() as AddressInfo).port;
+        const feedUrl = `http://127.0.0.1:${port}/feed.xml`;
+
+        // ADR-0006 / src/core/filter.ts: empty keywords means "match nothing"
+        // (firehose guard). We must pass --keywords for items to survive the
+        // filter and reach disk.
+        const add = await runCli(
+          ["source", "add", "smoke-rss", "--kind", "rss", "--url", feedUrl, "--keywords", "claude"],
+          { cwd: workdir },
+        );
+        expect(add.code, `stderr: ${add.stderr}`).toBe(0);
+
+        const watch = await runCli(["watch", "run", "--source", "smoke-rss"], { cwd: workdir });
+        expect(watch.code, `stderr: ${watch.stderr}\nstdout: ${watch.stdout}`).toBe(0);
+        expect(watch.stdout).toMatch(/1 new item\(s\)/);
+
+        // An item file landed under items/smoke-rss/. The filename is the
+        // sanitized id; we discover it rather than reconstruct the derivation.
+        const itemsDir = join(workdir, "items", "smoke-rss");
+        expect(existsSync(itemsDir)).toBe(true);
+        const files = readdirSync(itemsDir).filter((f) => f.endsWith(".yaml"));
+        expect(files).toHaveLength(1);
+
+        const itemYaml = await readFile(join(itemsDir, files[0]), "utf8");
+        const item = parseYaml(itemYaml);
+        expect(item.sourceId).toBe("smoke-rss");
+        expect(item.title).toBe("claude code update v0.1");
+        expect(item.url).toBe("https://example.com/posts/claude-code-v0-1");
+        expect(item.status).toBe("detected");
+        // Filter matched on "claude" — recorded for downstream commands.
+        expect(item.matchedKeywords).toContain("claude");
+
+        // State file was persisted with the seen id so a second `watch run`
+        // would not re-emit it.
+        const statePath = join(workdir, "state", "smoke-rss.yaml");
+        expect(existsSync(statePath)).toBe(true);
+        const state = parseYaml(await readFile(statePath, "utf8"));
+        expect(state.sourceId).toBe("smoke-rss");
+        expect(state.lastSeenIds.length).toBeGreaterThan(0);
+      } finally {
+        if (server) {
+          await new Promise<void>((resolveClose) => server?.close(() => resolveClose()));
+        }
+      }
+    });
+  });
+
+  describe("scenario G: review --agent claude-code (fake binary, reviewedAt stamp + status invariance)", () => {
+    // Mirror of scenario E (update) but for review: stamps reviewedAt /
+    // reviewedBy in the research frontmatter and transitions linked items
+    // from researched → reviewed via the workspace-level atomic snapshot
+    // (src/cli/review.ts).
+    it("stamps reviewedAt/reviewedBy and transitions linked item to reviewed", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-review-"));
+      const binDir = join(workdir, "_bin");
+      await installFakeClaudeReviewer(binDir);
+      await runCli(["init"], { cwd: workdir });
+
+      const itemId = "smoke-item-deadbeef";
+      const sourceId = "smoke-source";
+      await mkdir(join(workdir, "items", sourceId), { recursive: true });
+      await writeFile(
+        join(workdir, "items", sourceId, `${itemId}.yaml`),
+        stringifyYaml({
+          id: itemId,
+          sourceId,
+          title: "Smoke item for review",
+          url: "https://example.com/smoke",
+          fetchedAt: "2026-05-15T00:00:00.000Z",
+          matchedKeywords: ["smoke"],
+          status: "researched",
+        }),
+        "utf8",
+      );
+
+      // Hand-craft a v1 research file (pre-review state: reviewedAt/By null).
+      const v1Id = `20260512_smoke-source-smoke-item-for-review_v1`;
+      const v1Path = join(workdir, "research", `${v1Id}.md`);
+      const v1Yaml = stringifyYaml({
+        id: v1Id,
+        itemIds: [itemId],
+        agent: "claude-code",
+        templateId: "default",
+        createdAt: "2026-05-12T00:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+        supersedes: null,
+      });
+      await writeFile(v1Path, `---\n${v1Yaml}---\n\n# v1 body\n`, "utf8");
+
+      // Use codex-cli as the reviewer to make the cross-agent pattern obvious
+      // (the underlying fake binary is still `claude` on PATH; the adapter
+      // dispatched is the one in registry for codex-cli, so we keep the
+      // simpler case here and use claude-code as the reviewer agent too).
+      const result = await runCli(["review", v1Id, "--agent", "claude-code"], {
+        cwd: workdir,
+        extraPath: binDir,
+      });
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+
+      // Research file has the review stamp.
+      const { fm } = parseFrontmatter(await readFile(v1Path, "utf8"));
+      expect(fm.reviewedAt).not.toBeNull();
+      expect(fm.reviewedBy).toBe("claude-code");
+      // Immutable fields preserved.
+      expect(fm.id).toBe(v1Id);
+      expect(fm.createdAt).toBe("2026-05-12T00:00:00.000Z");
+      expect(fm.supersedes).toBeNull();
+
+      // Linked item transitioned to reviewed.
+      const item = parseYaml(
+        await readFile(join(workdir, "items", sourceId, `${itemId}.yaml`), "utf8"),
+      );
+      expect(item.status).toBe("reviewed");
+    });
+  });
 });
+
+/**
+ * Fake `claude` binary that performs a minimal review: reads the review
+ * stdin payload, parses the research file at `researchPath`, and rewrites
+ * its frontmatter with `reviewedAt` / `reviewedBy` stamped per the
+ * adapter contract. The body gets an appended `## レビュー` section to
+ * mirror what a real agent would do (without actually critiquing).
+ *
+ * Kept out of installFakeClaude() so the research/update fake stays minimal
+ * and the review fake can evolve independently as the review contract
+ * grows.
+ */
+async function installFakeClaudeReviewer(binDir: string): Promise<void> {
+  await mkdir(binDir, { recursive: true });
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+let stdin = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { stdin += c; });
+process.stdin.on("end", () => {
+  let req;
+  try { req = JSON.parse(stdin); } catch (e) {
+    console.error("fake-claude-reviewer: bad stdin:", e.message);
+    process.exit(2);
+  }
+  const { researchPath, agent, researchFrontmatter } = req;
+  if (!researchPath || !agent || !researchFrontmatter) {
+    console.error("fake-claude-reviewer: missing fields");
+    process.exit(2);
+  }
+  // Rewrite frontmatter with the review stamp. Preserve every other field
+  // verbatim — src/cli/review.ts checks for drift on id/agent/createdAt/
+  // itemIds/templateId/supersedes and rolls back if any changed.
+  const stamped = {
+    ...researchFrontmatter,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: agent,
+  };
+  const fmLines = [
+    "---",
+    "id: " + stamped.id,
+    "itemIds:",
+    ...stamped.itemIds.map((id) => "  - " + id),
+    "agent: " + stamped.agent,
+    "templateId: " + stamped.templateId,
+    "createdAt: " + stamped.createdAt,
+    "updatedAt: " + (stamped.updatedAt === null ? "null" : stamped.updatedAt),
+    "reviewedAt: " + stamped.reviewedAt,
+    "reviewedBy: " + stamped.reviewedBy,
+    "supersedes: " + (stamped.supersedes === null ? "null" : stamped.supersedes),
+    "---",
+    "",
+    "# v1 body (unchanged)",
+    "",
+    "## レビュー (" + agent + ", " + stamped.reviewedAt + ")",
+    "",
+    "Reviewed by fake-claude-reviewer for L4 smoke.",
+    ""
+  ];
+  fs.writeFileSync(researchPath, fmLines.join("\\n"), "utf8");
+  console.log("fake-claude-reviewer: stamped " + researchPath);
+});
+`;
+  const scriptPath = join(binDir, "claude");
+  await writeFile(scriptPath, script, "utf8");
+  await chmod(scriptPath, 0o755);
+}
