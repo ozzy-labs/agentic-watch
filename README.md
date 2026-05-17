@@ -47,8 +47,13 @@ pnpm install            # 依存関係インストール
 pnpm run build          # tsc でビルド（dist/）
 pnpm run typecheck      # 型チェック
 pnpm run test           # vitest run
-node dist/index.js --help
+
+# ローカルで CLI を呼ぶ場合 (build 後)
+pnpm agentic-watch --help        # = node dist/index.js --help (package.json scripts の alias)
+node dist/index.js --help        # 等価
 ```
+
+> ローカルの `pnpm agentic-watch <cmd>` は `package.json` の `scripts.agentic-watch`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/agentic-watch`) でユーザーが直接叩く `agentic-watch <cmd>` は `package.json` の `bin.agentic-watch` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。
 
 ## アーキテクチャ概要
 

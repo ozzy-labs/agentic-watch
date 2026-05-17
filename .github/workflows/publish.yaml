@@ -31,5 +31,23 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      # 多層防御 (PR #93 の self-link incident への regression guard):
+      # workspace 内に self-link (`@ozzylabs/agentic-watch: "link:"`) が
+      # 紛れ込んだ場合、`pnpm pack` で出来上がる package.json にもそれが
+      # 残り、downstream の `npm i` で resolution が壊れる。publish 前に
+      # tarball を inspect して link: が含まれていないことを確認する。
+      - name: Verify no self-link in packed manifest
+        run: |
+          pnpm pack --pack-destination /tmp
+          tarballs=(/tmp/ozzylabs-agentic-watch-*.tgz)
+          tarball="${tarballs[0]}"
+          packed=$(tar -xzOf "$tarball" package/package.json)
+          if echo "$packed" | grep -q '"link:"'; then
+            echo "ERROR: 'link:' specifier found in packed package.json — refusing to publish."
+            echo "$packed"
+            exit 1
+          fi
+          echo "OK: packed manifest contains no link: specifier."
+
       - name: Publish to npm (OIDC Trusted Publishers)
         run: pnpm publish --access public --provenance --no-git-checks
