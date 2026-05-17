@@ -15,9 +15,8 @@ research を書いた agent と**別の agent** に依頼することを推奨�
 This SKILL serves two invocation modes:
 
 1. **Adapter spawn (default)**: The `radar` CLI spawns the agent as a
-   subprocess and pipes a JSON payload to stdin (`agent`, `templateId`,
-   `templateBody`, `items`, `outputPath`, optionally `prevResearch`). Follow
-   the procedure below.
+   subprocess and pipes a JSON payload to stdin (see `## 入力 (stdin JSON)`
+   below for the exact schema). Follow the procedure below.
 
 2. **Interactive invocation (slash / mention)**: If invoked from an
    interactive session (no stdin JSON payload, `$ARGUMENTS` or equivalent
@@ -55,8 +54,9 @@ CLI は次のスキーマで JSON を 1 件だけ stdin に書き込む:
 
 1. stdin の JSON を読み、`researchPath` / `researchFrontmatter` / `researchBody` を取り出す
 2. `researchFrontmatter.reviewedAt` が **`null`** であることを確認する (非 null なら CLI 側で先に弾かれているはずだが、念のため stop して報告)
-3. `researchFrontmatter.itemIds[*]` の `items/<sourceId>/<itemId>.yaml` を Read し、`status: researched` であることを確認する (`sourceId` は items dir を `Grep` で逆引きする)
-4. 必要なら `researchBody` の `## 出典` セクションに記載された URL を `WebFetch` で再取得し、レビューの根拠とする
+3. 必要なら `researchBody` の `## 出典` セクションに記載された URL を `WebFetch` で再取得し、レビューの根拠とする
+
+> Note: linked items の `status: researched` 検証は CLI 側 (src/cli/review.ts) が adapter 起動前に実行済み。本 SKILL が `items/<sourceId>/<itemId>.yaml` を Read する必要はない (items は stdin に渡されない)。
 
 ### 2. レビュー観点
 

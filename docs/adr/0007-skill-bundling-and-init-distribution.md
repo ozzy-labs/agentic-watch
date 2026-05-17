@@ -50,7 +50,7 @@ src/skills/
 
 ### `init` の挙動
 
-`FeedRadar init` 実行時:
+`radar init` 実行時:
 
 1. user workspace の 5 層配置先にコピー（engine SKILL は SSoT として常時、それ以外は default-on / opt-out）
 2. ファイル既存時は `--force` 指定なしで skip し warning（ユーザー編集を保護）
@@ -76,7 +76,7 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 
 ### 動機
 
-初版 (2026-05-11) では `init` は `.agents/skills/` のみに書き込み、`.claude/skills/` を意図的に touch しない方針だった (Renovate preset との衝突回避)。これは agent CLI 経由の呼び出し (`FeedRadar research <item> --agent claude-code` → adapter が `claude` を spawn → `claude` が `.agents/skills/research/SKILL.md` を読む) には十分だが、**Claude Code interactive session で `/research` / `/review` / `/update` / `/dismiss` の slash command が発見されない** という UX gap があった (user feedback、`docs/design/skill-design.md` line 112 の "revisit if user feedback shows friction" 条件発動)。
+初版 (2026-05-11) では `init` は `.agents/skills/` のみに書き込み、`.claude/skills/` を意図的に touch しない方針だった (Renovate preset との衝突回避)。これは agent CLI 経由の呼び出し (`radar research <item> --agent claude-code` → adapter が `claude` を spawn → `claude` が `.agents/skills/research/SKILL.md` を読む) には十分だが、**Claude Code interactive session で `/research` / `/review` / `/update` / `/dismiss` の slash command が発見されない** という UX gap があった (user feedback、`docs/design/skill-design.md` line 112 の "revisit if user feedback shows friction" 条件発動)。
 
 ### 改訂後の方針
 
@@ -91,16 +91,16 @@ allowed-tools: Read,Grep,Bash,WebFetch  # 推奨ツール（カンマ区切り�
 
 | Slash | wraps |
 |---|---|
-| `/research <item-id> [--agent ...]` | `FeedRadar research` |
-| `/review <research-id> [--agent ...]` | `FeedRadar review` |
-| `/update <research-id> [--agent ...]` | `FeedRadar update` |
-| `/dismiss <item-id>` | `FeedRadar dismiss` (no LLM) |
+| `/research <item-id> [--agent ...]` | `radar research` |
+| `/review <research-id> [--agent ...]` | `radar review` |
+| `/update <research-id> [--agent ...]` | `radar update` |
+| `/dismiss <item-id>` | `radar dismiss` (no LLM) |
 
 `dismiss` は agent を呼ばないため engine SKILL を持たないが、UX 上 slash command として提供する価値があるため discovery 層には含める (非対称性を許容)。
 
 #### opt-out
 
-`FeedRadar init --no-claude-skills` で discovery 層を skip する。これは `@ozzylabs/skills` Renovate preset で `.claude/skills/` を集中管理している workspace 向け。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる (この flag では skip しない)。
+`radar init --no-claude-skills` で discovery 層を skip する。これは `@ozzylabs/skills` Renovate preset で `.claude/skills/` を集中管理している workspace 向け。engine SKILL (`.agents/skills/`) は SSoT として常に書かれる (この flag では skip しない)。
 
 #### SSoT 維持
 
@@ -160,7 +160,7 @@ bundle される `AGENTS.md` は user workspace 向けに簡潔で実用的な�
 
 #### AGENTS.md の opt-out
 
-`FeedRadar init --no-agents-md` で AGENTS.md 生成を skip。既に独自の `AGENTS.md` を管理している workspace (monorepo 等) 向け。engine SKILL / Claude discovery SKILL は影響を受けない。
+`radar init --no-agents-md` で AGENTS.md 生成を skip。既に独自の `AGENTS.md` を管理している workspace (monorepo 等) 向け。engine SKILL / Claude discovery SKILL は影響を受けない。
 
 #### AGENTS.md の既存ファイル保護
 
@@ -213,7 +213,7 @@ This SKILL serves two invocation modes:
    present), do NOT attempt the full procedure. Instead, shell out to the
    `radar` CLI verbatim:
 
-   - For research: `FeedRadar research $ARGUMENTS`
+   - For research: `radar research $ARGUMENTS`
 ```
 
 adapter spawn 時の挙動は **完全に保持** (procedure 本体は不変、stdin JSON contract も不変、`tests/agents/*.test.ts` の prompt assert もそのまま通る)。interactive で発火した場合のみ、agent は CLI に shell out して adapter spawn path 経由に戻る (二重 fan-out にならない)。
@@ -226,7 +226,7 @@ adapter spawn 時の挙動は **完全に保持** (procedure 本体は不変、s
 
 ```toml
 # src/gemini-commands/research.toml
-prompt = "Run `FeedRadar research {{args}}` to generate a research report ..."
+prompt = "Run `radar research {{args}}` to generate a research report ..."
 description = "Generate a research report for a detected item via FeedRadar."
 ```
 
@@ -238,7 +238,7 @@ Gemini CLI の slash command は TOML 形式が canonical (`.gemini/commands/<na
 
 #### opt-out (Revision c)
 
-`FeedRadar init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip。engine SKILL / `.claude/skills/` / `AGENTS.md` は影響を受けない。`--no-gemini-commands` 指定時も Gemini CLI interactive session は engine SKILL の dual-mode procedure で正しく動作する (`.agents/skills/` を Gemini CLI が auto-read してくれるため、slash の `/research` ではなく `$research` mention 経由になる)。
+`radar init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip。engine SKILL / `.claude/skills/` / `AGENTS.md` は影響を受けない。`--no-gemini-commands` 指定時も Gemini CLI interactive session は engine SKILL の dual-mode procedure で正しく動作する (`.agents/skills/` を Gemini CLI が auto-read してくれるため、slash の `/research` ではなく `$research` mention 経由になる)。
 
 #### 既存ファイル保護 (Revision c)
 

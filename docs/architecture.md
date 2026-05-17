@@ -30,6 +30,7 @@
 │  core/                                                    │
 │    ├─ watcher           : Feed adapter を呼び出して fetch │
 │    ├─ feeds/            : RSS / HTML / GitHub Releases / npm │
+│    │                     + github-api / derive-id (shared) │
 │    ├─ filter            : keyword + excludeKeywords 判定  │
 │    ├─ items             : 検出アイテムの保存・status 管理 │
 │    ├─ templates         : Markdown テンプレート差し込み   │
@@ -39,15 +40,21 @@
 │  agents/         : 4 CLI アダプタ + _boundary wrap helper │
 │  schemas/        : Zod スキーマ (Source / Item / State / Research / Config) │
 │  cli/            : init / source / watch / research / dismiss / review / update │
+│  skills/         : engine SKILL bundle (research/review/update) │
+│  claude-skills/  : Claude Code slash-command 雛形         │
+│  gemini-commands/: Gemini CLI TOML slash-command 雛形     │
+│  templates/      : workspace 既定 (agents/claude/routines/workflows) │
 └────────────────────────────────────────────────────────────┘
 ```
+
+bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-commands/` / `templates/`) は `init` コマンドがユーザー workspace に配布する load-bearing アセット ([ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md))。`scripts/copy-skills.mjs` が build 時に `dist/` 配下にコピーする。
 
 ## モジュール責務
 
 | モジュール | パス | 責務 |
 |---|---|---|
 | `core/watcher` | `src/core/watcher.ts` | Source 配列を受け取り、各 source の kind に応じた Feed adapter で fetch、Item[] を返す |
-| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）|
+| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装 (rss / html / github-releases / npm-registry)。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）+ shared helpers (`github-api.ts` rate-limit-aware GitHub API client、`derive-id.ts` stable item id 派生) |
 | `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用（詳細仕様: [`design/filter-spec.md`](./design/filter-spec.md)）|
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |

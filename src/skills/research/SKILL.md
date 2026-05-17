@@ -15,9 +15,8 @@ allowed-tools: Read,Grep,Bash,WebFetch
 This SKILL serves two invocation modes:
 
 1. **Adapter spawn (default)**: The `radar` CLI spawns the agent as a
-   subprocess and pipes a JSON payload to stdin (`agent`, `templateId`,
-   `templateBody`, `items`, `outputPath`, optionally `prevResearch`). Follow
-   the procedure below.
+   subprocess and pipes a JSON payload to stdin (see `## 入力 (stdin JSON)`
+   below for the exact schema). Follow the procedure below.
 
 2. **Interactive invocation (slash / mention)**: If invoked from an
    interactive session (no stdin JSON payload, `$ARGUMENTS` or equivalent
