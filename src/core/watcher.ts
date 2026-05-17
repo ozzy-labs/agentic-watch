@@ -8,6 +8,14 @@ import { getFeedAdapter } from "./feeds/index.js";
 import { filterItems } from "./filter.js";
 import { detectInjection } from "./injection-detector.js";
 import { saveItems } from "./items.js";
+import {
+  CHROMIUM_MISSING_HINT,
+  installChromium,
+  PLAYWRIGHT_MODULE_MISSING_HINT,
+  type PlaywrightProbeResult,
+  type ProbeOptions,
+  probePlaywright,
+} from "./playwright-check.js";
 import { loadSourceState, saveSourceState } from "./state.js";
 
 async function pathExists(p: string): Promise<boolean> {
@@ -75,6 +83,22 @@ export interface WatchRunOptions extends WorkspacePaths {
   log?: (message: string) => void;
   warn?: (message: string) => void;
   error?: (message: string) => void;
+  /**
+   * Override `process.env` lookup. Tests use this to toggle
+   * `RADAR_AUTO_INSTALL_CHROMIUM=1` without poking at the real environment.
+   */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Test seam: replace the Playwright probe used by the lazy `html-js`
+   * pre-check. Production callers leave this unset and the real
+   * `import("playwright")` path runs.
+   */
+  playwrightProbeOptions?: ProbeOptions;
+  /**
+   * Test seam: replace the auto-install function. Tests inject a stub that
+   * records invocation without actually spawning `npx playwright install`.
+   */
+  installChromiumImpl?: typeof installChromium;
 }
 
 export interface WatchRunResult {
@@ -158,6 +182,8 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
   const warn = options.warn ?? ((m: string) => console.warn(m));
   const error = options.error ?? ((m: string) => console.error(m));
   const getAdapter = options.getAdapter ?? getFeedAdapter;
+  const env = options.env ?? process.env;
+  const installImpl = options.installChromiumImpl ?? installChromium;
 
   const sources = await loadSources(paths.sourcesDir, (m) => warn(`watch run: ${m}`));
   const filtered = options.sourceId ? sources.filter((s) => s.id === options.sourceId) : sources;
@@ -173,6 +199,41 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
 
   const result: WatchRunResult = { detected: {}, states: {}, errors: [] };
 
+  // Lazy Playwright probe cache. We only run the probe when the first
+  // `html-js` source comes up so RSS / GitHub / npm-only workspaces never pay
+  // for the dynamic import. The result is reused across every subsequent
+  // `html-js` source in the same run — both because the install state cannot
+  // realistically change mid-run and because re-probing per source would be
+  // wasteful (and would spawn `npx playwright install` repeatedly when the
+  // auto-install hatch is on but fails for some reason).
+  let playwrightProbe: PlaywrightProbeResult | null = null;
+  const ensurePlaywrightReady = async (): Promise<PlaywrightProbeResult> => {
+    if (playwrightProbe !== null) return playwrightProbe;
+    playwrightProbe = await probePlaywright(options.playwrightProbeOptions);
+    // Auto-install escape hatch (CI-friendly, see playwright-check.ts policy).
+    // Triggered only when (a) Playwright itself is present, (b) Chromium is
+    // missing, and (c) the user opted in via env. We re-probe after install
+    // so the cached result reflects post-install reality; if the install
+    // failed the result stays at `chromium-missing` and the source is skipped
+    // with the usual hint.
+    if (playwrightProbe.status === "chromium-missing" && env.RADAR_AUTO_INSTALL_CHROMIUM === "1") {
+      log("watch run: RADAR_AUTO_INSTALL_CHROMIUM=1 detected — attempting to install Chromium...");
+      try {
+        const code = await installImpl({ cwd: paths.cwd, log });
+        if (code === 0) {
+          playwrightProbe = await probePlaywright(options.playwrightProbeOptions);
+        } else {
+          warn(`watch run: chromium auto-install exited with code ${code}`);
+        }
+      } catch (e) {
+        warn(
+          `watch run: chromium auto-install failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
+    return playwrightProbe;
+  };
+
   for (const source of filtered) {
     const previousState = await loadSourceState(paths.stateDir, source.id);
     let adapter: FeedAdapter;
@@ -183,6 +244,30 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       error(`watch run: '${source.id}' adapter error: ${message}`);
       result.errors.push({ sourceId: source.id, message });
       continue;
+    }
+
+    // Lazy Playwright pre-check for `html-js` sources. Skipping the source
+    // (rather than aborting the whole run) preserves the contract that one
+    // misbehaving source must not block the others — the same shape used for
+    // adapter errors / fetch failures above. The error message embeds the
+    // canonical install hint so the user sees the same wording here as in
+    // `radar doctor`.
+    if (source.kind === "html-js") {
+      const probe = await ensurePlaywrightReady();
+      if (probe.status !== "ok") {
+        const hint =
+          probe.status === "module-missing"
+            ? PLAYWRIGHT_MODULE_MISSING_HINT
+            : CHROMIUM_MISSING_HINT;
+        const detail =
+          probe.status === "module-missing"
+            ? "playwright module not installed"
+            : `chromium binary missing at '${probe.executablePath}'`;
+        const message = `${detail}\n${hint}`;
+        error(`watch run: '${source.id}' skipped: ${message}`);
+        result.errors.push({ sourceId: source.id, message });
+        continue;
+      }
     }
     let fetched: Item[];
     let nextStatePatch: Partial<SourceState>;

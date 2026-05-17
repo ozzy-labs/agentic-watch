@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dismissCommand } from "./dismiss.js";
+import { doctorCommand } from "./doctor.js";
 import { initCommand } from "./init.js";
 import { researchCommand } from "./research.js";
 import { reviewCommand } from "./review.js";
@@ -23,6 +24,7 @@ const commands: Command[] = [
   dismissCommand,
   reviewCommand,
   updateCommand,
+  doctorCommand,
 ];
 
 // Read the installed package's version at runtime so `radar --version`
