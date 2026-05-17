@@ -141,6 +141,22 @@ interface InitOptions {
    */
   noAgentsMd?: boolean;
   /**
+   * Skip writing `<cwd>/CLAUDE.md`. By default `init` writes a minimal
+   * `CLAUDE.md` at the workspace root that re-exports `AGENTS.md` via the
+   * `@AGENTS.md` import directive. Without `CLAUDE.md`, Claude Code does
+   * not auto-read `AGENTS.md`, so the industry-standard pattern of "single
+   * source of truth in AGENTS.md, imported by CLAUDE.md" breaks.
+   *
+   * Useful for workspaces that already manage their own `CLAUDE.md` (and
+   * load `AGENTS.md` via a different mechanism) or that don't use Claude
+   * Code at all.
+   *
+   * Note: when `noAgentsMd` is true, the bundled `CLAUDE.md` template's
+   * `@AGENTS.md` import would dangle, so `init` auto-skips `CLAUDE.md` in
+   * that case and emits a warning explaining why.
+   */
+  noClaudeMd?: boolean;
+  /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
    */
@@ -249,6 +265,24 @@ const SCHEDULE_SCAFFOLDS = {
 const AGENTS_MD_SCAFFOLD = {
   src: "agents/AGENTS.md",
   dest: ["AGENTS.md"] as const,
+} as const;
+
+/**
+ * Bundled minimal Claude Code workspace instructions emitted by default at
+ * the workspace root. The template re-exports `AGENTS.md` via the
+ * `@AGENTS.md` import directive so that the SSoT for cross-agent
+ * instructions stays in `AGENTS.md` while Claude Code (which does NOT
+ * auto-read `AGENTS.md`) still gets the workspace context the moment a
+ * user opens an interactive session.
+ *
+ * When `--no-agents-md` is also passed, the `@AGENTS.md` import would
+ * dangle, so `init` auto-skips this scaffold (emit a warning).
+ *
+ * See ADR-0007 (revised 2026-05-17 b) for the multi-layer init bundle.
+ */
+const CLAUDE_MD_SCAFFOLD = {
+  src: "claude/CLAUDE.md",
+  dest: ["CLAUDE.md"] as const,
 } as const;
 
 /**
@@ -415,6 +449,29 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
+  // CLAUDE.md is auto-skipped when AGENTS.md is also skipped, because the
+  // bundled CLAUDE.md template re-exports AGENTS.md via `@AGENTS.md` and
+  // that import would otherwise dangle. Users who want CLAUDE.md without
+  // AGENTS.md should manage CLAUDE.md themselves.
+  if (!options.noClaudeMd) {
+    if (options.noAgentsMd) {
+      warn(
+        "init: skipped CLAUDE.md because --no-agents-md was passed (the bundled CLAUDE.md imports @AGENTS.md and would dangle)",
+      );
+      skippedFiles.push("CLAUDE.md");
+    } else {
+      await emitScaffold({
+        cwd,
+        force,
+        templatesRoot: options.templatesRoot,
+        scaffold: CLAUDE_MD_SCAFFOLD,
+        copiedFiles,
+        skippedFiles,
+        warn,
+      });
+    }
+  }
+
   if (options.withRoutines) {
     await emitScaffold({
       cwd,
@@ -495,6 +552,7 @@ interface ParsedArgs {
   noClaudeSkills: boolean;
   noGeminiCommands: boolean;
   noAgentsMd: boolean;
+  noClaudeMd: boolean;
   help: boolean;
 }
 
@@ -505,6 +563,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let noClaudeSkills = false;
   let noGeminiCommands = false;
   let noAgentsMd = false;
+  let noClaudeMd = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -519,24 +578,42 @@ function parseArgs(args: string[]): ParsedArgs {
       noGeminiCommands = true;
     } else if (arg === "--no-agents-md") {
       noAgentsMd = true;
+    } else if (arg === "--no-claude-md") {
+      noClaudeMd = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help };
+  return {
+    force,
+    withRoutines,
+    withActions,
+    noClaudeSkills,
+    noGeminiCommands,
+    noAgentsMd,
+    noClaudeMd,
+    help,
+  };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help } =
-      parseArgs(args);
+    const {
+      force,
+      withRoutines,
+      withActions,
+      noClaudeSkills,
+      noGeminiCommands,
+      noAgentsMd,
+      noClaudeMd,
+      help,
+    } = parseArgs(args);
     if (help) {
       console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
-      console.log(
-        "                          [--no-claude-skills] [--no-gemini-commands] [--no-agents-md]",
-      );
+      console.log("                          [--no-claude-skills] [--no-gemini-commands]");
+      console.log("                          [--no-agents-md] [--no-claude-md]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
@@ -548,6 +625,9 @@ export const initCommand: Command = {
       );
       console.log(
         "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
+      );
+      console.log(
+        "  - Claude Code workspace instructions: CLAUDE.md (imports @AGENTS.md so Claude reads it)",
       );
       console.log("");
       console.log("Options:");
@@ -572,7 +652,14 @@ export const initCommand: Command = {
       );
       console.log("  --no-agents-md         Skip writing AGENTS.md at the workspace root");
       console.log(
-        "                         (useful if the workspace already has its own AGENTS.md)",
+        "                         (useful if the workspace already has its own AGENTS.md;",
+      );
+      console.log(
+        "                          implies --no-claude-md since the bundled CLAUDE.md imports @AGENTS.md)",
+      );
+      console.log("  --no-claude-md         Skip writing CLAUDE.md at the workspace root");
+      console.log(
+        "                         (useful if the workspace already has its own CLAUDE.md)",
       );
       return 0;
     }
@@ -584,6 +671,7 @@ export const initCommand: Command = {
       noClaudeSkills,
       noGeminiCommands,
       noAgentsMd,
+      noClaudeMd,
     });
     return 0;
   },
