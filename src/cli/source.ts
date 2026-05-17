@@ -217,7 +217,9 @@ function printAddHelp(log: (m: string) => void): void {
   log("  --keywords <a,b>         comma-separated include keywords");
   log("                           (required for useful output — empty = match nothing)");
   log("  --exclude-keywords <a,b> comma-separated exclude keywords");
-  log("  --selector-<field> <css> CSS selector for kind=html / html-js (required: item, title, link)");
+  log(
+    "  --selector-<field> <css> CSS selector for kind=html / html-js (required: item, title, link)",
+  );
   log("                           optional: summary, publishedAt, body, tags");
   log("                           For kind=html-js, selectors evaluate against the post-JS DOM.");
   log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");

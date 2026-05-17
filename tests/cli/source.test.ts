@@ -172,9 +172,7 @@ describe("cli/source", () => {
         { cwd: workdir, io },
       );
       expect(code).toBe(0);
-      const parsed = parseYaml(
-        await readFile(join(workdir, "sources", "example-js.yaml"), "utf8"),
-      );
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "example-js.yaml"), "utf8"));
       expect(parsed).toMatchObject({
         id: "example-js",
         kind: "html-js",
