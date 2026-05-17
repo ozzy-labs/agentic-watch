@@ -48,7 +48,7 @@ radar init --with-actions           # .github/workflows/watch.yaml を生成
 radar init --force                  # 既存ファイルを上書き
 
 # 監視対象の管理
-radar source add <id> --kind <rss|html|github-releases|npm-registry> --url <url> [options]
+radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
 radar source list
 radar source remove <id>
 
@@ -143,7 +143,7 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 
 ## セキュリティ警告 (untrusted external content)
 
-`radar` が fetch する外部 feed (RSS / HTML / GitHub Releases / npm registry) のコンテンツは **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+`radar` が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry) のコンテンツは **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - agent に渡すコンテンツは boundary marker で囲まれ、procedure 本体と分離される
 - `sources/<id>.yaml` の `trustLevel` で `"trusted" | "untrusted"` を per-source で指定可能 (既定 `"untrusted"`)

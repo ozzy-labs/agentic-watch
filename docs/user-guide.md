@@ -477,7 +477,7 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 
 挙動:
 
-- 各 source の `kind` に応じた feed adapter を呼び出す（4 種すべて `rss` / `html` / `github-releases` / `npm-registry` が実装済み）
+- 各 source の `kind` に応じた feed adapter を呼び出す（5 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する — ADR-0010）
 - adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される

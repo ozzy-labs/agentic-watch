@@ -90,12 +90,14 @@ def evaluate(item, filters):
 
 ## `matchFields` の意味と adapter 別利用可否
 
-| field | 意味 | rss | html | github-releases | npm-registry |
-|---|---|:--:|:--:|:--:|:--:|
-| `title` | `item.title` | YES | YES | YES | YES |
-| `summary` | `item.summary`（RSS なら `<description>`） | YES | YES | YES | YES |
-| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | no (captured into `raw` only) | no | no |
-| `tags` | feed が `<category>` / labels を提供する場合 | no | no | no (captured into `raw` only) | no |
+| field | 意味 | rss | html | html-js | github-releases | npm-registry |
+|---|---|:--:|:--:|:--:|:--:|:--:|
+| `title` | `item.title` | YES | YES | YES | YES | YES |
+| `summary` | `item.summary`（RSS なら `<description>`） | YES | YES | YES | YES | YES |
+| `body` | 記事本文（feed が構造的に提供する場合のみ） | no | no (captured into `raw` only) | no (captured into `raw` only) | no | no |
+| `tags` | feed が `<category>` / labels を提供する場合 | no | no | no | no (captured into `raw` only) | no |
+
+`html-js` adapter は selector の評価ロジックを `html` adapter と共有する (`_html-common.ts` / ADR-0010) ため、フィルタからは同じ field surface に見える。
 
 `Item` schema には `body` / `tags` field が無いため、`filter.ts` の `buildHaystack` は両 field を **全 adapter で silently skip**（エラーにせず、その field を無いものとして扱う、`src/core/filter.ts` L57-61）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、将来 `Item` schema に `body` / `tags` を追加し adapter が surface し始めれば自動的に有効化される。例えば `html` adapter は `body` を `raw.body` として保持しているが、`Item` schema に body field が無いため `filter.ts` 側からは参照できない (`raw` は agent 渡し用の生データ袋であり、filter haystack の対象ではない)。
 
