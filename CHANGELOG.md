@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/ozzy-labs/feedradar/compare/v0.1.0...v0.1.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **ci:** align release.yaml publish job with ci.yaml tool-chain (Node 24 + mise-action) ([#106](https://github.com/ozzy-labs/feedradar/issues/106)) ([7e351bb](https://github.com/ozzy-labs/feedradar/commit/7e351bb993407d1dea41776046dd82f46299934a))
+
 ## 0.1.0 (2026-05-17)
 
 
