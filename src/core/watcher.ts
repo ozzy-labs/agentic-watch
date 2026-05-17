@@ -361,6 +361,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       sourceId: source.id,
       lastFetchedAt: nextStatePatch.lastFetchedAt ?? previousState.lastFetchedAt,
       lastEtag: nextStatePatch.lastEtag ?? previousState.lastEtag,
+      lastModified: nextStatePatch.lastModified ?? previousState.lastModified,
       lastSeenIds: Array.from(seenIds),
     };
     // In dry-run mode we still surface the would-be state through

@@ -166,6 +166,83 @@ describe("core/feeds/html — adapter", () => {
     expect(result.state.lastEtag).toBe('"keep"');
   });
 
+  it("forwards a stored Last-Modified as if-modified-since", async () => {
+    const { fetch, observed } = mockFetch([
+      {
+        status: 200,
+        body: HTML_FIXTURE,
+        headers: { "Last-Modified": "Wed, 21 Oct 2015 08:00:00 GMT" },
+      },
+    ]);
+    const result = await htmlAdapter.fetch(makeSource(), {
+      fetch,
+      state: {
+        sourceId: "example",
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: [],
+      },
+    });
+    expect(observed[0]?.headers?.["if-modified-since"]).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+    // Server's fresh Last-Modified gets persisted for the next run.
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 08:00:00 GMT");
+  });
+
+  it("sends both If-None-Match and If-Modified-Since when state has ETag + Last-Modified", async () => {
+    const { fetch, observed } = mockFetch([
+      {
+        status: 200,
+        body: HTML_FIXTURE,
+        headers: { ETag: '"new"', "Last-Modified": "Wed, 21 Oct 2015 08:00:00 GMT" },
+      },
+    ]);
+    const result = await htmlAdapter.fetch(makeSource(), {
+      fetch,
+      state: {
+        sourceId: "example",
+        lastEtag: '"old"',
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: [],
+      },
+    });
+    expect(observed[0]?.headers?.["if-none-match"]).toBe('"old"');
+    expect(observed[0]?.headers?.["if-modified-since"]).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+    expect(result.state.lastEtag).toBe('"new"');
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 08:00:00 GMT");
+  });
+
+  it("preserves stored Last-Modified on 304 even when the server omits it", async () => {
+    // RFC 9110 §15.4.5: servers MAY omit `Last-Modified` on 304 responses; we
+    // must keep echoing the previously stored value on the next request.
+    const { fetch } = mockFetch([{ status: 304, headers: { ETag: '"keep"' } }]);
+    const result = await htmlAdapter.fetch(makeSource(), {
+      fetch,
+      state: {
+        sourceId: "example",
+        lastEtag: '"keep"',
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: ["x"],
+      },
+    });
+    expect(result.notModified).toBe(true);
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+  });
+
+  it("persists a server-supplied Last-Modified on a 200 response (initial fetch)", async () => {
+    const { fetch, observed } = mockFetch([
+      {
+        status: 200,
+        body: HTML_FIXTURE,
+        headers: { "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" },
+      },
+    ]);
+    const result = await htmlAdapter.fetch(makeSource(), { fetch });
+    // No previously stored value — initial request must not send the header.
+    expect(observed[0]?.headers?.["if-modified-since"]).toBeUndefined();
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+    // ETag absent → content hash still populates lastEtag (fallback intact).
+    expect(result.state.lastEtag).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
   it("dedups via content hash when the server omits ETag", async () => {
     const { fetch: fetch1 } = mockFetch([{ status: 200, body: HTML_FIXTURE }]);
     const first = await htmlAdapter.fetch(makeSource(), { fetch: fetch1 });
