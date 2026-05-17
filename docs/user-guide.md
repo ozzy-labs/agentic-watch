@@ -54,7 +54,7 @@ agentic-watch research <item-id> --agent claude-code
 ├── state/               # 既読 ID / etag
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
-├── templates/           # 既定テンプレートのコピー
+├── templates/           # 既定テンプレートのコピー (`default.md` が雛形、`--no-templates` で skip)
 ├── CLAUDE.md            # Claude Code 用 workspace instructions (`@AGENTS.md` を import、`--no-claude-md` で skip)
 ├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions (`--no-agents-md` で skip)
 ├── .agents/skills/      # engine SKILL (SSoT): research / review / update
@@ -75,6 +75,7 @@ agentic-watch research <item-id> --agent claude-code
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - **`CLAUDE.md`** (workspace root) を bundled からコピー。Claude Code は `AGENTS.md` を auto-read しないため、最小の `CLAUDE.md` (`@AGENTS.md` を import するだけ) を default で出力し、業界標準の "SSoT は AGENTS.md、CLAUDE.md は再エクスポート" パターンを成立させる。`--no-claude-md` で skip 可 (`--no-agents-md` 指定時は `@AGENTS.md` がリンク切れになるため自動 skip + 警告)
+- **`templates/default.md`** を bundled からコピー。engine `research` SKILL の fallback 構造 (要約 / 詳細 / 出典) と一致する Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 
 #### AGENTS.md について
@@ -143,6 +144,10 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 workspace に既に独自の `CLAUDE.md` (project 全体の Claude Code 指示等) があり、agentic-watch の boilerplate (`@AGENTS.md` のみを含む最小ファイル) と衝突させたくない場合は `agentic-watch init --no-claude-md` で `CLAUDE.md` 配置のみ skip できる。`AGENTS.md` 側は引き続き生成されるため、CLAUDE.md 内で `@AGENTS.md` 等の取り込みを自前で行うか、別の運用を選べる。
 
 なお `--no-agents-md` を指定した場合、bundled CLAUDE.md の `@AGENTS.md` import がリンク切れになるため、`CLAUDE.md` も自動的に skip される (warning が出る)。
+
+#### `--no-templates` を使うべきケース
+
+`templates/` を別の方法で管理している、または独自の `templates/default.md` を既に持っている workspace では、`agentic-watch init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (要約 / 詳細 / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
 
 ### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
 
