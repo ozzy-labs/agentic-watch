@@ -11,7 +11,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 ## Highlights
 
 - **Multi-agent**: switch between Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI via adapters.
-- **Multiple feed kinds**: RSS / HTML scraping / GitHub Releases / npm registry are all driven through the same `Source` abstraction.
+- **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry are all driven through the same `Source` abstraction.
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
@@ -20,6 +20,15 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 ```bash
 npm i -g @ozzylabs/feedradar
 ```
+
+To use the `kind: html-js` adapter (SPA / CSR pages rendered after JS runs), install Playwright separately — it is declared as an *optional* peer dep so users who only need RSS / static HTML do not pay the ~300MB Chromium footprint ([ADR-0010](./docs/adr/0010-html-js-adapter-and-distribution.md)):
+
+```bash
+npm i -g playwright
+npx playwright install chromium
+```
+
+Run `radar doctor` to verify Playwright / Chromium are detected before adding an `html-js` source. CI setup details and a sample workflow are in [docs/user-guide.md → `--kind html-js` → CI で使う](./docs/user-guide.md#ci-で使う).
 
 While developing locally, clone this repo and run `pnpm install && pnpm run build` to produce `dist/index.js`, then invoke `node dist/index.js <command>`.
 
@@ -40,10 +49,11 @@ radar source list             # list sources
 radar dismiss <item-id>       # move an item to dismissed (no LLM)
 radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)
+radar doctor                  # check workspace / agent CLI / Playwright health
 radar --help                  # help
 ```
 
-All 7 subcommands are implemented. See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
+All 8 subcommands are implemented. See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
 
 ## Development
 
@@ -74,7 +84,7 @@ src/
     state.ts            state/<sourceId>.yaml load / save
     config.ts           radar.config.yaml load / validate
     injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
-    feeds/              rss / html / github-releases / npm-registry
+    feeds/              rss / html / html-js / github-releases / npm-registry
   agents/               4 CLI adapters (claude-code / codex-cli / gemini-cli / copilot)
   schemas/              Zod schemas (Source / Item / State / Research)
   skills/               engine SKILL bundle (research / review / update; init copies into .agents/skills/)

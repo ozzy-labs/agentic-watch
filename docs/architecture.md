@@ -29,8 +29,8 @@
 ┌──────────── @ozzylabs/feedradar (npm) ────────────────┐
 │  core/                                                    │
 │    ├─ watcher           : Feed adapter を呼び出して fetch │
-│    ├─ feeds/            : RSS / HTML / GitHub Releases / npm │
-│    │                     + github-api / derive-id (shared) │
+│    ├─ feeds/            : RSS / HTML / HTML-JS (Playwright) / GitHub Releases / npm │
+│    │                     + github-api / derive-id / _html-common (shared) │
 │    ├─ filter            : keyword + excludeKeywords 判定  │
 │    ├─ items             : 検出アイテムの保存・status 管理 │
 │    ├─ templates         : Markdown テンプレート差し込み   │
@@ -54,7 +54,7 @@ bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-comma
 | モジュール | パス | 責務 |
 |---|---|---|
 | `core/watcher` | `src/core/watcher.ts` | Source 配列を受け取り、各 source の kind に応じた Feed adapter で fetch、Item[] を返す |
-| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装 (rss / html / github-releases / npm-registry)。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）+ shared helpers (`github-api.ts` rate-limit-aware GitHub API client、`derive-id.ts` stable item id 派生) |
+| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装 (rss / html / html-js / github-releases / npm-registry)。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）+ shared helpers (`github-api.ts` rate-limit-aware GitHub API client、`derive-id.ts` stable item id 派生、`_html-common.ts` parser / content-hash を `html` と `html-js` で共有 — [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md))。`html-js.ts` は Playwright を **optional peer dep** として動的 import する |
 | `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用（詳細仕様: [`design/filter-spec.md`](./design/filter-spec.md)）|
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |
@@ -166,6 +166,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 | Phase 1 (MVP) | `init` / `source add\|list\|remove` / `watch run` (RSS のみ) / `research` (Claude Code 単独で固定) | 完了 |
 | Phase 2 | 4 agent adapters + `review` | 完了 |
 | Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 | 完了 |
+| Phase 3a | JS-rendered HTML (`kind: html-js`、Playwright optional peer dep、[ADR-0010](./adr/0010-html-js-adapter-and-distribution.md)) | adapter 実装完了 ([#118](https://github.com/ozzy-labs/feedradar/pull/118))、`radar doctor` + CI matrix + docs は親 epic [#111](https://github.com/ozzy-labs/feedradar/issues/111) の sub-issue で進行中 |
 | Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く | 完了 |
 | Phase 5 | `update` コマンド（既存 research の差分更新）、`dismiss` コマンド | 完了 |
 | Phase 6 | npm publish 初版 + Trusted Publisher 登録（手順: [`docs/release.md`](./release.md)） | 初回 publish 待ち（sibling-style workflow 配備済み） |
@@ -183,6 +184,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 - [0007 Skill Bundling and `init` Distribution](./adr/0007-skill-bundling-and-init-distribution.md)
 - [0008 Item Status State Machine](./adr/0008-status-state-machine.md)
 - [0009 Untrusted External Content Handling for Agent Prompts](./adr/0009-untrusted-external-content-handling.md)
+- [0010 html-js Adapter and Playwright Distribution](./adr/0010-html-js-adapter-and-distribution.md)
 
 ## 関連 Design Docs
 
