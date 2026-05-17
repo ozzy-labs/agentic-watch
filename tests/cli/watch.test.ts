@@ -321,6 +321,53 @@ describe("cli/watch run", () => {
     expect(captured.warn.some((m) => m.includes("injection pre-filter"))).toBe(true);
   });
 
+  describe("empty-keywords diagnostic", () => {
+    it("warns when a source with no keywords filters out every fetched item", async () => {
+      // Source intentionally omits `filters` so the schema default produces
+      // `keywords: []`, which is the firehose-guard case in core/filter.ts.
+      // The RSS body still returns 2 items, so the diagnostic should fire
+      // pointing at the keyword-less YAML the user needs to edit.
+      await writeFile(
+        join(workdir, "sources", "silent.yaml"),
+        stringifyYaml({
+          id: "silent",
+          kind: "rss",
+          url: "https://example.com/silent.xml",
+          tags: [],
+        }),
+        "utf8",
+      );
+      const { io, captured } = captureIo();
+      const code = await runWatch([], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("0 new"))).toBe(true);
+      // Diagnostic should call out the source by id and gesture at the fix.
+      expect(captured.warn.some((m) => m.includes("no keywords"))).toBe(true);
+      expect(captured.warn.some((m) => m.includes("silent"))).toBe(true);
+      expect(captured.warn.some((m) => m.includes("sources/silent.yaml"))).toBe(true);
+    });
+
+    it("does not warn when keywords are configured even if nothing matches", async () => {
+      // Keywords are present but pickier than the RSS content, so 0 items
+      // match. We must not emit the "no keywords configured" hint here —
+      // that would be misleading and noisy on every run.
+      await writeSource(workdir, "picky", { keywords: ["definitely-not-in-feed"] });
+      const { io, captured } = captureIo();
+      const code = await runWatch([], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("0 new"))).toBe(true);
+      expect(captured.warn.some((m) => m.includes("no keywords"))).toBe(false);
+    });
+  });
+
   it("leaves injectionFlags empty for benign content", async () => {
     await writeSource(workdir, "blog");
     const { io } = captureIo();

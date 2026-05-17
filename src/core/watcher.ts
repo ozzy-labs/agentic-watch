@@ -228,6 +228,16 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       // raw payload for any item that did pass).
       for (const item of fetched) seenIds.add(item.id);
       detectedItems = fresh;
+      // Diagnose the most common "why are 0 items new?" pitfall: a source
+      // with no include keywords. `src/core/filter.ts` short-circuits to
+      // `match nothing` in that case (firehose guard), so fetched-but-zero
+      // is otherwise indistinguishable from "feed unchanged". The hint
+      // points the user at the YAML file they need to edit to fix it.
+      if (fetched.length > 0 && fresh.length === 0 && source.filters.keywords.length === 0) {
+        warn(
+          `watch run: '${source.id}' has no keywords configured — all ${fetched.length} fetched item(s) were filtered out. Add keywords to sources/${source.id}.yaml to start ingesting.`,
+        );
+      }
       log(
         `watch run: '${source.id}' fetched ${fetched.length} items, ${fresh.length} new after filter`,
       );
