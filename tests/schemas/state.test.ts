@@ -14,6 +14,7 @@ describe("schemas/state — SourceStateSchema (per-source watch memory)", () => 
     expect(result.sourceId).toBe("anthropic-news");
     expect(result.lastFetchedAt).toBeUndefined();
     expect(result.lastEtag).toBeUndefined();
+    expect(result.lastModified).toBeUndefined();
     // Default [] is load-time invariant: a missing field must NOT be
     // re-emitted as "no memory" (which would re-flood the user).
     expect(result.lastSeenIds).toEqual([]);
@@ -24,11 +25,30 @@ describe("schemas/state — SourceStateSchema (per-source watch memory)", () => 
       sourceId: "anthropic-news",
       lastFetchedAt: "2026-05-10T00:00:00.000Z",
       lastEtag: 'W/"abc123"',
+      lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
       lastSeenIds: ["id-1", "id-2"],
     });
     expect(result.lastFetchedAt).toBe("2026-05-10T00:00:00.000Z");
     expect(result.lastEtag).toBe('W/"abc123"');
+    expect(result.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
     expect(result.lastSeenIds).toEqual(["id-1", "id-2"]);
+  });
+
+  it("preserves lastModified as an opaque RFC 1123 string (not coerced to Date)", () => {
+    // HTTP `Last-Modified` is RFC 1123 / RFC 7231, not ISO 8601, so we must
+    // accept the server-supplied form verbatim — the adapter echoes it back
+    // in `If-Modified-Since` without re-formatting.
+    const result = SourceStateSchema.parse({
+      sourceId: "x",
+      lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+    });
+    expect(result.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+  });
+
+  it("rejects a non-string lastModified (would break If-Modified-Since echo)", () => {
+    expect(SourceStateSchema.safeParse({ sourceId: "x", lastModified: 1729495680 }).success).toBe(
+      false,
+    );
   });
 
   it("rejects empty sourceId (unaddressable state file)", () => {
