@@ -33,19 +33,40 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # mise から pnpm を外している理由は ci.yaml のコメント参照
-      # (aqua plugin が pnpm-linux-x64.tar.gz を期待するが新版は .tar.gz なしで配布される)
+      # ci.yaml と同じ tool-chain 構成: mise で Node 24 + 共通 lint tool を入れる。
+      # publish に必要なのは Node + npm のみだが、ci.yaml と完全に揃えることで
+      # build 環境のずれを排除する (sibling 構成と整合)。
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ci.yaml と同じ理由で除外:
+          # - trivy: aqua resolver が rate-limit / auth scope で 403
+          # - pnpm: aqua plugin が新版 pnpm の .tar.gz なし配布に未対応
+          # - uv: aqua attestation 検証が失敗 (provenance lookup None)
+          MISE_DISABLE_TOOLS: trivy,pnpm,uv
+
+      # mise が pnpm を入れられないため pnpm/action-setup で別途インストール
       - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6.0.5
         with:
           version: 11
 
+      # node-version: '24' を明示。.mise.toml の node = "24" と一致させ、
+      # Node 22 同梱の古い npm (10.x) から npm@latest (11.5+) への大ホップで
+      # 発生する promise-retry MODULE_NOT_FOUND を回避する
+      # (PR #100 publish 失敗の root cause)。Node 24 同梱の npm は既に新しく、
+      # self-upgrade hop が小さいため bug を踏みにくい。setup-node は
+      # registry-url (~/.npmrc) 書き込みも担うので削除せず残す。
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      # trusted publishing は npm CLI >= 11.5.1 / Node >= 22.14.0 が必須。
-      # setup-node が同梱する npm は古い場合があるため明示的に最新を入れる。
+      # trusted publishing は npm CLI >= 11.5.1 が必須 (Node 24 同梱は通常
+      # 11.x 系なので 1 minor bump 程度の小ホップ)。
       - name: Install latest npm (>= 11.5.1 required for trusted publishing)
         run: npm install -g npm@latest
 
