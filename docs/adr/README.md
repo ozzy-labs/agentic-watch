@@ -31,6 +31,7 @@ FeedRadar プロジェクト**内部の**設計判断を記録する。OzzyLabs 
 | [0008](./0008-status-state-machine.md) | Item Status State Machine | Accepted |
 | [0009](./0009-untrusted-external-content-handling.md) | Untrusted External Content Handling for Agent Prompts | Accepted |
 | [0010](./0010-html-js-adapter-and-distribution.md) | html-js Adapter and Playwright Distribution | Accepted |
+| [0011](./0011-digest-research-output.md) | Digest Research Output | Proposed |
 
 ## 新規 ADR の追加
 
