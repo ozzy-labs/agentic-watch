@@ -50,6 +50,7 @@ radar init --force                  # 既存ファイルを上書き
 # 監視対象の管理
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
 radar source list
+radar source test <id> [--limit N] [--show-content]   # state/items を書き換えず取得 + フィルタを試す
 radar source remove <id>
 
 # 監視実行 (新着検出 → items/*.yaml に detected で書く)

@@ -113,6 +113,7 @@ slash で直接呼ぶなら:
 ```bash
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
 radar source list
+radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
 radar watch run [--source <id>] [--bootstrap]
 radar research <item-id> --agent <agent>
