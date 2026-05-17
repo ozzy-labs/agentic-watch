@@ -133,8 +133,8 @@ describe("cli/init", () => {
 
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
     // Scope this test to the engine SKILLs only — claude discovery skills,
-    // gemini commands, AGENTS.md, CLAUDE.md, and templates/default.md get
-    // their own describe blocks below.
+    // gemini commands, AGENTS.md, CLAUDE.md, templates/default.md, and
+    // AGENTIC_WATCH.md get their own describe blocks below.
     const result = await initWorkspace({
       cwd: workdir,
       force: false,
@@ -144,6 +144,7 @@ describe("cli/init", () => {
       noAgentsMd: true,
       noClaudeMd: true,
       noTemplates: true,
+      noAgenticWatchMd: true,
       warn: (m) => warnings.push(m),
       info: () => undefined,
     });
@@ -933,6 +934,142 @@ describe("cli/init", () => {
       expect(body).toContain("## 要約");
       expect(body).toContain("## 詳細");
       expect(body).toContain("## 出典");
+    });
+  });
+
+  describe("AGENTIC_WATCH.md (human-facing workspace guide)", () => {
+    // AGENTIC_WATCH.md is the canonical entry point for the human who ran
+    // init. Distinct from AGENTS.md / CLAUDE.md (AI-agent-facing). Same
+    // warning+skip + --force overwrite policy as other bundled files.
+
+    it("emits <cwd>/AGENTIC_WATCH.md by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const dest = join(workdir, "AGENTIC_WATCH.md");
+      expect(await pathExists(dest)).toBe(true);
+      const body = await readFile(dest, "utf8");
+      expect(body).toContain("# agentic-watch workspace");
+      // Body should advertise natural-language / slash usage as the primary
+      // path (not CLI direct invocation).
+      expect(body).toContain("自然言語");
+      expect(body).toContain("/research");
+      expect(result.copiedFiles).toContain("AGENTIC_WATCH.md");
+    });
+
+    it("skips AGENTIC_WATCH.md when noAgenticWatchMd: true", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        noAgenticWatchMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "AGENTIC_WATCH.md"))).toBe(false);
+      const entries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "AGENTIC_WATCH.md",
+      );
+      expect(entries).toEqual([]);
+    });
+
+    it("protects existing AGENTIC_WATCH.md without --force", async () => {
+      const dest = join(workdir, "AGENTIC_WATCH.md");
+      await writeFile(dest, "user-edited workspace docs", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited workspace docs");
+      expect(result.skippedFiles).toContain("AGENTIC_WATCH.md");
+      expect(warnings.some((m) => m.includes("AGENTIC_WATCH.md"))).toBe(true);
+    });
+
+    it("overwrites existing AGENTIC_WATCH.md with --force", async () => {
+      const dest = join(workdir, "AGENTIC_WATCH.md");
+      await writeFile(dest, "user-edited workspace docs", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited workspace docs");
+      expect(body).toContain("# agentic-watch workspace");
+      expect(result.copiedFiles).toContain("AGENTIC_WATCH.md");
+    });
+
+    it("emits next-step hint to info sink when AGENTIC_WATCH.md is written", async () => {
+      const infoMessages: string[] = [];
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: (m) => infoMessages.push(m),
+      });
+
+      expect(infoMessages.some((m) => m.includes("AGENTIC_WATCH.md"))).toBe(true);
+      expect(infoMessages.some((m) => m.includes("next steps"))).toBe(true);
+    });
+
+    it("does not emit next-step hint when AGENTIC_WATCH.md is skipped", async () => {
+      const infoMessages: string[] = [];
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        noAgenticWatchMd: true,
+        warn: (m) => warnings.push(m),
+        info: (m) => infoMessages.push(m),
+      });
+
+      expect(infoMessages.some((m) => m.includes("next steps"))).toBe(false);
     });
   });
 });
