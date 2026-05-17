@@ -1,3 +1,4 @@
+import type { installChromium, ProbeOptions } from "../core/playwright-check.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
 import type { Command } from "./index.js";
 
@@ -12,6 +13,21 @@ export interface WatchCommandOptions {
   io?: WatchIO;
   /** Test seam: override the adapter HTTP fetcher. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Test seam: override the Playwright probe used by the lazy `html-js`
+   * pre-check. Threaded straight through to `watchRun` — see watcher.ts.
+   */
+  playwrightProbeOptions?: ProbeOptions;
+  /**
+   * Test seam: override `process.env` lookup so the test can toggle
+   * `RADAR_AUTO_INSTALL_CHROMIUM=1` deterministically.
+   */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Test seam: override the Chromium auto-install function. Tests inject a
+   * stub that records invocation without spawning the real `npx`.
+   */
+  installChromiumImpl?: typeof installChromium;
 }
 
 interface WatchRunArgs {
@@ -90,6 +106,9 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
       log,
       warn,
       error,
+      env: options.env,
+      playwrightProbeOptions: options.playwrightProbeOptions,
+      installChromiumImpl: options.installChromiumImpl,
     });
   } catch (e) {
     error(`watch run: ${e instanceof Error ? e.message : String(e)}`);
