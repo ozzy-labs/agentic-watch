@@ -6,9 +6,38 @@ Accepted（2026-05-16）— 採択した緩和策の実装は **本 ADR 採択�
 
 ## Context
 
-FeedRadar は外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡す。4 adapter すべて [ADR-0001](./0001-agent-adapter-interface.md) の非対話モード前提により tool 承認を skip して起動するため (`bypassPermissions` / `--dangerously-bypass-approvals-and-sandbox` / `--allow-all-tools` / `-y --skip-trust`)、item content に混入した prompt injection が agent の tool execution を悪用するリスクが構造的に存在する。
+FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡す。4 adapter すべて [ADR-0001](./0001-agent-adapter-interface.md) の非対話モード前提により tool 承認を skip して起動するため (`bypassPermissions` / `--dangerously-bypass-approvals-and-sandbox` / `--allow-all-tools` / `-y --skip-trust`)、item content に混入した prompt injection が agent の tool execution を悪用するリスクが構造的に存在する。
 
 詳細な攻撃面 / 被害範囲 / 緩和候補の整理は [`docs/design/threat-model.md`](../design/threat-model.md) を参照。本 ADR はその threat model に対し、`#49` の 5 設計検討項目 (M1〜M5) の **採否を判定**する。
+
+### §A: source kind 別の信頼境界
+
+| Source kind | コントロール元 | FeedRadar プロセスとの関係 | 追加 attack surface | 備考 |
+|---|---|---|---|---|
+| `rss` | サイト運営者 | text 受信のみ | 低 | parser バグ以外は静的データ |
+| `html` | サイト運営者 | text 受信 + node-html-parser | 低 (CSS selector 評価のみ) | DOM 構築なし |
+| `html-js` | サイト運営者 | **Chromium (別 OS process) で page JS 実行** | **中** (WebRTC IP 漏洩 / drive-by download / 巨大ページ OOM 等。Chromium プロセスは sandbox 有効 + headless + accept_downloads=false で FeedRadar プロセスから OS process 境界で隔離。詳細は [ADR-0010 §D5](./0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件) と [`docs/design/threat-model.md`](../design/threat-model.md) §C) | page JS が結果として `Source.selectors` に従って抽出されるテキストは untrusted item として M1c boundary marker で wrap される |
+| `github-releases` | リポジトリ owner / collaborator | API JSON 受信のみ | 低 | release body は contributors が書ける |
+| `npm-registry` | パッケージ maintainer | packument JSON 受信のみ | 低 | typosquat / 乗っ取り maintainer の risk |
+
+**`html-js` 特記**: Chromium 自体は FeedRadar プロセスとは別の OS process で動作し、Chromium 内蔵の sandbox + headless により page JS は FeedRadar ホスト上の sensitive ファイル (`~/.ssh/`, `~/.aws/credentials`, `.env` 等) に **直接アクセスできない**。ただし Chromium バイナリ自体の脆弱性 (例: V8 0-day) が悪用された場合は sandbox escape の可能性がある。詳細は次節「Chromium バイナリ脆弱性追跡責任」参照。
+
+### Chromium バイナリ脆弱性追跡責任
+
+`kind: html-js` の Chromium は **npm package ではなく `npx playwright install chromium` で配布される独立バイナリ**であり、以下の責任分担となる:
+
+| 項目 | 担当 | 検知手段 |
+|---|---|---|
+| Playwright npm package の脆弱性 | FeedRadar 側 (Renovate / `npm audit`) | `pnpm audit` / Renovate alerts |
+| Chromium バイナリの脆弱性 | **ユーザー側** | `npx playwright install` の定期実行で最新化、Chromium 公式 release notes / [chrome releases blog](https://chromereleases.googleblog.com/) を購読 |
+
+`npm audit` / Renovate は Chromium バイナリ部分を検知できない。FeedRadar の user-guide で以下を推奨する:
+
+- `npx playwright install chromium` を **週次** (または Playwright minor version up 時) に実行する
+- 重大な Chromium 脆弱性が公開された際は即時 update
+- `kind: html-js` を実運用する場合は、Chromium 脆弱性アラート (CISA KEV / Chrome Releases) を購読する
+
+詳細は [ADR-0010](./0010-html-js-adapter-and-distribution.md) を参照。
 
 判定基準:
 
@@ -154,6 +183,7 @@ M4 (`Source.trustLevel`) は **schema レベルの基盤**として上記スタ�
   - [ADR-0001 Agent Adapter Interface](./0001-agent-adapter-interface.md) (4 adapter の YOLO 起動の出所)
   - [ADR-0006 Filter Specification](./0006-filter-specification.md) (filter 層との配置整合)
   - [ADR-0008 Item Status State Machine](./0008-status-state-machine.md) (M5b 却下理由の出所)
+  - [ADR-0010 html-js Adapter and Playwright Distribution](./0010-html-js-adapter-and-distribution.md) (§A 信頼境界表に `html-js` 行追加、Chromium バイナリ脆弱性追跡責任の所在)
 - 関連 docs: [`docs/user-guide.md`](../user-guide.md) § Security 警告 ([#48](https://github.com/ozzy-labs/feedradar/issues/48))
 - knowledge:
   - [`ai/practice/prompt-injection`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md) (6 layer 防御階層、lethal trifecta、OWASP LLM01)
