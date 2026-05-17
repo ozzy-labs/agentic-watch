@@ -52,7 +52,8 @@ describe("cli/init", () => {
 
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
     // Scope this test to the engine SKILLs only — claude discovery skills,
-    // gemini commands, and AGENTS.md get their own describe blocks below.
+    // gemini commands, AGENTS.md, and templates/default.md get their own
+    // describe blocks below.
     const result = await initWorkspace({
       cwd: workdir,
       force: false,
@@ -60,6 +61,7 @@ describe("cli/init", () => {
       noClaudeSkills: true,
       noGeminiCommands: true,
       noAgentsMd: true,
+      noTemplates: true,
       warn: (m) => warnings.push(m),
       info: () => undefined,
     });
@@ -615,6 +617,128 @@ describe("cli/init", () => {
       expect(body).toContain("review");
       expect(body).toContain("update");
       expect(body).toContain("dismiss");
+    });
+  });
+
+  describe("templates/default.md (starter report template)", () => {
+    // The starter template seeds <cwd>/templates/default.md with a body
+    // that mirrors the engine `research` SKILL fallback structure
+    // (要約 / 詳細 / 出典). The research engine SKILL falls back to its
+    // built-in structure when templateBody is empty, so skipping doesn't
+    // break runtime behavior — it only removes the first editable artifact.
+
+    it("emits <cwd>/templates/default.md by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const dest = join(workdir, "templates", "default.md");
+      expect(await pathExists(dest)).toBe(true);
+      expect(result.copiedFiles).toContain("templates/default.md");
+    });
+
+    it("skips templates/default.md when noTemplates: true", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      // The templates/ directory itself is still created (WORKSPACE_DIRS),
+      // but default.md should not be written.
+      expect(await pathExists(join(workdir, "templates"))).toBe(true);
+      expect(await pathExists(join(workdir, "templates", "default.md"))).toBe(false);
+      const templateEntries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "templates/default.md",
+      );
+      expect(templateEntries).toEqual([]);
+    });
+
+    it("protects existing templates/default.md without --force", async () => {
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const dest = join(workdir, "templates", "default.md");
+      await writeFile(dest, "user-edited template", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited template");
+      expect(result.skippedFiles).toContain("templates/default.md");
+      expect(warnings.some((m) => m.includes("templates/default.md"))).toBe(true);
+    });
+
+    it("overwrites existing templates/default.md with --force", async () => {
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const dest = join(workdir, "templates", "default.md");
+      await writeFile(dest, "user-edited template", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited template");
+      expect(result.copiedFiles).toContain("templates/default.md");
+    });
+
+    it("default.md mirrors the research SKILL fallback structure (no frontmatter)", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(join(workdir, "templates", "default.md"), "utf8");
+      // Template body only — frontmatter is constructed by the engine SKILL
+      // per ADR-0003, so the bundled template must not start with `---`.
+      expect(body).not.toMatch(/^---/);
+      // Mirrors the engine `research` SKILL fallback structure
+      // (src/skills/research/SKILL.md §3): 要約 / 詳細 / 出典.
+      // Placeholders are wrapped in backticks (code spans) so the template
+      // passes markdownlint MD033 (no inline HTML) while keeping the
+      // "fill these in" intent visible to the editing user.
+      expect(body).toContain("# `<Title>`");
+      expect(body).toContain("## 要約");
+      expect(body).toContain("## 詳細");
+      expect(body).toContain("## 出典");
     });
   });
 });

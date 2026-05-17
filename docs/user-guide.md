@@ -54,7 +54,7 @@ agentic-watch research <item-id> --agent claude-code
 ├── state/               # 既読 ID / etag
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
-├── templates/           # 既定テンプレートのコピー
+├── templates/           # 既定テンプレートのコピー (`default.md` が雛形、`--no-templates` で skip)
 ├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions (`--no-agents-md` で skip)
 ├── .agents/skills/      # engine SKILL (SSoT): research / review / update
 ├── .claude/skills/      # Claude Code slash-command 雛形 (薄い wrapper、`--no-claude-skills` で skip)
@@ -72,6 +72,7 @@ agentic-watch research <item-id> --agent claude-code
 - **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
+- **`templates/default.md`** を bundled からコピー。engine `research` SKILL の fallback 構造 (要約 / 詳細 / 出典) と一致する Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 
 #### AGENTS.md について
@@ -134,6 +135,10 @@ Claude Code と併用する場合、`CLAUDE.md` 側で AGENTS.md を取り込ん
 #### `--no-gemini-commands` を使うべきケース
 
 `.gemini/commands/` を別の方法で管理している (またはそもそも Gemini CLI を使わない) workspace では、`agentic-watch init --no-gemini-commands` で `.gemini/commands/` 配置のみ skip できる。Gemini CLI interactive session も engine SKILL (`.agents/skills/`) の dual-mode 動作で正しく機能するため、`/research` slash の代わりに `$research` mention 経由になる。
+
+#### `--no-templates` を使うべきケース
+
+`templates/` を別の方法で管理している、または独自の `templates/default.md` を既に持っている workspace では、`agentic-watch init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (要約 / 詳細 / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
 
 ### `agentic-watch source add <id> --kind <kind> --url <url> [options]`
 

@@ -141,6 +141,19 @@ interface InitOptions {
    */
   noAgentsMd?: boolean;
   /**
+   * Skip writing `<cwd>/templates/default.md`. By default `init` emits a
+   * starter Markdown template body that mirrors the engine `research`
+   * SKILL's fallback structure (要約 / 詳細 / 出典). The file is the
+   * first editable artifact the user can tweak to customize report
+   * shape; the research engine SKILL falls back to its own built-in
+   * structure when `templateBody` is empty, so skipping does not break
+   * runtime behavior — it only removes the editable starter.
+   *
+   * Useful for workspaces that manage `templates/` via another mechanism
+   * or that already have a populated `templates/default.md`.
+   */
+  noTemplates?: boolean;
+  /**
    * Emit the Claude Routines schedule template
    * (`claude/routines/watch-daily.md`).
    */
@@ -233,6 +246,25 @@ const SCHEDULE_SCAFFOLDS = {
 const AGENTS_MD_SCAFFOLD = {
   src: "agents/AGENTS.md",
   dest: ["AGENTS.md"] as const,
+} as const;
+
+/**
+ * Bundled starter Markdown template emitted by default into
+ * `<cwd>/templates/default.md`. The body mirrors the engine `research`
+ * SKILL's fallback structure (要約 / 詳細 / 出典) so editing it has an
+ * immediately predictable effect on generated reports.
+ *
+ * Note the template stores the **body only** — no frontmatter. The
+ * research engine SKILL constructs `ResearchFrontmatter` itself per
+ * ADR-0003 and appends the templateBody as the report body. Including
+ * frontmatter here would conflict with that contract.
+ *
+ * See ADR-0007 (revised 2026-05-17) for the init bundle layering and
+ * `src/skills/research/SKILL.md` §3 for the template body contract.
+ */
+const DEFAULT_TEMPLATE_SCAFFOLD = {
+  src: "default.md",
+  dest: ["templates", "default.md"] as const,
 } as const;
 
 /**
@@ -381,6 +413,18 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
+  if (!options.noTemplates) {
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: DEFAULT_TEMPLATE_SCAFFOLD,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
+  }
+
   if (options.withRoutines) {
     await emitScaffold({
       cwd,
@@ -461,6 +505,7 @@ interface ParsedArgs {
   noClaudeSkills: boolean;
   noGeminiCommands: boolean;
   noAgentsMd: boolean;
+  noTemplates: boolean;
   help: boolean;
 }
 
@@ -471,6 +516,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let noClaudeSkills = false;
   let noGeminiCommands = false;
   let noAgentsMd = false;
+  let noTemplates = false;
   let help = false;
   for (const arg of args) {
     if (arg === "--force" || arg === "-f") {
@@ -485,24 +531,44 @@ function parseArgs(args: string[]): ParsedArgs {
       noGeminiCommands = true;
     } else if (arg === "--no-agents-md") {
       noAgentsMd = true;
+    } else if (arg === "--no-templates") {
+      noTemplates = true;
     } else if (arg === "-h" || arg === "--help") {
       help = true;
     }
   }
-  return { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help };
+  return {
+    force,
+    withRoutines,
+    withActions,
+    noClaudeSkills,
+    noGeminiCommands,
+    noAgentsMd,
+    noTemplates,
+    help,
+  };
 }
 
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
-    const { force, withRoutines, withActions, noClaudeSkills, noGeminiCommands, noAgentsMd, help } =
-      parseArgs(args);
+    const {
+      force,
+      withRoutines,
+      withActions,
+      noClaudeSkills,
+      noGeminiCommands,
+      noAgentsMd,
+      noTemplates,
+      help,
+    } = parseArgs(args);
     if (help) {
       console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
       console.log(
         "                          [--no-claude-skills] [--no-gemini-commands] [--no-agents-md]",
       );
+      console.log("                          [--no-templates]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
@@ -514,6 +580,9 @@ export const initCommand: Command = {
       );
       console.log(
         "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
+      );
+      console.log(
+        "  - Starter report template: templates/default.md (editable; mirrors research SKILL fallback)",
       );
       console.log("");
       console.log("Options:");
@@ -540,6 +609,10 @@ export const initCommand: Command = {
       console.log(
         "                         (useful if the workspace already has its own AGENTS.md)",
       );
+      console.log("  --no-templates         Skip writing templates/default.md starter template");
+      console.log(
+        "                         (research engine SKILL falls back to its built-in structure)",
+      );
       return 0;
     }
     await initWorkspace({
@@ -550,6 +623,7 @@ export const initCommand: Command = {
       noClaudeSkills,
       noGeminiCommands,
       noAgentsMd,
+      noTemplates,
     });
     return 0;
   },

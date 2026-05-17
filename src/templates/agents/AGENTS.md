@@ -23,9 +23,11 @@
 
 ```bash
 # Workspace 初期化
-agentic-watch init                          # 既定: AGENTS.md + skills + dirs を生成
+agentic-watch init                          # 既定: AGENTS.md + skills + templates/default.md + dirs を生成
 agentic-watch init --no-agents-md           # AGENTS.md 生成を skip
 agentic-watch init --no-claude-skills       # .claude/skills/ を skip
+agentic-watch init --no-gemini-commands     # .gemini/commands/ を skip
+agentic-watch init --no-templates           # templates/default.md 生成を skip
 agentic-watch init --with-routines          # claude/routines/watch-daily.md を生成
 agentic-watch init --with-actions           # .github/workflows/watch.yaml を生成
 agentic-watch init --force                  # 既存ファイルを上書き
