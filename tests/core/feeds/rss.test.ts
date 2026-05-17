@@ -181,4 +181,88 @@ describe("core/feeds/rss — adapter", () => {
       }),
     ).rejects.toThrow(/HTTP 500/);
   });
+
+  it("persists Last-Modified from a 200 OK response into next state", async () => {
+    const result = await rssAdapter.fetch(makeSource(), {
+      fetch: mockFetch([
+        {
+          status: 200,
+          body: RSS_FIXTURE,
+          headers: { "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" },
+        },
+      ]),
+      state: { sourceId: "example", lastSeenIds: [] },
+    });
+    expect(result.notModified).toBeFalsy();
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+  });
+
+  it("sends If-Modified-Since when previousState.lastModified is set", async () => {
+    let observedHeaders: Record<string, string> | undefined;
+    const fetchImpl: FetchLike = async (_url, init) => {
+      observedHeaders = init?.headers;
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => RSS_FIXTURE,
+      };
+    };
+    await rssAdapter.fetch(makeSource(), {
+      fetch: fetchImpl,
+      state: {
+        sourceId: "example",
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: [],
+      },
+    });
+    expect(observedHeaders?.["if-modified-since"]).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+  });
+
+  it("does NOT send If-Modified-Since when previousState.lastModified is absent", async () => {
+    let observedHeaders: Record<string, string> | undefined;
+    const fetchImpl: FetchLike = async (_url, init) => {
+      observedHeaders = init?.headers;
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => RSS_FIXTURE,
+      };
+    };
+    await rssAdapter.fetch(makeSource(), {
+      fetch: fetchImpl,
+      state: { sourceId: "example", lastSeenIds: [] },
+    });
+    expect(observedHeaders?.["if-modified-since"]).toBeUndefined();
+  });
+
+  it("preserves previousState.lastModified on HTTP 304 when server omits the header", async () => {
+    const result = await rssAdapter.fetch(makeSource(), {
+      fetch: mockFetch([{ status: 304 }]),
+      state: {
+        sourceId: "example",
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: ["x"],
+      },
+    });
+    expect(result.notModified).toBe(true);
+    expect(result.state.lastModified).toBe("Wed, 21 Oct 2015 07:28:00 GMT");
+  });
+
+  it("updates lastModified on HTTP 304 when server returns a fresh Last-Modified", async () => {
+    const result = await rssAdapter.fetch(makeSource(), {
+      fetch: mockFetch([
+        {
+          status: 304,
+          headers: { "Last-Modified": "Thu, 22 Oct 2015 07:28:00 GMT" },
+        },
+      ]),
+      state: {
+        sourceId: "example",
+        lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+        lastSeenIds: [],
+      },
+    });
+    expect(result.notModified).toBe(true);
+    expect(result.state.lastModified).toBe("Thu, 22 Oct 2015 07:28:00 GMT");
+  });
 });

@@ -243,9 +243,7 @@ export const rssAdapter: FeedAdapter = {
     const fetchedAt = new Date().toISOString();
     const response = await fetchFeed(source.url, fetchImpl, {
       etag: previous?.lastEtag,
-      // We do not currently persist Last-Modified separately; ETag suffices
-      // for the well-behaved feed publishers we target. If a publisher only
-      // exposes Last-Modified we will revisit (issue #13 follow-up).
+      lastModified: previous?.lastModified,
     });
     if (response.status === 304) {
       return {
@@ -254,6 +252,7 @@ export const rssAdapter: FeedAdapter = {
         state: {
           lastFetchedAt: fetchedAt,
           lastEtag: response.etag ?? previous?.lastEtag,
+          lastModified: response.lastModified ?? previous?.lastModified,
         },
       };
     }
@@ -263,6 +262,7 @@ export const rssAdapter: FeedAdapter = {
       state: {
         lastFetchedAt: fetchedAt,
         lastEtag: response.etag ?? previous?.lastEtag,
+        lastModified: response.lastModified ?? previous?.lastModified,
       },
     };
   },
