@@ -22,10 +22,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "agentic-watch": "node dist/index.js",
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm run test"
   },
   "dependencies": {
-    "@ozzylabs/agentic-watch": "link:",
     "fast-xml-parser": "^5.7.3",
     "gray-matter": "^4.0.3",
     "node-html-parser": "^7.1.0",
