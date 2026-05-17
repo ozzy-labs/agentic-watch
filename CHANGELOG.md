@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.2](https://github.com/ozzy-labs/feedradar/compare/v0.1.1...v0.1.2) (2026-05-17)
+
+
+### Features
+
+* **cli:** add radar doctor and lazy Chromium detection on watch run ([#122](https://github.com/ozzy-labs/feedradar/issues/122)) ([ae3c7cc](https://github.com/ozzy-labs/feedradar/commit/ae3c7ccc05dc15ab48c22412d15b99e2d923fda5))
+* **schemas, feeds:** implement html-js adapter with Playwright peer dep ([#118](https://github.com/ozzy-labs/feedradar/issues/118)) ([f462e6e](https://github.com/ozzy-labs/feedradar/commit/f462e6efdecbb940603c136c7fc7f301d85c8470))
+
+
+### Bug Fixes
+
+* **cli:** include html-js in source add help and validation message ([#123](https://github.com/ozzy-labs/feedradar/issues/123)) ([dc6f67b](https://github.com/ozzy-labs/feedradar/commit/dc6f67b1e22ac6518ab1e3f7bc63da9027780903))
+* **lint:** apply biome format to source CLI changes from [#123](https://github.com/ozzy-labs/feedradar/issues/123) ([#126](https://github.com/ozzy-labs/feedradar/issues/126)) ([5367e93](https://github.com/ozzy-labs/feedradar/commit/5367e932810df2870d9bf547d1125d99e4b4a660))
+
 ## [0.1.1](https://github.com/ozzy-labs/feedradar/compare/v0.1.0...v0.1.1) (2026-05-17)
 
 

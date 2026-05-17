@@ -1,6 +1,6 @@
 {
   "name": "@ozzylabs/feedradar",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports",
   "type": "module",
   "publishConfig": {
