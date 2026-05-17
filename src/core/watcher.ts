@@ -75,6 +75,17 @@ export interface WatchRunOptions extends WorkspacePaths {
    * backlogs (ADR-0008 §運用: 初回ノイズ抑制).
    */
   bootstrap?: boolean;
+  /**
+   * Dry-run mode: run the full fetch + filter pipeline but do not persist
+   * anything to disk — neither item YAMLs under `items/` nor the updated
+   * `state/<sourceId>.yaml`. `WatchRunResult.detected` is still populated
+   * with matched items so callers (e.g. `radar source test`) can preview
+   * what would be ingested without mutating workspace state.
+   *
+   * Mutually independent from `bootstrap`: 304 and adapter / fetch error
+   * paths are unchanged (no writes happen on those paths anyway).
+   */
+  dryRun?: boolean;
   /** Override the adapter registry (tests). */
   getAdapter?: (kind: Source["kind"]) => FeedAdapter;
   /** Override the HTTP fetcher (tests). */
@@ -304,7 +315,14 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
         .filter((item) => !seenIds.has(item.id))
         .map((item) => annotateInjectionFlags(item));
       if (fresh.length > 0) {
-        await saveItems(paths.itemsDir, fresh);
+        // Dry-run mode (e.g. `radar source test`): preview matches without
+        // writing item YAMLs. We still record the ids in the working
+        // `seenIds` set below so the in-memory `nextState` is consistent,
+        // but `saveSourceState` is skipped further down so nothing leaks
+        // to disk.
+        if (!options.dryRun) {
+          await saveItems(paths.itemsDir, fresh);
+        }
         for (const item of fresh) seenIds.add(item.id);
       }
       // Always add every fetched id to seen — even items that failed the
@@ -345,7 +363,12 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       lastEtag: nextStatePatch.lastEtag ?? previousState.lastEtag,
       lastSeenIds: Array.from(seenIds),
     };
-    await saveSourceState(paths.stateDir, nextState);
+    // In dry-run mode we still surface the would-be state through
+    // `result.states` so callers can introspect the projected delta, but we
+    // never persist it.
+    if (!options.dryRun) {
+      await saveSourceState(paths.stateDir, nextState);
+    }
     result.detected[source.id] = detectedItems;
     result.states[source.id] = nextState;
   }
