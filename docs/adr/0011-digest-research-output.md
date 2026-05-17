@@ -217,7 +217,7 @@ digest 生成は次の 2 つの side effect を持つ:
 templateId: digest
 ```
 
-#### 解決順序（[`loadTemplate(id, dir)`](../../src/templates.ts) の挙動）
+#### 解決順序（[`loadTemplate(id, dir)`](../../src/core/templates.ts) の挙動）
 
 1. user workspace の `templates/digest.md` が存在すれば、それを使う（ユーザー上書き）
 2. 存在しなければ、`init` でバンドルされた default `templates/digest.md` を使う（[ADR-0007 5 層構成](./0007-skill-bundling-and-init-distribution.md)）
