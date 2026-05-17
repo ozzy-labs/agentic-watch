@@ -4,10 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@ozzylabs/agentic-watch': 'link:'
+
 importers:
 
   .:
     dependencies:
+      '@ozzylabs/agentic-watch':
+        specifier: 'link:'
+        version: 'link:'
       fast-xml-parser:
         specifier: ^5.7.3
         version: 5.7.3
