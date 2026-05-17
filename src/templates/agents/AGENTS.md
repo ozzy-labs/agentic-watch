@@ -78,7 +78,7 @@ agentic-watch dismiss <item-id>                       # LLM 不要、item を di
 | Agent | 発火形式 | 読まれるファイル |
 |---|---|---|
 | Claude Code | `/research <id>` | `.claude/skills/research/SKILL.md` |
-| Copilot CLI | `/research <id>` | `.claude/skills/` および `.agents/skills/` (両方) |
+| Copilot CLI | `/research <id>` | `.github/skills/` / `.claude/skills/` / `.agents/skills/` (3 つすべて auto-read) |
 | Gemini CLI | `/research <id>` | `.gemini/commands/research.toml` |
 | Codex CLI | `$research` mention / `/skills` panel | `.agents/skills/research/SKILL.md` (dual-mode) |
 
