@@ -38,11 +38,18 @@ jobs:
       # tarball を inspect して link: が含まれていないことを確認する。
       - name: Verify no self-link in packed manifest
         run: |
+          shopt -s nullglob
           pnpm pack --pack-destination /tmp
           tarballs=(/tmp/ozzylabs-agentic-watch-*.tgz)
+          if (( ${#tarballs[@]} == 0 )); then
+            echo "ERROR: pnpm pack produced no tarball."
+            exit 1
+          fi
           tarball="${tarballs[0]}"
-          packed=$(tar -xzOf "$tarball" package/package.json)
-          if echo "$packed" | grep -q '"link:"'; then
+          packed=$(tar -xz --to-stdout -f "$tarball" package/package.json)
+          # link: の後にパスがある形式 ("link:../foo") も空 path ("link:") も両方
+          # 検出するため、quote 内の link: 接頭辞のみで match する。
+          if echo "$packed" | grep -qE '"link:[^"]*"'; then
             echo "ERROR: 'link:' specifier found in packed package.json — refusing to publish."
             echo "$packed"
             exit 1
