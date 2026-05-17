@@ -1,6 +1,6 @@
 # User Guide
 
-> **Status**: alpha — Phase 1-5 まで実装済み (7 サブコマンド + 4 agent × 4 source kind + cron 雛形)。Phase 6 (OIDC Trusted Publishers での `0.1.0` npm publish) 待機中。
+> **Status**: alpha — Phase 1-6 完了 (7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 公開)。
 > 本ドキュメントは現行 CLI 仕様を記述する。実装と乖離している箇所は issue で報告してほしい。
 
 ## インストール

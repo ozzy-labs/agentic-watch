@@ -1,6 +1,6 @@
 # FeedRadar
 
-> **Status: alpha** — Phase 1-5 まで実装済み（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策）。Phase 6（OIDC Trusted Publishers での `0.1.0` npm publish）待機中。
+> **Status: alpha** — Phase 1-6 完了（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策 + OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 公開）。
 
 ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex / Gemini / Copilot) に渡して **Markdown 調査レポートを書かせる CLI**。
 
@@ -13,12 +13,11 @@
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
 - **複数フィード種別**: RSS / HTML スクレイプ / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
-- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開予定（Phase 6）。
+- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開。
 
-## インストール（予定）
+## インストール
 
 ```bash
-# 初版公開後に有効化される
 npm i -g @ozzylabs/feedradar
 ```
 
@@ -59,7 +58,7 @@ pnpm radar --help        # = node dist/index.js --help (package.json scripts の
 node dist/index.js --help        # 等価
 ```
 
-> ローカルの `pnpm FeedRadar <cmd>` は `package.json` の `scripts.FeedRadar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `FeedRadar <cmd>` は `package.json` の `bin.FeedRadar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> FeedRadar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
+> ローカルの `pnpm radar <cmd>` は `package.json` の `scripts.radar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `radar <cmd>` は `package.json` の `bin.radar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> radar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
 
 ## アーキテクチャ概要
 
