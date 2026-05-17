@@ -2,7 +2,7 @@ English | [日本語](README.ja.md)
 
 # FeedRadar
 
-> **Status: alpha** — Phases 1-6 complete (7 subcommands × 4 agent adapters × 4 feed kinds + cron scaffolding + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) adoption + `@ozzylabs/feedradar` v0.1.0 published to npm). Subsequent releases publish automatically via OIDC Trusted Publishers in the sibling-style `release.yaml` (procedure: [docs/release.md](./docs/release.md)).
+> Phases 1-6 complete: 7 subcommands × 4 agent adapters × 4 feed kinds + cron scaffolding + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) adoption. `@ozzylabs/feedradar` is on npm; subsequent releases publish automatically via OIDC Trusted Publishers in `release.yaml` (procedure: [docs/release.md](./docs/release.md)).
 
 CLI that watches blogs, official update streams, and release feeds, then hands keyword hits to one of four AI agents (Claude Code / Codex / Gemini / Copilot) to **produce Markdown research reports**.
 
