@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir } from "node:fs/promises";
+import { access, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "./index.js";
@@ -141,6 +141,22 @@ interface InitOptions {
    */
   noAgentsMd?: boolean;
   /**
+   * Skip writing `<cwd>/CLAUDE.md`. By default `init` writes a minimal
+   * `CLAUDE.md` at the workspace root that re-exports `AGENTS.md` via the
+   * `@AGENTS.md` import directive. Without `CLAUDE.md`, Claude Code does
+   * not auto-read `AGENTS.md`, so the industry-standard pattern of "single
+   * source of truth in AGENTS.md, imported by CLAUDE.md" breaks.
+   *
+   * Useful for workspaces that already manage their own `CLAUDE.md` (and
+   * load `AGENTS.md` via a different mechanism) or that don't use Claude
+   * Code at all.
+   *
+   * Note: when `noAgentsMd` is true, the bundled `CLAUDE.md` template's
+   * `@AGENTS.md` import would dangle, so `init` auto-skips `CLAUDE.md` in
+   * that case and emits a warning explaining why.
+   */
+  noClaudeMd?: boolean;
+  /**
    * Skip writing `<cwd>/templates/default.md`. By default `init` emits a
    * starter Markdown template body that mirrors the engine `research`
    * SKILL's fallback structure (要約 / 詳細 / 出典). The file is the
@@ -175,6 +191,22 @@ interface InitResult {
 }
 
 const WORKSPACE_DIRS = ["sources", "state", "items", "research", "templates"] as const;
+
+/**
+ * Data directories that receive a `.gitkeep` placeholder so the empty
+ * directory survives an initial `git add .` commit.
+ *
+ * AGENTS.md's "データ管理ポリシー" recommends committing `sources/` / `items/`
+ * / `state/` / `research/` to git (state preservation for scheduled runs,
+ * audit trail for research history). Git does not track empty directories,
+ * so without a placeholder, a user who runs `init` and then `git add .`
+ * loses the directory layout entirely.
+ *
+ * `templates/` is intentionally excluded — the bundled `default.md` ships
+ * via a separate `init` codepath (see ADR-0007 follow-up) and serves as
+ * its own placeholder.
+ */
+const GITKEEP_DIRS = ["sources", "items", "state", "research"] as const;
 
 /**
  * Engine SKILLs (SSoT): canonical procedure documents that the agent adapter
@@ -249,6 +281,24 @@ const AGENTS_MD_SCAFFOLD = {
 } as const;
 
 /**
+ * Bundled minimal Claude Code workspace instructions emitted by default at
+ * the workspace root. The template re-exports `AGENTS.md` via the
+ * `@AGENTS.md` import directive so that the SSoT for cross-agent
+ * instructions stays in `AGENTS.md` while Claude Code (which does NOT
+ * auto-read `AGENTS.md`) still gets the workspace context the moment a
+ * user opens an interactive session.
+ *
+ * When `--no-agents-md` is also passed, the `@AGENTS.md` import would
+ * dangle, so `init` auto-skips this scaffold (emit a warning).
+ *
+ * See ADR-0007 (revised 2026-05-17 b) for the multi-layer init bundle.
+ */
+const CLAUDE_MD_SCAFFOLD = {
+  src: "claude/CLAUDE.md",
+  dest: ["CLAUDE.md"] as const,
+} as const;
+
+/**
  * Bundled starter Markdown template emitted by default into
  * `<cwd>/templates/default.md`. The body mirrors the engine `research`
  * SKILL's fallback structure (要約 / 詳細 / 出典) so editing it has an
@@ -317,6 +367,24 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     const abs = join(cwd, dir);
     await mkdir(abs, { recursive: true });
     createdDirs.push(dir);
+  }
+
+  // Place a `.gitkeep` in each data directory so an empty workspace survives
+  // the user's first `git add .`. AGENTS.md's "データ管理ポリシー" recommends
+  // committing these directories (state preservation across scheduled runs,
+  // audit trail), which is impossible without a tracked placeholder file.
+  //
+  // Always create when missing, regardless of `--force` — a 0-byte placeholder
+  // has no user content worth protecting. Existing `.gitkeep` files (or any
+  // other content the user may have placed at that path) are left untouched
+  // to avoid surprising overwrites.
+  for (const dir of GITKEEP_DIRS) {
+    const gitkeepPath = join(cwd, dir, ".gitkeep");
+    if (await pathExists(gitkeepPath)) {
+      continue;
+    }
+    await writeFile(gitkeepPath, "", "utf8");
+    copiedFiles.push(`${dir}/.gitkeep`);
   }
 
   const skillsRoot = options.skillsRoot ?? (await resolveSkillsRoot());
@@ -413,6 +481,29 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
+  // CLAUDE.md is auto-skipped when AGENTS.md is also skipped, because the
+  // bundled CLAUDE.md template re-exports AGENTS.md via `@AGENTS.md` and
+  // that import would otherwise dangle. Users who want CLAUDE.md without
+  // AGENTS.md should manage CLAUDE.md themselves.
+  if (!options.noClaudeMd) {
+    if (options.noAgentsMd) {
+      warn(
+        "init: skipped CLAUDE.md because --no-agents-md was passed (the bundled CLAUDE.md imports @AGENTS.md and would dangle)",
+      );
+      skippedFiles.push("CLAUDE.md");
+    } else {
+      await emitScaffold({
+        cwd,
+        force,
+        templatesRoot: options.templatesRoot,
+        scaffold: CLAUDE_MD_SCAFFOLD,
+        copiedFiles,
+        skippedFiles,
+        warn,
+      });
+    }
+  }
+
   if (!options.noTemplates) {
     await emitScaffold({
       cwd,
@@ -505,6 +596,7 @@ interface ParsedArgs {
   noClaudeSkills: boolean;
   noGeminiCommands: boolean;
   noAgentsMd: boolean;
+  noClaudeMd: boolean;
   noTemplates: boolean;
   help: boolean;
 }
@@ -516,6 +608,7 @@ function parseArgs(args: string[]): ParsedArgs {
   let noClaudeSkills = false;
   let noGeminiCommands = false;
   let noAgentsMd = false;
+  let noClaudeMd = false;
   let noTemplates = false;
   let help = false;
   for (const arg of args) {
@@ -531,6 +624,8 @@ function parseArgs(args: string[]): ParsedArgs {
       noGeminiCommands = true;
     } else if (arg === "--no-agents-md") {
       noAgentsMd = true;
+    } else if (arg === "--no-claude-md") {
+      noClaudeMd = true;
     } else if (arg === "--no-templates") {
       noTemplates = true;
     } else if (arg === "-h" || arg === "--help") {
@@ -544,6 +639,7 @@ function parseArgs(args: string[]): ParsedArgs {
     noClaudeSkills,
     noGeminiCommands,
     noAgentsMd,
+    noClaudeMd,
     noTemplates,
     help,
   };
@@ -560,15 +656,14 @@ export const initCommand: Command = {
       noClaudeSkills,
       noGeminiCommands,
       noAgentsMd,
+      noClaudeMd,
       noTemplates,
       help,
     } = parseArgs(args);
     if (help) {
       console.log("Usage: agentic-watch init [--force] [--with-routines] [--with-actions]");
-      console.log(
-        "                          [--no-claude-skills] [--no-gemini-commands] [--no-agents-md]",
-      );
-      console.log("                          [--no-templates]");
+      console.log("                          [--no-claude-skills] [--no-gemini-commands]");
+      console.log("                          [--no-agents-md] [--no-claude-md] [--no-templates]");
       console.log("");
       console.log("Creates the workspace directories and copies bundled skills:");
       console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
@@ -580,6 +675,9 @@ export const initCommand: Command = {
       );
       console.log(
         "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
+      );
+      console.log(
+        "  - Claude Code workspace instructions: CLAUDE.md (imports @AGENTS.md so Claude reads it)",
       );
       console.log(
         "  - Starter report template: templates/default.md (editable; mirrors research SKILL fallback)",
@@ -607,7 +705,14 @@ export const initCommand: Command = {
       );
       console.log("  --no-agents-md         Skip writing AGENTS.md at the workspace root");
       console.log(
-        "                         (useful if the workspace already has its own AGENTS.md)",
+        "                         (useful if the workspace already has its own AGENTS.md;",
+      );
+      console.log(
+        "                          implies --no-claude-md since the bundled CLAUDE.md imports @AGENTS.md)",
+      );
+      console.log("  --no-claude-md         Skip writing CLAUDE.md at the workspace root");
+      console.log(
+        "                         (useful if the workspace already has its own CLAUDE.md)",
       );
       console.log("  --no-templates         Skip writing templates/default.md starter template");
       console.log(
@@ -623,6 +728,7 @@ export const initCommand: Command = {
       noClaudeSkills,
       noGeminiCommands,
       noAgentsMd,
+      noClaudeMd,
       noTemplates,
     });
     return 0;

@@ -16,15 +16,17 @@
 ├── research/          # 調査レポート (Markdown + frontmatter)
 ├── templates/         # Markdown テンプレート (編集可)
 ├── .agents/skills/    # 4 CLI 共通 engine SKILL (SSoT)
-└── .claude/skills/    # Claude Code 用 slash-command 雛形
+├── .claude/skills/    # Claude Code 用 slash-command 雛形
+└── .gemini/commands/  # Gemini CLI 用 slash-command 定義 (TOML)
 ```
 
 ## 主要コマンド
 
 ```bash
 # Workspace 初期化
-agentic-watch init                          # 既定: AGENTS.md + skills + templates/default.md + dirs を生成
-agentic-watch init --no-agents-md           # AGENTS.md 生成を skip
+agentic-watch init                          # 既定: CLAUDE.md + AGENTS.md + skills + templates/default.md + dirs を生成
+agentic-watch init --no-agents-md           # AGENTS.md 生成を skip (CLAUDE.md も自動 skip)
+agentic-watch init --no-claude-md           # CLAUDE.md 生成を skip
 agentic-watch init --no-claude-skills       # .claude/skills/ を skip
 agentic-watch init --no-gemini-commands     # .gemini/commands/ を skip
 agentic-watch init --no-templates           # templates/default.md 生成を skip
@@ -97,6 +99,8 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 - 定期実行 scheduler (Claude Routines / GitHub Actions) は実行ごとに fresh clone を行うため、`state/*.yaml` の `lastSeenIds` が引き継がれないと毎回全件再検出してしまう
 - `research/` を git で管理すると、過去レポートの履歴・差分が追える (ADR-0003 で immutable history を採用)
 - `items/` の status 遷移 (`detected` → `researched` → `reviewed`) も git 履歴に残る
+
+`init` は `sources/` `items/` `state/` `research/` に `.gitkeep` placeholder を配置するため、初期状態 (中身が空) でも `git add .` でディレクトリ構造が消えずに追跡されます。
 
 詳細は `agentic-watch` リポジトリの [`docs/user-guide.md`](https://github.com/ozzy-labs/agentic-watch/blob/main/docs/user-guide.md) を参照してください。
 
