@@ -210,15 +210,18 @@ function printAddHelp(log: (m: string) => void): void {
   log("Usage: radar source add <id> --kind <kind> --url <url> [options]");
   log("");
   log("Options:");
-  log("  --kind <kind>            rss | html | github-releases | npm-registry");
+  log("  --kind <kind>            rss | html | html-js | github-releases | npm-registry");
   log("  --url <url>              fetch target URL");
   log("  --name <name>            display name (defaults to <id>)");
   log("  --tags <a,b>             comma-separated tags");
   log("  --keywords <a,b>         comma-separated include keywords");
   log("                           (required for useful output — empty = match nothing)");
   log("  --exclude-keywords <a,b> comma-separated exclude keywords");
-  log("  --selector-<field> <css> CSS selector for kind=html (required: item, title, link)");
+  log("  --selector-<field> <css> CSS selector for kind=html / html-js (required: item, title, link)");
   log("                           optional: summary, publishedAt, body, tags");
+  log("                           For kind=html-js, selectors evaluate against the post-JS DOM.");
+  log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");
+  log("                           via flags; edit sources/<id>.yaml after add. See ADR-0010.");
 }
 
 function printListHelp(log: (m: string) => void): void {
@@ -296,7 +299,7 @@ export async function addSource(
   const kindResult = SourceKindSchema.safeParse(parsed.kind);
   if (!kindResult.success) {
     error(
-      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | github-releases | npm-registry)`,
+      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry)`,
     );
     return 2;
   }
