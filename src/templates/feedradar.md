@@ -111,7 +111,7 @@ slash で直接呼ぶなら:
 エージェントを起動しない自動化文脈では CLI を直接呼びます。`radar <subcommand> --help` で全コマンドのヘルプが出ます。
 
 ```bash
-radar source add <id> --kind <rss|html|github-releases|npm-registry> --url <url> [options]
+radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
 radar source list
 radar source remove <id>
 radar watch run [--source <id>] [--bootstrap]
@@ -152,7 +152,7 @@ radar dismiss <item-id>
 
 ## セキュリティ警告
 
-FeedRadar が fetch する外部 feed (RSS / HTML / GitHub Releases / npm registry) は **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+FeedRadar が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry) は **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - 信頼できる公式 source のみ登録するのが第一の防御線
 - `sources/<id>.yaml` の `trustLevel: trusted` で個別 opt-in 可 (既定 `untrusted`)
