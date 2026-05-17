@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir } from "node:fs/promises";
+import { access, copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "./index.js";
@@ -164,6 +164,22 @@ interface InitResult {
 const WORKSPACE_DIRS = ["sources", "state", "items", "research", "templates"] as const;
 
 /**
+ * Data directories that receive a `.gitkeep` placeholder so the empty
+ * directory survives an initial `git add .` commit.
+ *
+ * AGENTS.md's "データ管理ポリシー" recommends committing `sources/` / `items/`
+ * / `state/` / `research/` to git (state preservation for scheduled runs,
+ * audit trail for research history). Git does not track empty directories,
+ * so without a placeholder, a user who runs `init` and then `git add .`
+ * loses the directory layout entirely.
+ *
+ * `templates/` is intentionally excluded — the bundled `default.md` ships
+ * via a separate `init` codepath (see ADR-0007 follow-up) and serves as
+ * its own placeholder.
+ */
+const GITKEEP_DIRS = ["sources", "items", "state", "research"] as const;
+
+/**
  * Engine SKILLs (SSoT): canonical procedure documents that the agent adapter
  * reads when the CLI spawns claude/codex/gemini/copilot. They land at
  * `<cwd>/.agents/skills/<name>/SKILL.md`.
@@ -285,6 +301,24 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     const abs = join(cwd, dir);
     await mkdir(abs, { recursive: true });
     createdDirs.push(dir);
+  }
+
+  // Place a `.gitkeep` in each data directory so an empty workspace survives
+  // the user's first `git add .`. AGENTS.md's "データ管理ポリシー" recommends
+  // committing these directories (state preservation across scheduled runs,
+  // audit trail), which is impossible without a tracked placeholder file.
+  //
+  // Always create when missing, regardless of `--force` — a 0-byte placeholder
+  // has no user content worth protecting. Existing `.gitkeep` files (or any
+  // other content the user may have placed at that path) are left untouched
+  // to avoid surprising overwrites.
+  for (const dir of GITKEEP_DIRS) {
+    const gitkeepPath = join(cwd, dir, ".gitkeep");
+    if (await pathExists(gitkeepPath)) {
+      continue;
+    }
+    await writeFile(gitkeepPath, "", "utf8");
+    copiedFiles.push(`${dir}/.gitkeep`);
   }
 
   const skillsRoot = options.skillsRoot ?? (await resolveSkillsRoot());
