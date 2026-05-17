@@ -52,7 +52,8 @@ describe("cli/init", () => {
 
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
     // Scope this test to the engine SKILLs only — claude discovery skills,
-    // gemini commands, and AGENTS.md get their own describe blocks below.
+    // gemini commands, AGENTS.md, and CLAUDE.md get their own describe
+    // blocks below.
     const result = await initWorkspace({
       cwd: workdir,
       force: false,
@@ -60,6 +61,7 @@ describe("cli/init", () => {
       noClaudeSkills: true,
       noGeminiCommands: true,
       noAgentsMd: true,
+      noClaudeMd: true,
       warn: (m) => warnings.push(m),
       info: () => undefined,
     });
@@ -615,6 +617,117 @@ describe("cli/init", () => {
       expect(body).toContain("review");
       expect(body).toContain("update");
       expect(body).toContain("dismiss");
+    });
+  });
+
+  describe("claude.md (workspace-root CLAUDE.md re-exporting AGENTS.md)", () => {
+    // Without CLAUDE.md, Claude Code does not auto-read AGENTS.md, so the
+    // industry-standard "SSoT in AGENTS.md, imported by CLAUDE.md" pattern
+    // breaks. Default-on at workspace root; opt-out via `noClaudeMd`. Also
+    // auto-skipped when `noAgentsMd` is true to avoid a dangling import.
+
+    it("emits <cwd>/CLAUDE.md by default with @AGENTS.md import", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const dest = join(workdir, "CLAUDE.md");
+      expect(await pathExists(dest)).toBe(true);
+      const body = await readFile(dest, "utf8");
+      expect(body).toContain("# CLAUDE.md");
+      // The minimal template re-exports AGENTS.md so Claude Code reads it.
+      expect(body).toContain("@AGENTS.md");
+      expect(result.copiedFiles).toContain("CLAUDE.md");
+    });
+
+    it("skips CLAUDE.md when noClaudeMd: true", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noClaudeMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "CLAUDE.md"))).toBe(false);
+      const claudeEntries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "CLAUDE.md",
+      );
+      expect(claudeEntries).toEqual([]);
+    });
+
+    it("auto-skips CLAUDE.md when noAgentsMd: true (with warning)", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "CLAUDE.md"))).toBe(false);
+      expect(await pathExists(join(workdir, "AGENTS.md"))).toBe(false);
+      expect(result.skippedFiles).toContain("CLAUDE.md");
+      // Warning should mention the dangling-import rationale.
+      expect(warnings.some((m) => m.includes("CLAUDE.md") && m.includes("--no-agents-md"))).toBe(
+        true,
+      );
+    });
+
+    it("protects existing CLAUDE.md without --force", async () => {
+      const dest = join(workdir, "CLAUDE.md");
+      await writeFile(dest, "user-edited claude instructions", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited claude instructions");
+      expect(result.skippedFiles).toContain("CLAUDE.md");
+      expect(warnings.some((m) => m.includes("CLAUDE.md"))).toBe(true);
+    });
+
+    it("overwrites existing CLAUDE.md with --force", async () => {
+      const dest = join(workdir, "CLAUDE.md");
+      await writeFile(dest, "user-edited claude instructions", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited claude instructions");
+      expect(body).toContain("@AGENTS.md");
+      expect(result.copiedFiles).toContain("CLAUDE.md");
     });
   });
 });
