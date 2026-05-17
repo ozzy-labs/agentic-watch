@@ -1,6 +1,6 @@
 {
   "name": "@ozzylabs/agentic-watch",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Multi-agent CLI that watches blogs and release feeds, then turns keyword hits into Markdown research reports",
   "type": "module",
   "publishConfig": {
