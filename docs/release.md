@@ -40,10 +40,12 @@ pnpm run test
 npm login
 
 # Trusted Publisher が未設定なので一時的にトークン publish
-npm publish --provenance --access public
+# --provenance はローカル publish では使えない (npm が CI provider を
+# 要求する — GitHub Actions / GitLab CI のみ)。本コマンドからは外す
+npm publish --access public
 ```
 
-`--provenance` を付けると Sigstore attestation も発行される（OIDC 経由ではないが、CI 環境変数 (GitHub Actions / GitLab CI) が必要。ローカル publish では provenance なしになる場合がある — `--provenance` フラグは試して fallback でよい）。
+初回 publish の provenance attestation は付かない。2 回目以降は workflow が `release.yaml` で `--provenance` 付きで publish するので、v0.1.1+ から Sigstore attestation が付与される。
 
 publish 後の確認:
 
@@ -84,7 +86,7 @@ npmjs.org に sign in し、`@ozzylabs/feedradar` の package settings → Publi
 |---|---|---|
 | publish job が `403 Forbidden` | Trusted Publisher 未登録 / workflow filename mismatch | npmjs.org の package settings → Publishing を確認 |
 | publish job が `OIDC token not available` | `id-token: write` 権限欠落 | `release.yaml:9-11` の permissions を確認 |
-| `pnpm pack` 出力に self-link が混入 | workspace 設定で `@ozzylabs/feedradar: "link:"` が紛れ込んだ | publish job の self-link guard ([PR #93](https://github.com/ozzy-labs/feedradar/pull/93) 由来) が fail する。`package.json` を直接確認 |
+| `npm pack` 出力に self-link が混入 | workspace 設定で `@ozzylabs/feedradar: "link:"` が紛れ込んだ | publish job の self-link guard ([PR #93](https://github.com/ozzy-labs/feedradar/pull/93) 由来、PR #102 で `npm pack` ベースに移行) が fail する。`package.json` を直接確認 |
 | `radar --version` が古いまま | release-please の bump が src に届いていない | 本リポは `src/cli/index.ts` で `package.json` を runtime 読み込みするので bump 後は自動更新される (PR #104)。古い場合は build を疑う |
 | version skew (npm と GitHub Release のタグが不一致) | 手動 publish 時に tag と異なる commit から build した | `git checkout v<version>` 直後の build かを確認 |
 
