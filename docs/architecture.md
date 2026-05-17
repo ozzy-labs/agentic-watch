@@ -155,7 +155,7 @@ Status は `items/*.yaml` に保存され、CLI が遷移を駆動。詳細・wr
 
 - ETag / Last-Modified を返すサーバ（多くの RSS / 静的 HTML / GitHub API / npm registry）に対しては、変更がない期間 `watch run` の body 転送量がほぼゼロになる
 - content-hash フォールバックは body を取得するため転送量は減らないが、**parse / filter / injection 評価**をスキップできるので CPU コストは削減できる
-- `kind: html-js` は Chromium 起動コストが支配的なため、condition-hash でスキップできても fetch 時間はあまり減らない（このため `kind: html` で取れるなら優先）
+- `kind: html-js` は Chromium 起動コストが支配的なため、content-hash でスキップできても fetch 時間はあまり減らない（このため `kind: html` で取れるなら優先）
 
 ## クロスエージェント運用
 
