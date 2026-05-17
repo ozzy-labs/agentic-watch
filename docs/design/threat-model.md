@@ -1,6 +1,6 @@
 # Threat Model: Prompt Injection via External Feeds
 
-FeedRadar が外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡し、それらが **YOLO / skip-permissions モード**で起動されるという設計上の前提から発生する攻撃シナリオと、その緩和策の整理。
+FeedRadar が外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry) から取得した item content を 4 種の agent CLI に渡し、それらが **YOLO / skip-permissions モード**で起動されるという設計上の前提から発生する攻撃シナリオと、その緩和策の整理。
 
 実装は本書では決めず、選択した緩和策の採否は [ADR-0009](../adr/0009-untrusted-external-content-handling.md) で決定する。本書は **threat surface のカタログ**として運用し、新しい source kind や agent CLI を追加する際の差分判定に使う。
 
@@ -26,12 +26,13 @@ FeedRadar が外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取
 
 ### A. Source kind 別の信頼境界
 
-| Source kind | コントロール元 | 典型例 | 攻撃難易度 |
-|---|---|---|---|
-| `rss` | サイト運営者 | blog feed | 中 (運営者が認証アカウントを持つサイトを乗っ取れば成立) |
-| `html` | サイト運営者 | 任意の web ページ scraping | 中〜低 (selector の指し先によっては UGC が混じる) |
-| `github-releases` | リポジトリ owner / collaborator | OSS リリースノート | 中 (PR description / release body は contributors が書ける) |
-| `npm-registry` | パッケージ maintainer | packument | 中 (typosquat / 乗っ取り maintainer による update notes 改竄) |
+| Source kind | コントロール元 | 典型例 | 攻撃難易度 | 追加 attack surface |
+|---|---|---|---|---|
+| `rss` | サイト運営者 | blog feed | 中 (運営者が認証アカウントを持つサイトを乗っ取れば成立) | 低 |
+| `html` | サイト運営者 | 任意の web ページ scraping | 中〜低 (selector の指し先によっては UGC が混じる) | 低 (node-html-parser のみ、JS 実行なし) |
+| `html-js` | サイト運営者 | SPA / CSR ベースの changelog (Next.js / Notion 等) | 中〜低 (同上 + Chromium で page JS 実行のため、JS 由来の追加攻撃面あり) | **中** (WebRTC IP 漏洩 / drive-by download / 巨大ページ OOM / V8 0-day による sandbox escape 等。詳細は §C と [ADR-0010](../adr/0010-html-js-adapter-and-distribution.md)) |
+| `github-releases` | リポジトリ owner / collaborator | OSS リリースノート | 中 (PR description / release body は contributors が書ける) | 低 |
+| `npm-registry` | パッケージ maintainer | packument | 中 (typosquat / 乗っ取り maintainer による update notes 改竄) | 低 |
 
 **共通点**: いずれも `radar` 自身ではコンテンツを保証できない。**運営者が善意であっても**:
 
@@ -39,6 +40,7 @@ FeedRadar が外部 feed (RSS / HTML / GitHub Releases / npm-registry) から取
 - contributor の悪意ある PR description
 - HTML ページの UGC コメント欄を CSS selector が含めてしまう
 - npm の `description` / `readme` フィールドへの注入
+- SPA の場合は更に: 第三者 CDN から読まれる JS bundle / 動的に挿入される広告 SDK (`kind: html-js`)
 
 → **すべての source kind は untrusted として扱う**ことが前提。
 
@@ -71,6 +73,35 @@ agent prompt の構成上、`title` / `summary` / `raw` の 3 フィールドが
 これは [ADR-0001](../adr/0001-agent-adapter-interface.md) で「outputPath への書き込みは agent 側に委ねる」と決めた以上必然 (非対話モード完結のため)。`radar` 側で human-in-the-loop は構造的に挿入できない。
 
 → **agent CLI が item content の中の指示を実行すれば、その agent のユーザーホスト上での全権限が攻撃者に渡る**。
+
+### C-2. `kind: html-js` 固有の権限境界 (Chromium プロセス)
+
+`kind: html-js` adapter は内部で Playwright Chromium を起動して page JS を実行する。Chromium プロセスは **FeedRadar プロセスとは別の OS process** で動作し、内蔵 sandbox + headless により page JS は FeedRadar ホスト上の sensitive ファイル (`~/.ssh/`, `~/.aws/credentials`, `.env` 等) に **直接アクセスできない**。
+
+| 隔離レイヤー | 効果 | 残るリスク |
+|---|---|---|
+| OS process 境界 | FeedRadar プロセスのメモリ / fd を共有しない | Chromium プロセスは agent CLI 起動前に exit する設計のため lethal trifecta の "exfiltration" 経路は agent 起動後に限定 |
+| Chromium 内蔵 sandbox (seccomp + namespace + setuid) | page JS が host filesystem / network namespace に直接アクセス不可 | V8 0-day による sandbox escape (上流 Chromium 脆弱性次第) |
+| `headless: true` (強制) | UI 表示なし、operator UI 偶発操作のリスクなし | (なし) |
+| `accept_downloads: false` (強制) | drive-by download (`Content-Disposition: attachment` を抑制) | page JS が `fetch()` で取得した payload を `Blob` / DataURL 経由で agent prompt に乗せる経路は残る → M1c boundary marker で wrap して防御 |
+| fresh `context` per fetch (強制) | Service Worker / IndexedDB / localStorage 永続化を防ぐ、cross-source の状態混入を防ぐ | (なし) |
+| `timeout` 30 秒 デフォルト | 巨大ページの OOM / 無限 loop hang を防ぐ | timeout 内で実行された injection payload は通常通り extract される |
+| `page.close()` を `finally` で保証 | メモリリーク防止 | (なし) |
+
+詳細な policy は [ADR-0010 §D5](../adr/0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件) を参照。
+
+#### html-js 固有のリスクと対応
+
+| リスク | 説明 | 対応 |
+|---|---|---|
+| WebRTC IP 漏洩 | page JS が `RTCPeerConnection` で local IP を取得し外部送信 | Chromium プロセスは FeedRadar ホストから隔離。漏洩するのは Chromium が見る container/namespace 内の IP のみ。FeedRadar 側で WebRTC 無効化は **将来検討** (現在は許容) |
+| drive-by download | page JS が `Content-Disposition: attachment` の URL を fetch して file 保存 | `accept_downloads: false` で遮断 |
+| 巨大ページ OOM | 無限 scroll / 巨大 DOM で Chromium プロセスがメモリを食い尽くす | `timeout: 30s` + Chromium プロセスは別 OS process のため FeedRadar 本体は影響を受けない |
+| Service Worker / IndexedDB 永続化 | 1 回目の injection payload を SW に登録、2 回目以降の fetch で異なる挙動 | fresh context per fetch で SW を毎回廃棄 |
+| Chromium 自体の 0-day | V8 / Blink の memory safety bug による sandbox escape | ユーザー側で `npx playwright install` を定期実行して最新 binary を維持 (ADR-0009 「Chromium バイナリ脆弱性追跡責任」セクション参照) |
+| 第三者 CDN JS の悪意化 | page が読む analytics / 広告 SDK が乗っ取られて injection を注入 | M1a regex pre-filter + M1c boundary marker で agent prompt 側で防御 (既存スタックがそのまま機能) |
+
+**`html-js` 採用による全体的な評価**: agent CLI と比較すると Chromium プロセスは sandbox による強い隔離があり、`html-js` を追加しても **lethal trifecta の "sensitive data access" レイヤーで悪化はしない** (agent CLI 起動時点で既に全権限が攻撃者に渡る前提)。むしろ Chromium 経由で取得される item content は通常の HTML 経由と同様に **untrusted item として M1c boundary marker でラップされる** ため、agent 側の防御スタックがそのまま機能する。
 
 ## 想定される被害 (impact)
 

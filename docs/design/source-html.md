@@ -103,7 +103,7 @@ state schema を破壊変更せずに済ませるため、HTML adapter は `last
 
 ## スコープ外
 
-- JavaScript rendering (Playwright / Puppeteer) — 別 Phase
+- JavaScript rendering (Playwright / Puppeteer) — 新 `kind: html-js` adapter として別途実装。詳細は [ADR-0010 html-js Adapter and Playwright Distribution](../adr/0010-html-js-adapter-and-distribution.md) 参照
 - 認証付き scraping — 別 Phase
 - robots.txt 自動遵守 — 信頼できる feed source のみ登録する運用前提 (user-guide.md "セキュリティ" 節を参照)
 - 動的 selectors (XPath / 正規表現) — 必要に応じて別 issue
