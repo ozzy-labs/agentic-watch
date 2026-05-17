@@ -1,2 +1,22 @@
 extends:
   - lefthook-base.yaml
+
+# Repo-specific additions.
+# `lefthook-base.yaml` (shared via ozzy-labs/commons) does not include biome
+# because not every consumer uses TypeScript. We add it locally so format /
+# lint errors are caught at commit time instead of slipping into main and
+# only surfacing in CI's `Lint (Biome)` step. See PR #126 for the incident
+# (#123 / #124 / #125 all merged with broken `ci` job before detection).
+#
+# Notes on the merge model:
+# - `extends` is base-wins for same-key commands (see base header comment),
+#   but `pre-commit.commands.biome` is a new key, so this addition does not
+#   collide with the base `shell` / `markdownlint` / `yaml` / `taplo` /
+#   `gitleaks` / `trivy` commands.
+# - `parallel: true` is inherited from the base.
+pre-commit:
+  commands:
+    biome:
+      glob: "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,json,jsonc}"
+      run: mise exec -- biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
