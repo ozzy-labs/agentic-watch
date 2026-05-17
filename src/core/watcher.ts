@@ -119,6 +119,18 @@ export interface WatchRunResult {
   states: Record<string, SourceState>;
   /** Sources that errored during fetch/parse, so the CLI can exit non-zero. */
   errors: Array<{ sourceId: string; message: string }>;
+  /**
+   * Per-source pipeline counts. `fetched` is the raw item count returned by
+   * the adapter (before filter / dedup), `filtered` is how many passed the
+   * keyword filter. Populated for every source the run touched, including
+   * `bootstrap` and `304 not modified` paths (where `filtered` is 0).
+   *
+   * Used primarily by `radar source test` (#133) to print a fetched / filtered
+   * / matched summary; `radar watch run` does not need it for its current
+   * stdout format but the field exists unconditionally to keep the result
+   * shape stable across `dryRun` / non-`dryRun` callers.
+   */
+  stats: Record<string, { fetched: number; filtered: number }>;
 }
 
 function defaultPaths(opts: WorkspacePaths): Required<WorkspacePaths> {
@@ -205,10 +217,10 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     } else {
       log("watch run: no sources defined (use `radar source add ...`)");
     }
-    return { detected: {}, states: {}, errors: [] };
+    return { detected: {}, states: {}, errors: [], stats: {} };
   }
 
-  const result: WatchRunResult = { detected: {}, states: {}, errors: [] };
+  const result: WatchRunResult = { detected: {}, states: {}, errors: [], stats: {} };
 
   // Lazy Playwright probe cache. We only run the probe when the first
   // `html-js` source comes up so RSS / GitHub / npm-only workspaces never pay
@@ -300,6 +312,12 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
 
     const seenIds = new Set(previousState.lastSeenIds);
     let detectedItems: Item[] = [];
+    // `filteredCount` is the number of items that passed the keyword filter
+    // *before* lastSeenIds dedup. Surfaced through `result.stats` so callers
+    // like `radar source test` can show users a fetched / filtered / matched
+    // breakdown without re-running the pipeline. Bootstrap / 304 paths leave
+    // it at 0 because no filter ran.
+    let filteredCount = 0;
 
     if (options.bootstrap) {
       // Bootstrap: seed the state with every id we saw so the *next* run can
@@ -311,6 +329,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       log(`watch run: '${source.id}' unchanged (304)`);
     } else {
       const passed = filterItems(fetched, source);
+      filteredCount = passed.length;
       const fresh = passed
         .filter((item) => !seenIds.has(item.id))
         .map((item) => annotateInjectionFlags(item));
@@ -371,6 +390,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     }
     result.detected[source.id] = detectedItems;
     result.states[source.id] = nextState;
+    result.stats[source.id] = { fetched: fetched.length, filtered: filteredCount };
   }
 
   return result;

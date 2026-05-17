@@ -466,6 +466,59 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 
 `sources/<id>.yaml` を削除。`state/<id>.yaml` と紐づく `items/` は残す（履歴保持）。
 
+### `radar source test <id> [--limit N] [--show-content]`
+
+指定 source を **ドライラン** で 1 回 fetch し、フィルタを適用したうえで matched item を標準出力に表示する。`state/<id>.yaml` と `items/<id>/` は**一切更新されない**。
+
+| 引数 / オプション | 説明 |
+|---|---|
+| `<id>` | `sources/<id>.yaml` の id |
+| `--limit N` | matched item の表示件数上限（既定: `10`） |
+| `--show-content` | 各 matched item の本文先頭 200 文字も併せて表示する |
+
+出力フォーマット例:
+
+```text
+source test: anthropic-news
+  fetched: 12 / filtered: 3 / matched: 3
+
+Showing 3 of 3 matched item(s):
+
+  1. Claude Code releases agents
+     url:             https://anthropic.com/news/claude-code-agents
+     matchedKeywords: agents,claude
+     content:         Anthropic announced new agents features...
+  ...
+```
+
+**ユースケース**: 新規 source を `radar source add` で追加した直後、`--keywords` の hit 状況を**確認しながら段階的に調整**する。`watch run` を実行すると `state/<id>.yaml` の `lastSeenIds` に id が記録されてしまい同じ item が二度と検出されなくなるため、本コマンドで keywords を試行錯誤する。
+
+```bash
+# 新規 source を追加して keywords を試行錯誤する典型フロー
+radar source add anthropic-news \
+  --kind rss \
+  --url https://www.anthropic.com/news/rss.xml \
+  --keywords "Claude,agents"
+
+# まず dry-run でヒット具合を確認
+radar source test anthropic-news --limit 5
+
+# 想定より少なすぎる / 多すぎる場合は YAML を直接編集してキーワードを調整し、
+# 再び test で確認。state/items は一切汚れない
+$EDITOR sources/anthropic-news.yaml
+radar source test anthropic-news --show-content
+
+# 納得したら本番 ingest を開始
+radar watch run --source anthropic-news
+```
+
+挙動の要点:
+
+- `watchRun({ ..., dryRun: true })` を内部で呼ぶ。fetch + filter + injection pre-filter までは通常どおり動くが、`items/<id>/*.yaml` の書き込みと `state/<id>.yaml` の保存をスキップする
+- `<id>` が `sources/<id>.yaml` に存在しないと exit code `1` で失敗（user-friendly メッセージ）
+- `<id>` 未指定や不正なオプションは exit code `2`
+- fetch / parse エラーは `watch run` 同様の per-source エラーとして stderr に出力され exit code `1` を返す
+
 ### `radar watch run [--source <id>] [--bootstrap]`
 
 すべての source（または `--source` で指定）を fetch、filter を適用、新規 item を `items/<sourceId>/<item-id>.yaml` に追加。
