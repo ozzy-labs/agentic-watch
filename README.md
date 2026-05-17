@@ -1,33 +1,34 @@
+English | [日本語](README.ja.md)
+
 # FeedRadar
 
-> **Status: alpha** — Phase 1-5 まで実装済み（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策）。Phase 6 進行中: 初回 `v0.1.0` は手動 publish 予定、2 回目以降は sibling-style `release.yaml` で OIDC 自動 publish（手順: [docs/release.md](./docs/release.md)）。
+> **Status: alpha** — Phases 1-6 complete (7 subcommands × 4 agent adapters × 4 feed kinds + cron scaffolding + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) adoption + `@ozzylabs/feedradar` v0.1.0 published to npm). Subsequent releases publish automatically via OIDC Trusted Publishers in the sibling-style `release.yaml` (procedure: [docs/release.md](./docs/release.md)).
 
-ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex / Gemini / Copilot) に渡して **Markdown 調査レポートを書かせる CLI**。
+CLI that watches blogs, official update streams, and release feeds, then hands keyword hits to one of four AI agents (Claude Code / Codex / Gemini / Copilot) to **produce Markdown research reports**.
 
-## 解決する課題
+## Problem it solves
 
-複数の公式ブログ・ドキュメント・リリースノートを横断的に追い、変更点を要約する作業は AI エージェントとの相性が良いが、ソース管理・差分検出・テンプレート適用・複数エージェントへの委譲を毎回手作業で組むのは煩雑になる。`radar` はこのループを CLI として固定化し、ユーザーの調査ディレクトリに Markdown レポートを蓄積する。
+Tracking multiple official blogs, docs, and release notes — and summarizing what actually changed — is a good fit for AI agents, but wiring up source management, diffing, template application, and multi-agent delegation by hand every time gets tedious. `radar` fixes that loop in a CLI and accumulates Markdown reports in your research directory.
 
-## 主な特徴
+## Highlights
 
-- **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
-- **複数フィード種別**: RSS / HTML スクレイプ / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
-- **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
-- **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を公開予定（Phase 6）。
+- **Multi-agent**: switch between Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI via adapters.
+- **Multiple feed kinds**: RSS / HTML scraping / GitHub Releases / npm registry are all driven through the same `Source` abstraction.
+- **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
+- **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
-## インストール（予定）
+## Install
 
 ```bash
-# 初版公開後に有効化される
 npm i -g @ozzylabs/feedradar
 ```
 
-開発中は本リポを clone し、`pnpm install && pnpm run build` で `dist/index.js` を生成して `node dist/index.js <command>` で起動する。
+While developing locally, clone this repo and run `pnpm install && pnpm run build` to produce `dist/index.js`, then invoke `node dist/index.js <command>`.
 
-## 使い方
+## Usage
 
 ```bash
-# クイックスタート (anthropics/anthropic-sdk-python の GitHub Releases を監視)
+# Quickstart (watch anthropics/anthropic-sdk-python GitHub Releases)
 radar init
 radar source add anthropic-sdk \
   --kind github-releases \
@@ -36,32 +37,32 @@ radar source add anthropic-sdk \
 radar watch run
 radar research <item-id>
 
-# その他のサブコマンド
-radar source list             # ソース一覧
-radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
-radar review <research-id>    # レポートを別エージェントで相互レビュー
-radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
-radar --help                  # ヘルプ
+# Other subcommands
+radar source list             # list sources
+radar dismiss <item-id>       # move an item to dismissed (no LLM)
+radar review <research-id>    # cross-review a report with a different agent
+radar update <research-id>    # refresh an existing report against the latest item (v+1)
+radar --help                  # help
 ```
 
-全 7 サブコマンドが実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
+All 7 subcommands are implemented. See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
 
-## 開発
+## Development
 
 ```bash
-pnpm install            # 依存関係インストール
-pnpm run build          # tsc でビルド（dist/）
-pnpm run typecheck      # 型チェック
+pnpm install            # install dependencies
+pnpm run build          # tsc build (dist/)
+pnpm run typecheck      # type check
 pnpm run test           # vitest run
 
-# ローカルで CLI を呼ぶ場合 (build 後)
-pnpm radar --help        # = node dist/index.js --help (package.json scripts の alias)
-node dist/index.js --help        # 等価
+# Invoking the CLI locally (after build)
+pnpm radar --help        # = node dist/index.js --help (package.json scripts alias)
+node dist/index.js --help        # equivalent
 ```
 
-> ローカルの `pnpm radar <cmd>` は `package.json` の `scripts.radar`（`node dist/index.js`）を呼ぶ alias で、事前に `pnpm run build` で `dist/index.js` を生成しておく必要がある。配布版 (`npm i -g @ozzylabs/feedradar`) でユーザーが直接叩く `radar <cmd>` は `package.json` の `bin.radar` 経由で、こちらは publish 済み `dist/` を参照するため build 不要。両者は同名だがレイヤーが違う。なお `pnpm --prefix <path> radar <cmd>` は CWD を `<path>` に切り替えてから scripts を実行する仕様なので、別ディレクトリ（例えば smoke test 用の空ワークスペース）で scripts alias を呼びたい場合は `pnpm --prefix` ではなく `node <repo-root>/dist/index.js <cmd>` を直接呼ぶこと（前者はリポ root に対して `init` 等が走る事故になる）。
+> The local `pnpm radar <cmd>` form is the `package.json` `scripts.radar` alias (`node dist/index.js`) and requires you to have run `pnpm run build` first to produce `dist/index.js`. The distributed `radar <cmd>` that end users invoke after `npm i -g @ozzylabs/feedradar` goes through `package.json` `bin.radar`, which points at the published `dist/`, so no build step is needed there. The two share a name but belong to different layers. Note also that `pnpm --prefix <path> radar <cmd>` switches CWD to `<path>` *before* running scripts, so when you want the scripts alias to run in a different directory (for example a smoke-test scratch workspace) you must call `node <repo-root>/dist/index.js <cmd>` directly — using `pnpm --prefix` would cause `init` et al. to run against the repo root by accident.
 
-## アーキテクチャ概要
+## Architecture overview
 
 ```text
 src/
@@ -70,34 +71,35 @@ src/
   core/
     watcher.ts          source → adapter → items
     filter.ts           keyword / excludeKeyword
-    items.ts            items の load / save
-    templates.ts        research テンプレートの読み込み
-    state.ts            state/<sourceId>.yaml の load / save
-    config.ts           radar.config.yaml の load / 検証
+    items.ts            items load / save
+    templates.ts        research template loader
+    state.ts            state/<sourceId>.yaml load / save
+    config.ts           radar.config.yaml load / validate
     injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
     feeds/              rss / html / github-releases / npm-registry
-  agents/               4 CLI adapters（claude-code / codex-cli / gemini-cli / copilot）
-  schemas/              Zod スキーマ（Source / Item / State / Research）
-  skills/               engine SKILL bundle (research / review / update; init で .agents/skills/ に配布)
-  claude-skills/        Claude Code 用 slash-command 雛形 (init で .claude/skills/ に配布)
-  gemini-commands/      Gemini CLI 用 TOML slash-command 雛形 (init で .gemini/commands/ に配布)
-  templates/            workspace 既定テンプレート (init で templates/ に配布)
+  agents/               4 CLI adapters (claude-code / codex-cli / gemini-cli / copilot)
+  schemas/              Zod schemas (Source / Item / State / Research)
+  skills/               engine SKILL bundle (research / review / update; init copies into .agents/skills/)
+  claude-skills/        Claude Code slash-command wrappers (init copies into .claude/skills/)
+  gemini-commands/      Gemini CLI TOML slash-command wrappers (init copies into .gemini/commands/)
+  templates/            default workspace templates (init copies into templates/)
 ```
 
-## ドキュメント
+## Documentation
 
-- [docs/architecture.md](./docs/architecture.md) — システム全体図 / モジュール責務 / データフロー / Phase 別スコープ
-- [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様
-- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling）
+- [docs/architecture.md](./docs/architecture.md) — system diagrams / module responsibilities / data flow / per-phase scope
+- [docs/user-guide.md](./docs/user-guide.md) — install / quickstart / command reference
+- [docs/release.md](./docs/release.md) — release procedure (manual initial publish + Trusted Publisher registration + subsequent OIDC automation)
+- [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling)
 
-## 規約
+## Conventions
 
-- **言語**: TypeScript ESM / Node.js 22+ / pnpm
-- **コミット**: Conventional Commits（`commitlint` で強制）
-- **ブランチ**: GitHub Flow（`main` + feature branch、squash merge のみ）
-- **配布**: npm `@ozzylabs/feedradar`、OIDC Trusted Publishers（`NPM_TOKEN` は使わない）
-- **共通設定**: [`ozzy-labs/commons`](https://github.com/ozzy-labs/commons) から `sync.sh` で配布。
-- **共通スキル**: [`ozzy-labs/skills`](https://github.com/ozzy-labs/skills) を `@ozzylabs/skills` Renovate preset で取り込み。
+- **Language**: TypeScript ESM / Node.js 22+ / pnpm
+- **Commits**: Conventional Commits (enforced via `commitlint`)
+- **Branching**: GitHub Flow (`main` + feature branches, squash-merge only)
+- **Distribution**: npm `@ozzylabs/feedradar`, OIDC Trusted Publishers (no `NPM_TOKEN`)
+- **Shared config**: distributed from [`ozzy-labs/commons`](https://github.com/ozzy-labs/commons) via `sync.sh`
+- **Shared skills**: pulled in from [`ozzy-labs/skills`](https://github.com/ozzy-labs/skills) via the `@ozzylabs/skills` Renovate preset
 
 ## License
 
