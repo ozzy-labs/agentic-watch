@@ -16,7 +16,8 @@
 ├── research/          # 調査レポート (Markdown + frontmatter)
 ├── templates/         # Markdown テンプレート (編集可)
 ├── .agents/skills/    # 4 CLI 共通 engine SKILL (SSoT)
-└── .claude/skills/    # Claude Code 用 slash-command 雛形
+├── .claude/skills/    # Claude Code 用 slash-command 雛形
+└── .gemini/commands/  # Gemini CLI 用 slash-command 定義 (TOML)
 ```
 
 ## 主要コマンド
