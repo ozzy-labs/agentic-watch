@@ -112,8 +112,10 @@ describe("cli/watch run", () => {
     const itemDir = join(workdir, "items", "blog");
     const itemFiles = await readdir(itemDir);
     expect(itemFiles).toHaveLength(1); // only the "agents" match
-    expect(itemFiles[0]).toMatch(/^claude-code-releases-agents-[0-9a-f]{8}\.yaml$/);
-    const itemBody = parseYaml(await readFile(join(itemDir, itemFiles[0]!), "utf8"));
+    const [itemFile] = itemFiles;
+    if (!itemFile) throw new Error("unreachable: itemFiles empty after toHaveLength(1)");
+    expect(itemFile).toMatch(/^claude-code-releases-agents-[0-9a-f]{8}\.yaml$/);
+    const itemBody = parseYaml(await readFile(join(itemDir, itemFile), "utf8"));
     expect(itemBody).toMatchObject({
       sourceId: "blog",
       status: "detected",
@@ -307,7 +309,9 @@ describe("cli/watch run", () => {
     const itemFiles = await readdir(itemDir);
     // Audit-only: the item is still written, status unchanged.
     expect(itemFiles).toHaveLength(1);
-    const itemBody = parseYaml(await readFile(join(itemDir, itemFiles[0]!), "utf8"));
+    const [itemFile] = itemFiles;
+    if (!itemFile) throw new Error("unreachable: itemFiles empty after toHaveLength(1)");
+    const itemBody = parseYaml(await readFile(join(itemDir, itemFile), "utf8"));
     expect(itemBody.status).toBe("detected");
     expect(Array.isArray(itemBody.injectionFlags)).toBe(true);
     // We expect at least two of the planted patterns to fire (system-tag and
@@ -381,7 +385,9 @@ describe("cli/watch run", () => {
     const itemDir = join(workdir, "items", "blog");
     const itemFiles = await readdir(itemDir);
     expect(itemFiles).toHaveLength(1);
-    const itemBody = parseYaml(await readFile(join(itemDir, itemFiles[0]!), "utf8"));
+    const [itemFile] = itemFiles;
+    if (!itemFile) throw new Error("unreachable: itemFiles empty after toHaveLength(1)");
+    const itemBody = parseYaml(await readFile(join(itemDir, itemFile), "utf8"));
     expect(itemBody.injectionFlags).toEqual([]);
   });
 });

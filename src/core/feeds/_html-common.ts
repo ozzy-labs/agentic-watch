@@ -57,7 +57,7 @@ function queryFirst(root: HTMLElement, selector: string): HTMLElement | null {
 function pickLink(el: HTMLElement | null): string | undefined {
   if (!el) return undefined;
   const href = el.getAttribute("href");
-  if (href && href.trim()) return href.trim();
+  if (href?.trim()) return href.trim();
   return textOf(el);
 }
 
@@ -73,7 +73,7 @@ function pickDatetime(el: HTMLElement | null): string | undefined {
   if (!el) return undefined;
   for (const attr of DATETIME_ATTRS) {
     const value = el.getAttribute(attr);
-    if (value && value.trim()) return value.trim();
+    if (value?.trim()) return value.trim();
   }
   return textOf(el);
 }
