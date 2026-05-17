@@ -36,9 +36,10 @@ slash command 経由で呼ぶことで、CLI 側の schema 検証 / status 遷�
 
 ```bash
 # Workspace 初期化
-agentic-watch init                          # 既定: CLAUDE.md + AGENTS.md + skills + templates/default.md + dirs を生成
+agentic-watch init                          # 既定: CLAUDE.md + AGENTS.md + AGENTIC_WATCH.md + skills + templates/default.md + dirs を生成
 agentic-watch init --no-agents-md           # AGENTS.md 生成を skip (CLAUDE.md も自動 skip)
 agentic-watch init --no-claude-md           # CLAUDE.md 生成を skip
+agentic-watch init --no-agentic-watch-md    # AGENTIC_WATCH.md (人間向けガイド) 生成を skip
 agentic-watch init --no-claude-skills       # .claude/skills/ を skip
 agentic-watch init --no-gemini-commands     # .gemini/commands/ を skip
 agentic-watch init --no-templates           # templates/default.md 生成を skip
