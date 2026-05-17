@@ -111,6 +111,52 @@ detected ──► (dismissed | researched) ──► reviewed
 
 Status は `items/*.yaml` に保存され、CLI が遷移を駆動。詳細・writing-studio との差異 / 簡略化の根拠は [ADR-0008](./adr/0008-status-state-machine.md) を参照。
 
+## Fetch efficiency / conditional GET
+
+各 adapter は条件付き GET（HTTP `If-None-Match` / `If-Modified-Since`）と content-hash フォールバックを組み合わせて、`watch run` のトラフィックと parse コストを削減する。サーバが `304 Not Modified` を返した（または content-hash が前回と一致した）場合、watcher は **item 保存をスキップ**しつつ `state.lastFetchedAt` のみ更新する。
+
+### Adapter 別サポート状況
+
+| adapter | ETag (`If-None-Match`) | Last-Modified (`If-Modified-Since`) | content-hash fallback |
+|---|---|---|---|
+| `rss` | ✅ | ✅ | ― |
+| `html` | ✅ | ✅ | ✅ |
+| `html-js` | ― | ― | ✅ |
+| `github-releases` | ✅ | ― | ― |
+| `npm-registry` | ✅ | ― | ― |
+
+凡例: ✅ = 実装あり / ― = 未対応または該当なし。
+
+実装は `src/core/feeds/<kind>.ts` を参照（`rss.ts` / `html.ts` / `html-js.ts` / `github-releases.ts` / `npm-registry.ts`）。
+
+### 304 (Not Modified) の挙動
+
+`watch run` 中、adapter が `notModified: true` を返した場合の `src/core/watcher.ts` 動作:
+
+- **items は保存しない** — parse 不要、`items/<sourceId>/` への書き込みなし
+- **filter / injection 評価もスキップ** — fetched item 列は空のまま
+- **state は最小限の更新**:
+  - `state.lastFetchedAt` … 最新の fetch 時刻に更新（運用者が「最後にいつチェックしたか」を観測できる）
+  - `state.lastEtag` / `state.lastModified` … サーバが echo した場合は更新、しなかった場合は前回値を保持
+  - `state.lastSeenIds` … 変更なし（新規 item を見ていないので diff 不要）
+- ログには `watch run: '<source-id>' unchanged (304)` を 1 行出力
+
+### html-js のみ content-hash 専用な理由
+
+`kind: html-js` は Playwright (headless Chromium) でページを描画し `page.content()` で HTML 文字列を取得する。この経路では:
+
+- **ETag / Last-Modified が観察できない** — `page.content()` は描画後の DOM 文字列のみ返し、最初の HTTP レスポンスヘッダにはアクセスできない
+- そのため `state.lastEtag` slot に **`sha256:` プレフィックス付き content hash** を保存し、次回 fetch 後に同じ hash であれば `notModified: true` とみなす
+- `kind: html` も ETag を返さないサーバ向けに同じ content-hash フォールバックを持つため、`state.lastEtag` slot のフォーマットは両 adapter で共通（`html.ts` は ETag を最優先、なければ hash を slot 流用）
+
+詳細は [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) および `src/core/feeds/_html-common.ts`（`CONTENT_HASH_PREFIX` / `contentHash`）を参照。
+
+### 運用上の含意
+
+- ETag / Last-Modified を返すサーバ（多くの RSS / 静的 HTML / GitHub API / npm registry）に対しては、変更がない期間 `watch run` の body 転送量がほぼゼロになる
+- content-hash フォールバックは body を取得するため転送量は減らないが、**parse / filter / injection 評価**をスキップできるので CPU コストは削減できる
+- `kind: html-js` は Chromium 起動コストが支配的なため、content-hash でスキップできても fetch 時間はあまり減らない（このため `kind: html` で取れるなら優先）
+
 ## クロスエージェント運用
 
 FeedRadar は 4 種の agent CLI を adapter で抽象化しているため、**研究 (research) と レビュー (review) を別 agent で実行**することを推奨する:

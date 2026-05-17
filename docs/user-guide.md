@@ -531,7 +531,7 @@ radar watch run --source anthropic-news
 挙動:
 
 - 各 source の `kind` に応じた feed adapter を呼び出す（5 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する — ADR-0010）
-- adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する
+- adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する（adapter 別の対応状況・304 時の詳細な挙動は [`docs/architecture.md` の "Fetch efficiency / conditional GET"](./architecture.md#fetch-efficiency--conditional-get) を参照）
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
