@@ -68,6 +68,7 @@ agentic-watch research <item-id> --agent claude-code
 #### 挙動
 
 - `sources/` `state/` `items/` `research/` `templates/` を作成（既存ディレクトリは温存）
+- `sources/` `items/` `state/` `research/` に **`.gitkeep`** を配置（空ディレクトリでも `git add .` で追跡される。`state/*.yaml` の `lastSeenIds` を fresh clone 環境で引き継ぐためにはこれらのディレクトリの git コミットが前提）。既存ファイルは温存され `--force` でも上書きしない
 - **engine SKILL** (`.agents/skills/{research,review,update}/SKILL.md`) を **bundled** からコピー。adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体
 - **Claude Code slash-command 雛形** (`.claude/skills/{research,review,update,dismiss}/SKILL.md`) を bundled からコピー。Claude Code interactive で `/research` 等として発火する薄い wrapper (内部で `agentic-watch <subcommand>` を呼ぶだけ)。`--no-claude-skills` で skip 可
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可

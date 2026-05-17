@@ -50,6 +50,87 @@ describe("cli/init", () => {
     }
   });
 
+  describe(".gitkeep placeholders in data directories", () => {
+    // AGENTS.md "データ管理ポリシー" recommends committing sources/ items/
+    // state/ research/ to git, but git does not track empty directories, so
+    // an `init` + `git add .` workflow would lose the layout without a
+    // tracked placeholder. `templates/` is intentionally excluded — bundled
+    // template files (e.g. `default.md`) ship via a separate codepath and
+    // serve as their own placeholder.
+
+    it("emits .gitkeep in sources/items/state/research by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      for (const dir of ["sources", "items", "state", "research"]) {
+        const gitkeep = join(workdir, dir, ".gitkeep");
+        expect(await pathExists(gitkeep)).toBe(true);
+        // The placeholder is intentionally a 0-byte file.
+        expect((await readFile(gitkeep, "utf8")).length).toBe(0);
+        expect(result.copiedFiles).toContain(`${dir}/.gitkeep`);
+      }
+    });
+
+    it("does NOT emit .gitkeep in templates/ (owned by template bundling)", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "templates", ".gitkeep"))).toBe(false);
+    });
+
+    it("does not overwrite existing .gitkeep (no surprising touch)", async () => {
+      const gitkeep = join(workdir, "sources", ".gitkeep");
+      await mkdir(join(workdir, "sources"), { recursive: true });
+      await writeFile(gitkeep, "user marker", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      // The pre-existing content should be preserved verbatim.
+      expect(await readFile(gitkeep, "utf8")).toBe("user marker");
+      expect(result.copiedFiles).not.toContain("sources/.gitkeep");
+      // The other 3 .gitkeep files should still land normally.
+      for (const dir of ["items", "state", "research"]) {
+        expect(await pathExists(join(workdir, dir, ".gitkeep"))).toBe(true);
+        expect(result.copiedFiles).toContain(`${dir}/.gitkeep`);
+      }
+    });
+
+    it("does not overwrite existing .gitkeep even with --force", async () => {
+      // 0-byte placeholders have no user content worth protecting, but the
+      // policy is to leave any existing file at that path untouched (whatever
+      // its content) to avoid surprising overwrites of user markers.
+      const gitkeep = join(workdir, "items", ".gitkeep");
+      await mkdir(join(workdir, "items"), { recursive: true });
+      await writeFile(gitkeep, "user marker", "utf8");
+
+      await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(gitkeep, "utf8")).toBe("user marker");
+    });
+  });
+
   it("copies bundled SKILL.md files into .agents/skills/<name>/", async () => {
     // Scope this test to the engine SKILLs only — claude discovery skills,
     // gemini commands, and AGENTS.md get their own describe blocks below.
@@ -71,7 +152,8 @@ describe("cli/init", () => {
       expect(body).toMatch(/^---/);
       expect(body).toMatch(new RegExp(`name:\\s*${skill}`));
     }
-    expect(result.copiedFiles).toHaveLength(3);
+    // 3 engine SKILLs + 4 .gitkeep placeholders (sources/items/state/research).
+    expect(result.copiedFiles).toHaveLength(7);
     expect(result.skippedFiles).toHaveLength(0);
   });
 

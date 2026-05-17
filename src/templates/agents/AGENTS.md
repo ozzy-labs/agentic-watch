@@ -97,6 +97,8 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 - `research/` を git で管理すると、過去レポートの履歴・差分が追える (ADR-0003 で immutable history を採用)
 - `items/` の status 遷移 (`detected` → `researched` → `reviewed`) も git 履歴に残る
 
+`init` は `sources/` `items/` `state/` `research/` に `.gitkeep` placeholder を配置するため、初期状態 (中身が空) でも `git add .` でディレクトリ構造が消えずに追跡されます。
+
 詳細は `agentic-watch` リポジトリの [`docs/user-guide.md`](https://github.com/ozzy-labs/agentic-watch/blob/main/docs/user-guide.md) を参照してください。
 
 ## セキュリティ警告 (untrusted external content)
