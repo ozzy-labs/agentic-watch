@@ -6,6 +6,10 @@ Thumbs.db
 *.swp
 *~
 
+# IDE
+.vscode/
+.idea/
+
 # Environment
 .env
 .env.*
@@ -17,12 +21,19 @@ node_modules/
 # Build
 dist/
 build/
+*.tgz
+*.tsbuildinfo
 
 # Test coverage
 coverage/
 
-# Claude Code harness (drive subagent worktrees are harness-managed and short-lived)
+# Claude Code harness
 .claude/worktrees/
+.claude/settings.local.json
 
 # Logs
 *.log
+
+# Temporary directories
+tmp/
+temp/
