@@ -2,7 +2,7 @@
 
 # FeedRadar
 
-> **Status: alpha** — Phase 1-6 完了（7 サブコマンド + 4 agent × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策 + `@ozzylabs/feedradar` v0.1.0 を npm 公開）。以降のリリースは sibling-style `release.yaml` で OIDC Trusted Publishers 自動 publish（手順: [docs/release.md](./docs/release.md)）。
+> Phase 1-6 完了: 7 サブコマンド × 4 agent adapter × 4 source kind + cron 雛形 + [ADR-0009](./docs/adr/0009-untrusted-external-content-handling.md) Adopt 策。`@ozzylabs/feedradar` を npm 公開済み、以降のリリースは `release.yaml` で OIDC Trusted Publishers 自動 publish（手順: [docs/release.md](./docs/release.md)）。
 
 ブログ・公式アップデート・リリースフィードを監視し、キーワードヒットを 4 種の AI エージェント (Claude Code / Codex / Gemini / Copilot) に渡して **Markdown 調査レポートを書かせる CLI**。
 
