@@ -10,19 +10,28 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 
 詳細な攻撃面 / 被害範囲 / 緩和候補の整理は [`docs/design/threat-model.md`](../design/threat-model.md) を参照。本 ADR はその threat model に対し、`#49` の 5 設計検討項目 (M1〜M5) の **採否を判定**する。
 
-### §A: source kind 別の信頼境界
+判定基準:
+
+- **コスト**: 実装 + 運用コスト (LOC / API call / 計算量 / UX 悪化)
+- **効果**: lethal trifecta ([prompt-injection.md § 0](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md#0-lethal-trifecta致死の三要素)) のどの辺を切れるか
+- **副作用**: false positive / UX 悪化 / 既存 ADR との抵触
+- **位置づけ**: defense-in-depth のどの層に該当するか ([prompt-injection.md § 防御の階層](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md#防御の階層))
+
+### Source kind 別の信頼境界 (2026-05-17 html-js 追加)
+
+[ADR-0010](./0010-html-js-adapter-and-distribution.md) の `kind: html-js` 採択に伴い、本 ADR が前提とする信頼境界表を以下のとおり拡張する (threat-model.md §A と整合):
 
 | Source kind | コントロール元 | FeedRadar プロセスとの関係 | 追加 attack surface | 備考 |
 |---|---|---|---|---|
 | `rss` | サイト運営者 | text 受信のみ | 低 | parser バグ以外は静的データ |
 | `html` | サイト運営者 | text 受信 + node-html-parser | 低 (CSS selector 評価のみ) | DOM 構築なし |
-| `html-js` | サイト運営者 | **Chromium (別 OS process) で page JS 実行** | **中** (WebRTC IP 漏洩 / drive-by download / 巨大ページ OOM 等。Chromium プロセスは sandbox 有効 + headless + accept_downloads=false で FeedRadar プロセスから OS process 境界で隔離。詳細は [ADR-0010 §D5](./0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件) と [`docs/design/threat-model.md`](../design/threat-model.md) §C) | page JS が結果として `Source.selectors` に従って抽出されるテキストは untrusted item として M1c boundary marker で wrap される |
+| `html-js` | サイト運営者 | **Chromium (別 OS process) で page JS 実行** | **中** (WebRTC IP 漏洩 / drive-by download / 巨大ページ OOM 等。Chromium プロセスは sandbox 有効 + headless + accept_downloads=false で FeedRadar プロセスから OS process 境界で隔離。詳細は [ADR-0010 §D5](./0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件) と [`docs/design/threat-model.md`](../design/threat-model.md) §C-2) | page JS が抽出するテキストも untrusted item として M1c boundary marker で wrap される |
 | `github-releases` | リポジトリ owner / collaborator | API JSON 受信のみ | 低 | release body は contributors が書ける |
 | `npm-registry` | パッケージ maintainer | packument JSON 受信のみ | 低 | typosquat / 乗っ取り maintainer の risk |
 
 **`html-js` 特記**: Chromium 自体は FeedRadar プロセスとは別の OS process で動作し、Chromium 内蔵の sandbox + headless により page JS は FeedRadar ホスト上の sensitive ファイル (`~/.ssh/`, `~/.aws/credentials`, `.env` 等) に **直接アクセスできない**。ただし Chromium バイナリ自体の脆弱性 (例: V8 0-day) が悪用された場合は sandbox escape の可能性がある。詳細は次節「Chromium バイナリ脆弱性追跡責任」参照。
 
-### Chromium バイナリ脆弱性追跡責任
+### Chromium バイナリ脆弱性追跡責任 (2026-05-17 html-js 追加)
 
 `kind: html-js` の Chromium は **npm package ではなく `npx playwright install chromium` で配布される独立バイナリ**であり、以下の責任分担となる:
 
@@ -38,13 +47,6 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 - `kind: html-js` を実運用する場合は、Chromium 脆弱性アラート (CISA KEV / Chrome Releases) を購読する
 
 詳細は [ADR-0010](./0010-html-js-adapter-and-distribution.md) を参照。
-
-判定基準:
-
-- **コスト**: 実装 + 運用コスト (LOC / API call / 計算量 / UX 悪化)
-- **効果**: lethal trifecta ([prompt-injection.md § 0](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md#0-lethal-trifecta致死の三要素)) のどの辺を切れるか
-- **副作用**: false positive / UX 悪化 / 既存 ADR との抵触
-- **位置づけ**: defense-in-depth のどの層に該当するか ([prompt-injection.md § 防御の階層](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md#防御の階層))
 
 ## Decision
 
