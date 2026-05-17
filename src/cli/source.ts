@@ -1,6 +1,7 @@
 import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { loadSourceState } from "../core/state.js";
 import type { Source } from "../schemas/source.js";
 import { SourceKindSchema, SourceSchema, SourceSelectorsSchema } from "../schemas/source.js";
 import type { Command } from "./index.js";
@@ -10,9 +11,14 @@ import type { Command } from "./index.js";
  *
  * The CLI binds these to `console.*` by default; tests inject capturing sinks
  * to assert against printed lines without poking at stdio.
+ *
+ * `warn` is separate from `error` so non-fatal hints (e.g. "no keywords
+ * configured — items will be filtered out") still surface on stderr without
+ * affecting the exit code or being treated as a hard failure by callers.
  */
 export interface SourceIO {
   log?: (message: string) => void;
+  warn?: (message: string) => void;
   error?: (message: string) => void;
 }
 
@@ -38,6 +44,10 @@ function sourcesDir(cwd: string): string {
 
 function sourceFile(cwd: string, id: string): string {
   return join(sourcesDir(cwd), `${id}.yaml`);
+}
+
+function stateDir(cwd: string): string {
+  return join(cwd, "state");
 }
 
 /**
@@ -143,6 +153,12 @@ function parseAddArgs(args: string[]): AddArgs {
 
 interface ListArgs {
   enabledOnly?: boolean;
+  /**
+   * Verbose mode prints a per-source block including keywords / trustLevel /
+   * lastFetchedAt instead of the default 4-column table. Toggled via
+   * `--verbose` or the short `-v` alias.
+   */
+  verbose?: boolean;
   help?: boolean;
 }
 
@@ -155,6 +171,10 @@ function parseListArgs(args: string[]): ListArgs {
     }
     if (a === "--enabled-only") {
       out.enabledOnly = true;
+      continue;
+    }
+    if (a === "-v" || a === "--verbose") {
+      out.verbose = true;
       continue;
     }
     throw new Error(`unknown option: ${a}`);
@@ -195,15 +215,21 @@ function printAddHelp(log: (m: string) => void): void {
   log("  --name <name>            display name (defaults to <id>)");
   log("  --tags <a,b>             comma-separated tags");
   log("  --keywords <a,b>         comma-separated include keywords");
+  log("                           (required for useful output — empty = match nothing)");
   log("  --exclude-keywords <a,b> comma-separated exclude keywords");
   log("  --selector-<field> <css> CSS selector for kind=html (required: item, title, link)");
   log("                           optional: summary, publishedAt, body, tags");
 }
 
 function printListHelp(log: (m: string) => void): void {
-  log("Usage: agentic-watch source list [--enabled-only]");
+  log("Usage: agentic-watch source list [--enabled-only] [-v|--verbose]");
   log("");
   log("Lists sources/*.yaml in tabular form: id / kind / url / tags.");
+  log("");
+  log("Options:");
+  log("  --enabled-only   Reserved for forward compatibility (currently a no-op).");
+  log("  -v, --verbose    Print a detailed block per source including keywords,");
+  log("                   trustLevel, and lastFetchedAt (from state/<id>.yaml).");
 }
 
 function printRemoveHelp(log: (m: string) => void): void {
@@ -235,6 +261,7 @@ export async function addSource(
 ): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
+  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
   let parsed: AddArgs;
@@ -332,6 +359,20 @@ export async function addSource(
 
   await writeFile(file, stringifyYaml(validated.data), "utf8");
   log(`source add: created sources/${validated.data.id}.yaml`);
+
+  // ADR-0006 / src/core/filter.ts treats an empty include-keyword list as
+  // "match nothing" (firehose guard). A source with no keywords is therefore
+  // valid YAML but inert — `watch run` will fetch it and drop every item
+  // before disk. Surface a hint here so the user is not left wondering why
+  // their feed appears silent later. We emit the hint as a non-fatal warning
+  // (stderr) so scripts that parse stdout are unaffected and the exit code
+  // stays 0.
+  if (validated.data.filters.keywords.length === 0) {
+    warn(
+      `source add: warning — '${validated.data.id}' has no keywords; all fetched items will be filtered out. Edit sources/${validated.data.id}.yaml or re-add with --keywords to start ingesting.`,
+    );
+  }
+
   return 0;
 }
 
@@ -440,6 +481,34 @@ export async function listSources(
     return 1;
   }
 
+  if (parsed.verbose) {
+    // Verbose mode: emit a per-source block so we can include multi-line
+    // fields (keywords / trustLevel / lastFetchedAt) without breaking the
+    // 4-column table contract scripts may rely on. State is read lazily per
+    // source so a missing state file is rendered as "never" rather than
+    // surfacing as an error (state is created on first `watch run`).
+    for (let i = 0; i < sources.length; i++) {
+      const s = sources[i];
+      if (!s) continue;
+      if (i > 0) log("");
+      const lastFetchedAt = await readLastFetchedAt(cwd, s.id, error);
+      log(`${s.id}`);
+      log(`  kind:           ${s.kind}`);
+      log(`  url:            ${s.url}`);
+      log(`  name:           ${s.name ?? "-"}`);
+      log(`  tags:           ${s.tags.length > 0 ? s.tags.join(",") : "-"}`);
+      log(
+        `  keywords:       ${s.filters.keywords.length > 0 ? s.filters.keywords.join(",") : "(none — items will be filtered out)"}`,
+      );
+      log(
+        `  excludeKeywords: ${s.filters.excludeKeywords.length > 0 ? s.filters.excludeKeywords.join(",") : "-"}`,
+      );
+      log(`  trustLevel:     ${s.trustLevel}`);
+      log(`  lastFetchedAt:  ${lastFetchedAt}`);
+    }
+    return 0;
+  }
+
   const idWidth = Math.max(2, ...sources.map((s) => s.id.length));
   const kindWidth = Math.max(4, ...sources.map((s) => s.kind.length));
   const urlWidth = Math.max(3, ...sources.map((s) => s.url.length));
@@ -451,6 +520,32 @@ export async function listSources(
     );
   }
   return 0;
+}
+
+/**
+ * Best-effort read of `state/<id>.yaml`'s `lastFetchedAt`.
+ *
+ * Returns `"never"` when the state file does not exist or carries no
+ * `lastFetchedAt` (e.g. bootstrap-only state with no successful fetch yet),
+ * and `"unreadable"` for any other I/O or parse failure. Errors are surfaced
+ * via `onError` so the user sees them, but we never throw — `source list` is
+ * a read-only listing command and one broken state file should not prevent
+ * the rest from rendering.
+ */
+async function readLastFetchedAt(
+  cwd: string,
+  sourceId: string,
+  onError: (message: string) => void,
+): Promise<string> {
+  try {
+    const state = await loadSourceState(stateDir(cwd), sourceId);
+    return state.lastFetchedAt ?? "never";
+  } catch (e) {
+    onError(
+      `source list: failed to read state/${sourceId}.yaml: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return "unreadable";
+  }
 }
 
 /**

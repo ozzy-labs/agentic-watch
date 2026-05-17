@@ -7,17 +7,23 @@ import { addSource, listSources, removeSource, runSource } from "../../src/cli/s
 
 interface Captured {
   log: string[];
+  warn: string[];
   error: string[];
 }
 
 function captureIo(): {
-  io: { log: (m: string) => void; error: (m: string) => void };
+  io: {
+    log: (m: string) => void;
+    warn: (m: string) => void;
+    error: (m: string) => void;
+  };
   captured: Captured;
 } {
-  const captured: Captured = { log: [], error: [] };
+  const captured: Captured = { log: [], warn: [], error: [] };
   return {
     io: {
       log: (m) => captured.log.push(m),
+      warn: (m) => captured.warn.push(m),
       error: (m) => captured.error.push(m),
     },
     captured,
@@ -272,6 +278,59 @@ describe("cli/source", () => {
       const parsed = parseYaml(await readFile(join(workdir, "sources", "dup.yaml"), "utf8"));
       expect(parsed).toMatchObject({ url: "https://example.com/a" });
     });
+
+    describe("keywords warning", () => {
+      it("warns when --keywords is not provided (would filter out everything)", async () => {
+        const { io, captured } = captureIo();
+        const code = await addSource(
+          ["nokw", "--kind", "rss", "--url", "https://example.com/feed.xml"],
+          { cwd: workdir, io },
+        );
+        // Add still succeeds — the warn is non-fatal so scripts that pipe the
+        // success message keep working.
+        expect(code).toBe(0);
+        expect(captured.log.some((m) => m.includes("created sources/nokw.yaml"))).toBe(true);
+        expect(captured.warn.some((m) => m.includes("no keywords"))).toBe(true);
+        expect(captured.warn.some((m) => m.includes("nokw"))).toBe(true);
+        // The hint should point the user at the actionable next step.
+        expect(
+          captured.warn.some(
+            (m) => m.includes("Edit sources/nokw.yaml") || m.includes("--keywords"),
+          ),
+        ).toBe(true);
+      });
+
+      it("does not warn when --keywords is provided", async () => {
+        const { io, captured } = captureIo();
+        const code = await addSource(
+          [
+            "withkw",
+            "--kind",
+            "rss",
+            "--url",
+            "https://example.com/feed.xml",
+            "--keywords",
+            "Claude",
+          ],
+          { cwd: workdir, io },
+        );
+        expect(code).toBe(0);
+        expect(captured.warn).toEqual([]);
+      });
+
+      it("warns when --keywords is passed but empty (e.g. trailing comma)", async () => {
+        // splitCsv strips empties, so `--keywords ","` collapses to []. That
+        // still trips the firehose guard at filter time, so we must warn here
+        // as well to keep the UX consistent with the "no flag" case.
+        const { io, captured } = captureIo();
+        const code = await addSource(
+          ["emptykw", "--kind", "rss", "--url", "https://example.com/feed.xml", "--keywords", ","],
+          { cwd: workdir, io },
+        );
+        expect(code).toBe(0);
+        expect(captured.warn.some((m) => m.includes("no keywords"))).toBe(true);
+      });
+    });
   });
 
   describe("list", () => {
@@ -322,6 +381,96 @@ describe("cli/source", () => {
       // Only malformed entry -> non-zero exit
       expect(code).toBe(1);
       expect(captured.error.some((m) => m.includes("bad.yaml"))).toBe(true);
+    });
+
+    describe("--verbose", () => {
+      it("prints keywords, trustLevel and lastFetchedAt when -v is set", async () => {
+        await addSource(
+          [
+            "alpha",
+            "--kind",
+            "rss",
+            "--url",
+            "https://alpha.example/feed.xml",
+            "--tags",
+            "a,b",
+            "--keywords",
+            "Claude,agents",
+          ],
+          { cwd: workdir, io: captureIo().io },
+        );
+        // Seed a state file so we can assert lastFetchedAt rendering against a
+        // real ISO timestamp rather than the "never" fallback.
+        await writeFile(
+          join(workdir, "state", "alpha.yaml"),
+          "sourceId: alpha\nlastFetchedAt: 2026-05-17T09:00:00.000Z\nlastSeenIds: []\n",
+          "utf8",
+        );
+
+        const { io, captured } = captureIo();
+        const code = await listSources(["-v"], { cwd: workdir, io });
+        expect(code).toBe(0);
+        const out = captured.log.join("\n");
+        // Verbose output should NOT use the table header used by default mode.
+        expect(out).not.toMatch(/^ID\s+KIND\s+URL\s+TAGS$/m);
+        // Detail fields the table cannot show.
+        expect(out).toContain("keywords:");
+        expect(out).toContain("Claude,agents");
+        expect(out).toContain("trustLevel:");
+        expect(out).toContain("untrusted");
+        expect(out).toContain("lastFetchedAt:");
+        expect(out).toContain("2026-05-17T09:00:00.000Z");
+      });
+
+      it("renders lastFetchedAt as 'never' when no state file exists yet", async () => {
+        await addSource(
+          [
+            "fresh",
+            "--kind",
+            "rss",
+            "--url",
+            "https://fresh.example/feed.xml",
+            "--keywords",
+            "Claude",
+          ],
+          { cwd: workdir, io: captureIo().io },
+        );
+        const { io, captured } = captureIo();
+        const code = await listSources(["--verbose"], { cwd: workdir, io });
+        expect(code).toBe(0);
+        const out = captured.log.join("\n");
+        expect(out).toMatch(/lastFetchedAt:\s+never/);
+      });
+
+      it("flags sources with no keywords in the verbose keywords line", async () => {
+        // Use the warning sink so the add-time warn does not leak into the
+        // verbose-list assertion below.
+        await addSource(["empty", "--kind", "rss", "--url", "https://empty.example/feed.xml"], {
+          cwd: workdir,
+          io: captureIo().io,
+        });
+        const { io, captured } = captureIo();
+        const code = await listSources(["-v"], { cwd: workdir, io });
+        expect(code).toBe(0);
+        const out = captured.log.join("\n");
+        expect(out).toMatch(/keywords:\s+\(none/);
+      });
+
+      it("default list output is unchanged (table mode without --verbose)", async () => {
+        await addSource(
+          ["alpha", "--kind", "rss", "--url", "https://alpha.example/feed.xml", "--keywords", "k"],
+          { cwd: workdir, io: captureIo().io },
+        );
+        const { io, captured } = captureIo();
+        const code = await listSources([], { cwd: workdir, io });
+        expect(code).toBe(0);
+        const out = captured.log.join("\n");
+        // The table contract is preserved for non-verbose callers.
+        expect(out).toMatch(/ID\s+KIND\s+URL\s+TAGS/);
+        // And the verbose-only fields are absent.
+        expect(out).not.toContain("trustLevel:");
+        expect(out).not.toContain("lastFetchedAt:");
+      });
     });
   });
 
