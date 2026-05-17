@@ -168,7 +168,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 | Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 | 完了 |
 | Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く | 完了 |
 | Phase 5 | `update` コマンド（既存 research の差分更新）、`dismiss` コマンド | 完了 |
-| Phase 6 | npm publish 初版 + Trusted Publisher 登録 | 残タスク |
+| Phase 6 | npm publish 初版 + Trusted Publisher 登録（手順: [`docs/release.md`](./release.md)） | 初回 publish 待ち（sibling-style workflow 配備済み） |
 | Phase 7 | VS Code extension | 残タスク |
 | Phase 別 (security) | prompt injection 緩和 ([ADR-0009](./adr/0009-untrusted-external-content-handling.md)) — 採択した layer 1 + audit + schema 拡張を sub-issue で段階実装 ([#49](https://github.com/ozzy-labs/feedradar/issues/49) 親 issue) | 進行中（M1c 完了、後続 M2/M3 等は残タスク） |
 
