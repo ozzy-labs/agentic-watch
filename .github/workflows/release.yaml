@@ -1,21 +1,40 @@
-name: publish
+name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
   id-token: write
 
 jobs:
-  publish:
+  release-please:
     runs-on: ubuntu-latest
-    environment: npm-publish
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # mise から pnpm を外している理由は ci.yaml のコメント参照
+      # (aqua plugin が pnpm-linux-x64.tar.gz を期待するが新版は .tar.gz なしで配布される)
       - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6.0.5
         with:
           version: 11
@@ -25,6 +44,11 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # trusted publishing は npm CLI >= 11.5.1 / Node >= 22.14.0 が必須。
+      # setup-node が同梱する npm は古い場合があるため明示的に最新を入れる。
+      - name: Install latest npm (>= 11.5.1 required for trusted publishing)
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -33,16 +57,16 @@ jobs:
 
       # 多層防御 (PR #93 の self-link incident への regression guard):
       # workspace 内に self-link (`@ozzylabs/feedradar: "link:"`) が
-      # 紛れ込んだ場合、`pnpm pack` で出来上がる package.json にもそれが
+      # 紛れ込んだ場合、`npm pack` で出来上がる package.json にもそれが
       # 残り、downstream の `npm i` で resolution が壊れる。publish 前に
       # tarball を inspect して link: が含まれていないことを確認する。
       - name: Verify no self-link in packed manifest
         run: |
           shopt -s nullglob
-          pnpm pack --pack-destination /tmp
+          npm pack --pack-destination /tmp
           tarballs=(/tmp/ozzylabs-feedradar-*.tgz)
           if (( ${#tarballs[@]} == 0 )); then
-            echo "ERROR: pnpm pack produced no tarball."
+            echo "ERROR: npm pack produced no tarball."
             exit 1
           fi
           tarball="${tarballs[0]}"
@@ -57,4 +81,4 @@ jobs:
           echo "OK: packed manifest contains no link: specifier."
 
       - name: Publish to npm (OIDC Trusted Publishers)
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: npm publish --provenance --access public
