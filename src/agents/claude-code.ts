@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { renderItemForPrompt, wrapUntrusted } from "./_boundary.js";
+import { renderItemsForPrompt, wrapUntrusted } from "./_boundary.js";
 import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from "./types.js";
 
 /**
@@ -22,7 +22,7 @@ import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from
  */
 function buildResearchPrompt(req: ResearchRequest): string {
   const itemIds = req.items.map((i) => i.id).join(", ");
-  const itemBlocks = req.items.map(renderItemForPrompt).join("\n");
+  const itemBlocks = renderItemsForPrompt(req.items);
   return [
     "Run the `.agents/skills/research/SKILL.md` skill to produce a Markdown",
     "research report from the supplied detected items.",
@@ -129,7 +129,7 @@ function buildReviewPrompt(req: ReviewRequest): string {
  */
 function buildUpdatePrompt(req: UpdateRequest): string {
   const newId = req.outputPath.replace(/^.*\//, "").replace(/\.md$/, "");
-  const itemBlocks = req.items.map(renderItemForPrompt).join("\n");
+  const itemBlocks = renderItemsForPrompt(req.items);
   return [
     "Run the `.agents/skills/update/SKILL.md` skill to regenerate the supplied",
     "research report as a new `_v(N+1).md` file (rewrite-and-supersede).",

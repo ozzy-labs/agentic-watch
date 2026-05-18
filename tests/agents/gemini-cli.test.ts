@@ -331,6 +331,116 @@ describe("agents/gemini-cli", () => {
     });
   });
 
+  describe("research (multi-item digest, ADR-0011 §1)", () => {
+    const SECOND_ITEM: Item = ItemSchema.parse({
+      id: "hacker-news-39876543-claude-code",
+      sourceId: "hacker-news",
+      title: "Show HN: claude-code in production",
+      url: "https://news.ycombinator.com/item?id=39876543",
+      publishedAt: "2026-05-11T12:00:00.000Z",
+      fetchedAt: "2026-05-11T12:30:00.000Z",
+      summary: "We migrated our research pipeline to claude-code.",
+      matchedKeywords: ["Claude Code"],
+      status: "detected",
+    });
+    const THIRD_ITEM: Item = ItemSchema.parse({
+      id: "anthropic-news-2026-05-12-anthropic-funding",
+      sourceId: "anthropic-news",
+      title: "Anthropic funding round",
+      url: "https://anthropic.com/news/funding",
+      publishedAt: "2026-05-12T00:00:00.000Z",
+      fetchedAt: "2026-05-12T01:00:00.000Z",
+      summary: "New round closed.",
+      matchedKeywords: ["Anthropic"],
+      status: "detected",
+    });
+
+    function buildMultiItemResearchRequest(items: Item[]): ResearchRequest {
+      return { ...buildResearchRequest(), items };
+    }
+
+    it("includes every item's id, url, and untrusted content in the prompt", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
+      await adapter.research(buildMultiItemResearchRequest(items));
+
+      const call = calls[0];
+      for (const item of items) {
+        expect(call.prompt).toContain(item.id);
+        expect(call.prompt).toContain(item.url);
+        expect(call.prompt).toContain(item.title);
+        if (item.summary !== undefined) {
+          expect(call.prompt).toContain(item.summary);
+        }
+      }
+      expect(call.prompt).toContain(items.map((i) => i.id).join(", "));
+
+      const stdinJson = JSON.parse(call.stdin);
+      expect(stdinJson.items).toEqual(items);
+    });
+
+    it("labels each item with an `### Item k of N` heading and one boundary marker per item", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
+      await adapter.research(buildMultiItemResearchRequest(items));
+
+      const prompt = calls[0].prompt;
+      expect(prompt).toContain("### Item 1 of 3");
+      expect(prompt).toContain("### Item 2 of 3");
+      expect(prompt).toContain("### Item 3 of 3");
+      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
+      const closeCount = (prompt.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(openCount).toBe(3);
+      expect(closeCount).toBe(3);
+    });
+
+    it("emits the same prompt for a single-item array as before #140 (regression guard)", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      await adapter.research(buildResearchRequest());
+
+      const prompt = calls[0].prompt;
+      expect(prompt).not.toContain("### Item 1 of 1");
+      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
+      expect(openCount).toBe(1);
+    });
+  });
+
+  describe("update (multi-item digest, ADR-0011 §4)", () => {
+    const SECOND_ITEM: Item = ItemSchema.parse({
+      id: "hacker-news-39876543-claude-code",
+      sourceId: "hacker-news",
+      title: "Show HN: claude-code in production",
+      url: "https://news.ycombinator.com/item?id=39876543",
+      publishedAt: "2026-05-11T12:00:00.000Z",
+      fetchedAt: "2026-05-11T12:30:00.000Z",
+      summary: "Production migration writeup.",
+      matchedKeywords: ["Claude Code"],
+      status: "researched",
+    });
+
+    it("renders every digest item under its `### Item k of N` heading inside the update prompt", async () => {
+      const { runner, calls } = buildMockRunner();
+      const adapter = createGeminiCliAdapter({ run: runner });
+      const items = [SAMPLE_ITEM, SECOND_ITEM];
+      await adapter.update({ ...buildUpdateRequest(), items });
+
+      const prompt = calls[0].prompt;
+      expect(prompt).toContain("### Item 1 of 2");
+      expect(prompt).toContain("### Item 2 of 2");
+      expect(prompt).toContain(SAMPLE_ITEM.id);
+      expect(prompt).toContain(SECOND_ITEM.id);
+      // Predecessor body + 2 items = 3 boundary marker pairs total.
+      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
+      expect(openCount).toBe(3);
+
+      const stdinJson = JSON.parse(calls[0].stdin);
+      expect(stdinJson.items).toEqual(items);
+    });
+  });
+
   describe("adapter shape", () => {
     it("has id 'gemini-cli'", () => {
       const adapter = createGeminiCliAdapter({ run: buildMockRunner().runner });
