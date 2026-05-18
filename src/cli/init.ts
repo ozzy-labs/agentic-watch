@@ -157,16 +157,23 @@ interface InitOptions {
    */
   noClaudeMd?: boolean;
   /**
-   * Skip writing `<cwd>/templates/default.md`. By default `init` emits a
-   * starter Markdown template body that mirrors the engine `research`
-   * SKILL's fallback structure (要約 / 詳細 / 出典). The file is the
-   * first editable artifact the user can tweak to customize report
-   * shape; the research engine SKILL falls back to its own built-in
+   * Skip writing the bundled starter templates under `<cwd>/templates/`.
+   * By default `init` emits two Markdown bodies:
+   *
+   * - `templates/default.md` — single-item research starter, mirrors the
+   *   engine `research` SKILL's fallback structure (要約 / 詳細 / 出典).
+   * - `templates/digest.md` — multi-item digest starter (ADR-0011), with
+   *   sections for per-item summaries, common themes, differences, and
+   *   recommended actions; used when `radar research --digest` resolves
+   *   `templateId: digest`.
+   *
+   * Both are the first editable artifacts the user can tweak to customize
+   * report shape; the research engine SKILL falls back to its own built-in
    * structure when `templateBody` is empty, so skipping does not break
-   * runtime behavior — it only removes the editable starter.
+   * runtime behavior — it only removes the editable starters.
    *
    * Useful for workspaces that manage `templates/` via another mechanism
-   * or that already have a populated `templates/default.md`.
+   * or that already have populated `templates/default.md` / `templates/digest.md`.
    */
   noTemplates?: boolean;
   /**
@@ -324,6 +331,35 @@ const CLAUDE_MD_SCAFFOLD = {
 const DEFAULT_TEMPLATE_SCAFFOLD = {
   src: "default.md",
   dest: ["templates", "default.md"] as const,
+} as const;
+
+/**
+ * Bundled starter Markdown template for the digest output mode emitted by
+ * default into `<cwd>/templates/digest.md`. Distinct from `default.md` (single
+ * item research) — the digest template instructs the agent to bundle multiple
+ * items into a single research report with sections for per-item summaries,
+ * common themes, differences, and recommended actions.
+ *
+ * The CLI passes this body as `templateBody` to the research SKILL when the
+ * resolved `templateId` is `digest` (ADR-0011 §6 §`templateId` 解決順序):
+ * a user-edited `<cwd>/templates/digest.md` takes precedence; if absent the
+ * bundled one is used. The body is the **second** editable artifact the user
+ * can tweak to customize digest report shape; like `default.md` it stores the
+ * body only — no frontmatter (ADR-0003 / ADR-0011 §6).
+ *
+ * Untrusted content boundary (ADR-0009 M1c): the prompt builder wraps
+ * untrusted per-item content with `<untrusted_item>...</untrusted_item>`
+ * markers and the digest's `trustLevel` resolves to the most-restrictive
+ * level across constituent items (ADR-0011 §7). The template itself only
+ * carries comment-form guidance for editors; the actual markers are emitted
+ * by the prompt builder at runtime.
+ *
+ * See ADR-0011 (digest research output) for the full template ID contract
+ * and ADR-0007 for the init bundle layering.
+ */
+const DIGEST_TEMPLATE_SCAFFOLD = {
+  src: "digest.md",
+  dest: ["templates", "digest.md"] as const,
 } as const;
 
 /**
@@ -542,6 +578,20 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       skippedFiles,
       warn,
     });
+    // digest.md is bundled under the same `--no-templates` umbrella as
+    // default.md — both are starter Markdown bodies the user may edit to
+    // customize report shape. See ADR-0011 (digest research output) §6 for
+    // the templateId resolution order: a user-edited templates/digest.md
+    // takes precedence over the bundled one at runtime.
+    await emitScaffold({
+      cwd,
+      force,
+      templatesRoot: options.templatesRoot,
+      scaffold: DIGEST_TEMPLATE_SCAFFOLD,
+      copiedFiles,
+      skippedFiles,
+      warn,
+    });
   }
 
   if (!options.noFeedradarMd) {
@@ -734,7 +784,7 @@ export const initCommand: Command = {
         "  - Claude Code workspace instructions: CLAUDE.md (imports @AGENTS.md so Claude reads it)",
       );
       console.log(
-        "  - Starter report template: templates/default.md (editable; mirrors research SKILL fallback)",
+        "  - Starter report templates: templates/default.md (single item) and templates/digest.md (multi-item digest)",
       );
       console.log(
         "  - Human-facing workspace guide: FEEDRADAR.md (natural-language / slash usage)",
@@ -771,7 +821,9 @@ export const initCommand: Command = {
       console.log(
         "                         (useful if the workspace already has its own CLAUDE.md)",
       );
-      console.log("  --no-templates         Skip writing templates/default.md starter template");
+      console.log(
+        "  --no-templates         Skip writing templates/default.md and templates/digest.md",
+      );
       console.log(
         "                         (research engine SKILL falls back to its built-in structure)",
       );
