@@ -598,12 +598,12 @@ research/<YYYYMMDD>_digest_<slug>_v1.md
 ##### 制約
 
 - **2 件以上必須**: `--digest` に 1 件しか渡さないと exit code `2` で拒否（1 件 digest は単体 research と区別がつかないため）
-- **`dismissed` item は含められない**: 含まれていると exit code `1` で拒否。事前に `radar dismiss` の取り消し相当の対応を行ってから再実行する
+- **`dismissed` item は含められない**: 含まれていると exit code `1` で拒否（ADR-0011 §5）。digest 対象から外すか、対象 item が誤って dismiss されていたなら `items/<sourceId>/<item-id>.yaml` の `status` を手で戻してから再実行する
 - **digest v+1 の itemIds は不変**: `radar update` で v+1 を生成する際、含まれる item 集合は v1 と同じ。後から item を追加したい場合は新規 digest を作る（ADR-0011 §4）
 
 ##### template のカスタマイズ
 
-digest レポートのテンプレートは `templates/digest.md` で、`radar init` が bundled default を workspace に配布する（[ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md) §5 の「`init` で配布される 5 層」の 1 つ）。**このファイルを手で編集すれば、以後の `radar research --digest` 実行に自動で反映される**（再 init 不要、CLI は実行時に `loadTemplate("digest", templates/)` で読み直す）。
+digest レポートのテンプレートは `templates/digest.md` で、`radar init` が bundled default を workspace に配布する（[ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md) の bundled skills / templates 配布経路の一部）。**このファイルを手で編集すれば、以後の `radar research --digest` 実行に自動で反映される**（再 init 不要、CLI は実行時に `loadTemplate("digest", templates/)` で読み直す）。
 
 ```bash
 # digest テンプレートを編集して digest 全体のフォーマットを変える
