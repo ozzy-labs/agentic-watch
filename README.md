@@ -47,6 +47,7 @@ radar research <item-id>
 # Other subcommands
 radar source list             # list sources
 radar source test <id>        # dry-run preview a source (no state/items mutation)
+radar research --digest <id1> <id2> ...  # bundle multiple items into one digest report (ADR-0011)
 radar dismiss <item-id>       # move an item to dismissed (no LLM)
 radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)

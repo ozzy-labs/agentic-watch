@@ -538,13 +538,19 @@ radar watch run --source anthropic-news
 
 ### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
-指定 item に対して、指定 agent で調査レポートを生成。
+```text
+radar research <item-id> [--agent <agent-id>] [--template <id>]                            # single-item
+radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]     # digest mode
+```
+
+指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)。digest の詳細・運用ガイドは別途 #142 で追記予定）。
 
 | 引数 | 説明 |
 |---|---|
-| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。形式は `<title-slug>-<8 hex>`（例: `claude-code-releases-agents-438eddad`）。元のフィード GUID は `items/<sourceId>/<item-id>.yaml` の `raw` 内に保持される |
+| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。形式は `<title-slug>-<8 hex>`（例: `claude-code-releases-agents-438eddad`）。元のフィード GUID は `items/<sourceId>/<item-id>.yaml` の `raw` 内に保持される。`--digest` 時は 2 件以上を空白区切りで指定する |
+| `--digest` | 複数 item を 1 つの digest レポートにまとめる（ADR-0011）。2 件以上の `<item-id>` が必須。出力は `research/<YYYYMMDD>_digest_<slug>_v1.md` |
 | `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
-| `--template` | テンプレ id（既定: `default`、`templates/<id>.md` を参照） |
+| `--template` | テンプレ id（既定: 単体 = `default`、digest = `digest`、`templates/<id>.md` を参照） |
 
 挙動:
 

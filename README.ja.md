@@ -47,6 +47,7 @@ radar research <item-id>
 # その他のサブコマンド
 radar source list             # ソース一覧
 radar source test <id>        # ソースをドライラン実行（state/items を書き換えない）
+radar research --digest <id1> <id2> ...  # 複数 item を 1 つの digest レポートに束ねる（ADR-0011）
 radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
 radar review <research-id>    # レポートを別エージェントで相互レビュー
 radar update <research-id>    # 既存レポートを最新 item で更新（v+1）

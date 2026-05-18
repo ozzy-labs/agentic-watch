@@ -117,6 +117,7 @@ radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
 radar watch run [--source <id>] [--bootstrap]
 radar research <item-id> --agent <agent>
+radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 item を 1 digest にまとめる (ADR-0011)
 radar review <research-id> --agent <agent>
 radar update <research-id> --agent <agent>
 radar dismiss <item-id>
