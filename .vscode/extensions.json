@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "DavidAnson.vscode-markdownlint",
+    "EditorConfig.EditorConfig",
+    "foxundermoon.shell-format",
+    "github.vscode-github-actions",
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml",
+    "timonwong.shellcheck"
+  ]
+}

@@ -7,9 +7,6 @@ config:
       - description
   MD041: false
   MD060: false
-
 ignores:
   - "**/node_modules"
   - "**/.claude/plans"
-  # release-please が生成 / 更新する。独自スタイル (MD012 等) を強制しない
-  - "CHANGELOG.md"
