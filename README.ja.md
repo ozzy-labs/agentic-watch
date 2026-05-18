@@ -12,6 +12,7 @@
 
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
 - **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
+- **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
