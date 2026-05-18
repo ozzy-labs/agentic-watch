@@ -519,7 +519,8 @@ describe("cli/research", () => {
       // <YYYYMMDD>_digest_<slug>_v1.md
       expect(calls[0].outputPath).toMatch(/research\/\d{8}_digest_[a-z0-9-]+_v1\.md$/);
       // Top matchedKeyword across both items is "claude code" → "claude-code"
-      // (3 hits combined: 1 from SAMPLE, 2 from SECOND counted by item).
+      // (SAMPLE contributes 1 hit, SECOND contributes 1 hit = 2 total; "anthropic"
+      // contributes 1 hit). Top-2 → "claude-code-anthropic" per ADR-0011 §2.
       expect(calls[0].outputPath).toContain("_digest_claude-code");
       // Template default for digest mode is "digest" (ADR-0011 §6).
       expect(calls[0].templateId).toBe("digest");

@@ -538,7 +538,10 @@ radar watch run --source anthropic-news
 
 ### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
-### `radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]`
+```text
+radar research <item-id> [--agent <agent-id>] [--template <id>]                            # single-item
+radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]     # digest mode
+```
 
 指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)。digest の詳細・運用ガイドは別途 #142 で追記予定）。
 
