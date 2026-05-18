@@ -1,4 +1,4 @@
-import type { Item } from "../schemas/index.js";
+import type { Item, TrustLevel } from "../schemas/index.js";
 
 /**
  * Trust-boundary marker helper for adapter prompt builders.
@@ -58,4 +58,70 @@ export function renderItemForPrompt(item: Item): string {
     `  url: ${item.url}`,
     wrapUntrusted(untrustedLines.join("\n")),
   ].join("\n");
+}
+
+/**
+ * Render a list of `Item`s as the human-readable block that the adapter embeds
+ * in the LLM prompt for digest (multi-item) research.
+ *
+ * Contract (ADR-0011 §1, ADR-0009 M1c):
+ *
+ * - **Single-item case (N === 1)**: emits the exact same shape as
+ *   `renderItemForPrompt(items[0])` — no section header is added so existing
+ *   single-item prompts remain byte-equivalent (regression guard for issue
+ *   #140's acceptance criteria).
+ * - **Multi-item case (N > 1)**: each item is prefixed with an
+ *   `### Item k of N` Markdown section header and rendered via
+ *   `renderItemForPrompt`. Each item's untrusted halves stay in their own
+ *   `<untrusted_item>...</untrusted_item>` boundary so a prompt-injection
+ *   payload in one item cannot escape into the section between items.
+ *
+ * The header uses a `###` heading rather than a bare label so it survives
+ * round-tripping through agents that render the prompt as Markdown (Claude
+ * Code's transcript viewer, Codex's `<stdin>` echo, etc.). The blank line
+ * between sections matters for the same reason: most Markdown parsers fold
+ * adjacent blocks otherwise.
+ */
+export function renderItemsForPrompt(items: Item[]): string {
+  if (items.length === 1) {
+    // Preserve the byte-for-byte single-item layout from before #140 so
+    // existing tests, snapshot fixtures, and single-item callers keep
+    // working without churn.
+    return renderItemForPrompt(items[0]);
+  }
+  const total = items.length;
+  return items
+    .map((item, idx) => `### Item ${idx + 1} of ${total}\n${renderItemForPrompt(item)}`)
+    .join("\n\n");
+}
+
+/**
+ * Resolve the effective trust level of a digest's combined prompt by taking
+ * the most-restrictive level across its constituent items (ADR-0011 §7).
+ *
+ * Rule: `untrusted` > `trusted`. If **any** item is `untrusted`, the digest
+ * as a whole is `untrusted` — the defense-in-depth "weakest link decides"
+ * principle. This mirrors the ADR's safety justification: bundling one
+ * untrusted item with N trusted ones still puts an injection payload inside
+ * the same prompt context, so the whole prompt must be treated at the
+ * untrusted ceiling.
+ *
+ * Edge case: an empty input array resolves to `untrusted` because the only
+ * way to reach this helper with no items is a programming bug, and
+ * defaulting to the safer side keeps the downstream boundary marker active.
+ * Production callers (the CLI in #141) always pass at least one item, so
+ * this branch is defensive-only.
+ *
+ * This helper deliberately lives in `_boundary.ts` (the prompt-builder side)
+ * rather than `core/` because it is part of the M1c (boundary marker) layer
+ * decision — it tells the prompt builder which marker policy to apply for
+ * the bundle. Callers that already have per-item `Source` objects can map
+ * them to `source.trustLevel` and pass the array in directly.
+ */
+export function resolveTrustLevel(levels: TrustLevel[]): TrustLevel {
+  // Empty input is treated as `untrusted` per the JSDoc contract above — the
+  // only way to reach this branch is a programming bug, so erring on the
+  // safer side keeps the downstream boundary marker active.
+  if (levels.length === 0) return "untrusted";
+  return levels.some((level) => level === "untrusted") ? "untrusted" : "trusted";
 }
