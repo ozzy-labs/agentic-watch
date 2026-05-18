@@ -58,6 +58,7 @@ radar watch run
 
 # 検出済み item に対する操作
 radar research <item-id> --agent <agent>     # 調査レポートを生成 (status: detected -> researched)
+radar research --digest <item-id> <item-id> ... [--agent <agent>]  # 複数 item を 1 digest にまとめる (ADR-0011)
 radar review <research-id> --agent <agent>   # 既存レポートをレビュー (status: researched -> reviewed)
 radar update <research-id> --agent <agent>   # v+1 を生成 (item status は変えない)
 radar dismiss <item-id>                       # LLM 不要、item を dismissed に

@@ -439,4 +439,279 @@ describe("cli/research", () => {
     expect(code).toBe(2);
     expect(captured.error.some((m) => m.includes("radar.config.yaml"))).toBe(true);
   });
+
+  it("rejects multiple <item-id> arguments without --digest", async () => {
+    // Without --digest, the CLI accepts exactly one positional id. Two ids
+    // without the flag is an arg-shape mistake (exit 2) rather than a
+    // workspace error (exit 1) — distinguishes "you typed the wrong thing"
+    // from "the item doesn't exist".
+    const workdir = await setupWorkspace();
+    const { io, captured } = captureIo();
+    const code = await runResearch([SAMPLE_ITEM.id, "another-item-id"], { cwd: workdir, io });
+    expect(code).toBe(2);
+    expect(captured.error.some((m) => m.includes("require --digest"))).toBe(true);
+  });
+
+  describe("digest mode (--digest)", () => {
+    const SECOND_ITEM: Item = ItemSchema.parse({
+      id: "anthropic-news-2026-05-12-claude-code-skills",
+      sourceId: "anthropic-news",
+      title: "Claude Code skills: ship and iterate",
+      url: "https://anthropic.com/news/claude-code-skills",
+      publishedAt: "2026-05-12T00:00:00.000Z",
+      fetchedAt: "2026-05-12T01:00:00.000Z",
+      summary: "Claude Code skills, anthropic deep dive.",
+      matchedKeywords: ["Claude Code", "Anthropic"],
+      status: "detected",
+    });
+
+    async function setupDigestWorkspace(): Promise<string> {
+      // setupWorkspace seeds SAMPLE_ITEM under anthropic-news/. Add a second
+      // item with overlapping `matchedKeywords` so digest slug derivation has
+      // something deterministic to rank.
+      const workdir = await setupWorkspace();
+      await writeFile(
+        join(workdir, "items", SECOND_ITEM.sourceId, `${SECOND_ITEM.id}.yaml`),
+        stringifyYaml(SECOND_ITEM),
+        "utf8",
+      );
+      return workdir;
+    }
+
+    function validDigestFrontmatter(req: ResearchRequest): Record<string, unknown> {
+      // Mirror the validDigestFrontmatter shape but compute a digest-style id
+      // so a misconfigured filename in the CLI surfaces as a frontmatter
+      // mismatch, not a silent pass.
+      return {
+        id: "20260518_digest_claude-code-anthropic_v1",
+        itemIds: req.items.map((i) => i.id),
+        agent: req.agent,
+        templateId: req.templateId,
+        createdAt: "2026-05-18T00:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      };
+    }
+
+    it("generates a single digest file from multiple item ids", async () => {
+      const workdir = await setupDigestWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("# digest body\n", validDigestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--digest", SAMPLE_ITEM.id, SECOND_ITEM.id], {
+        cwd: workdir,
+        io,
+      });
+
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(1);
+      // Adapter received both items in one call.
+      expect(calls[0].items.map((i) => i.id)).toEqual([SAMPLE_ITEM.id, SECOND_ITEM.id]);
+      // Filename follows the ADR-0011 pattern:
+      // <YYYYMMDD>_digest_<slug>_v1.md
+      expect(calls[0].outputPath).toMatch(/research\/\d{8}_digest_[a-z0-9-]+_v1\.md$/);
+      // Top matchedKeyword across both items is "claude code" → "claude-code"
+      // (3 hits combined: 1 from SAMPLE, 2 from SECOND counted by item).
+      expect(calls[0].outputPath).toContain("_digest_claude-code");
+      // Template default for digest mode is "digest" (ADR-0011 §6).
+      expect(calls[0].templateId).toBe("digest");
+      // The generated file exists and lists both ids in itemIds frontmatter.
+      const body = await readFile(calls[0].outputPath, "utf8");
+      const fm = matter(body).data;
+      expect(fm.itemIds).toEqual([SAMPLE_ITEM.id, SECOND_ITEM.id]);
+      expect(fm.templateId).toBe("digest");
+
+      // Both items transition to `researched`.
+      for (const item of [SAMPLE_ITEM, SECOND_ITEM]) {
+        const itemRaw = await readFile(
+          join(workdir, "items", item.sourceId, `${item.id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(itemRaw).status).toBe("researched");
+      }
+
+      // The log line cites both items (helps users grep `research:` lines).
+      expect(captured.log.some((m) => m.includes("status -> researched"))).toBe(true);
+    });
+
+    it("exits 2 when --digest receives only one item id", async () => {
+      const workdir = await setupDigestWorkspace();
+      const { adapter, calls } = buildMockAdapter(async () => undefined);
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--digest", SAMPLE_ITEM.id], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--digest requires 2 or more"))).toBe(true);
+      // Adapter must not be invoked when validation fails up-front.
+      expect(calls).toHaveLength(0);
+    });
+
+    it("honors an explicit --template override in digest mode", async () => {
+      const workdir = await setupDigestWorkspace();
+      // Provision a custom template under the workspace.
+      await writeFile(
+        join(workdir, "templates", "digest-detailed.md"),
+        "# Detailed digest body\n",
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", validDigestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch(
+        ["--digest", "--template", "digest-detailed", SAMPLE_ITEM.id, SECOND_ITEM.id],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      expect(calls[0].templateId).toBe("digest-detailed");
+      expect(calls[0].templateBody).toBe("# Detailed digest body\n");
+    });
+
+    it("falls back to 'digest' slug when no matchedKeywords are present", async () => {
+      // Both items have empty matchedKeywords → slug should be literal
+      // "digest" per ADR-0011 §2 fallback.
+      const workdir = await mkdtemp(join(tmpdir(), "feedradar-research-digest-"));
+      await mkdir(join(workdir, "items", "src-a"), { recursive: true });
+      await mkdir(join(workdir, "research"), { recursive: true });
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const itemA = ItemSchema.parse({
+        id: "src-a-item-1",
+        sourceId: "src-a",
+        title: "Item A",
+        url: "https://example.com/a",
+        fetchedAt: "2026-05-18T00:00:00.000Z",
+        matchedKeywords: [],
+        status: "detected",
+      });
+      const itemB = ItemSchema.parse({
+        id: "src-a-item-2",
+        sourceId: "src-a",
+        title: "Item B",
+        url: "https://example.com/b",
+        fetchedAt: "2026-05-18T00:00:00.000Z",
+        matchedKeywords: [],
+        status: "detected",
+      });
+      for (const item of [itemA, itemB]) {
+        await writeFile(
+          join(workdir, "items", item.sourceId, `${item.id}.yaml`),
+          stringifyYaml(item),
+          "utf8",
+        );
+      }
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: "20260518_digest_digest_v1",
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-18T00:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch(["--digest", itemA.id, itemB.id], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls[0].outputPath).toMatch(/research\/\d{8}_digest_digest_v1\.md$/);
+    });
+
+    it("rejects digest including a dismissed item", async () => {
+      const workdir = await setupDigestWorkspace();
+      // Flip SECOND_ITEM to dismissed.
+      await writeFile(
+        join(workdir, "items", SECOND_ITEM.sourceId, `${SECOND_ITEM.id}.yaml`),
+        stringifyYaml({ ...SECOND_ITEM, status: "dismissed" }),
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter(async () => undefined);
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--digest", SAMPLE_ITEM.id, SECOND_ITEM.id], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("dismissed"))).toBe(true);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("does not regress an already-researched item's status when included in a digest", async () => {
+      // ADR-0011 §5: terminal states (researched / reviewed) are protected
+      // from being re-set by a digest run.
+      const workdir = await setupDigestWorkspace();
+      await writeFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        stringifyYaml({ ...SAMPLE_ITEM, status: "reviewed" }),
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", validDigestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch(["--digest", SAMPLE_ITEM.id, SECOND_ITEM.id], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(1);
+
+      // SAMPLE_ITEM stays `reviewed` (terminal protected); SECOND_ITEM moves
+      // from detected → researched.
+      const sampleRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(sampleRaw).status).toBe("reviewed");
+      const secondRaw = await readFile(
+        join(workdir, "items", SECOND_ITEM.sourceId, `${SECOND_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(secondRaw).status).toBe("researched");
+    });
+
+    it("errors when one of the digest item ids does not exist", async () => {
+      const workdir = await setupDigestWorkspace();
+      const { adapter, calls } = buildMockAdapter(async () => undefined);
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--digest", SAMPLE_ITEM.id, "ghost-item"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("ghost-item"))).toBe(true);
+      expect(calls).toHaveLength(0);
+    });
+  });
 });
