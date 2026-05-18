@@ -12,6 +12,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 
 - **Multi-agent**: switch between Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI via adapters.
 - **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry are all driven through the same `Source` abstraction.
+- **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 

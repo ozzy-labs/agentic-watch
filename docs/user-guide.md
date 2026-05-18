@@ -58,7 +58,7 @@ radar research <item-id> --agent claude-code
 ├── state/               # 既読 ID / etag
 ├── items/               # 検出記事 (YAML)
 ├── research/            # 調査結果 (Markdown)
-├── templates/           # 既定テンプレートのコピー (`default.md` が雛形、`--no-templates` で skip)
+├── templates/           # 既定テンプレートのコピー (`default.md` 単体 / `digest.md` 複数 item digest、`--no-templates` で skip)
 ├── CLAUDE.md            # Claude Code 用 workspace instructions (`@AGENTS.md` を import、`--no-claude-md` で skip)
 ├── AGENTS.md            # Codex / Gemini / Copilot が auto-read する instructions (`--no-agents-md` で skip)
 ├── FEEDRADAR.md     # 人間向け workspace ガイド (自然言語 / slash による使い方、`--no-feedradar-md` で skip)
@@ -80,7 +80,7 @@ radar research <item-id> --agent claude-code
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - **`CLAUDE.md`** (workspace root) を bundled からコピー。Claude Code は `AGENTS.md` を auto-read しないため、最小の `CLAUDE.md` (`@AGENTS.md` を import するだけ) を default で出力し、業界標準の "SSoT は AGENTS.md、CLAUDE.md は再エクスポート" パターンを成立させる。`--no-claude-md` で skip 可 (`--no-agents-md` 指定時は `@AGENTS.md` がリンク切れになるため自動 skip + 警告)
-- **`templates/default.md`** を bundled からコピー。engine `research` SKILL の fallback 構造 (要約 / 詳細 / 出典) と一致する Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
+- **`templates/default.md`** と **`templates/digest.md`** を bundled からコピー。`default.md` は単体 research の fallback 構造 (要約 / 詳細 / 出典) を、`digest.md` は digest research の構造 (各 item の要点 / 共通テーマ / 差分・対立点 / 推奨アクション / 出典、[ADR-0011](./adr/0011-digest-research-output.md)) を持つ Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
 - **`FEEDRADAR.md`** (workspace root) を bundled からコピー。**人間向け** の workspace ガイドで、AI エージェントへの自然言語指示や slash command による使い方を主、CLI 直叩きを副として説明する。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) とは別レイヤー。`--no-feedradar-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 
@@ -153,7 +153,7 @@ workspace に既に独自の `CLAUDE.md` (project 全体の Claude Code 指示�
 
 #### `--no-templates` を使うべきケース
 
-`templates/` を別の方法で管理している、または独自の `templates/default.md` を既に持っている workspace では、`radar init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (要約 / 詳細 / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
+`templates/` を別の方法で管理している、または独自の `templates/default.md` / `templates/digest.md` を既に持っている workspace では、`radar init --no-templates` で starter テンプレ生成のみを skip できる。`templates/` ディレクトリ自体は作成される。`research` engine SKILL は `templateBody` が空のとき内蔵 fallback 構造 (単体 = 要約 / 詳細 / 出典、digest = 各 item の要点 / 共通テーマ / 出典) を使う設計のため、skip しても動作上の問題は無い (編集可能な雛形ファイルが置かれないだけ)。
 
 #### `--no-feedradar-md` を使うべきケース
 
@@ -543,7 +543,7 @@ radar research <item-id> [--agent <agent-id>] [--template <id>]                 
 radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]     # digest mode
 ```
 
-指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)。digest の詳細・運用ガイドは別途 #142 で追記予定）。
+指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)、詳細は後述「[Digest research](#digest-research)」）。
 
 | 引数 | 説明 |
 |---|---|
@@ -568,6 +568,72 @@ radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template
 Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
 Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起動する (`-y` は YOLO mode で承認をスキップ、`--skip-trust` は folder trust チェックを bypass。Claude Code の `--permission-mode bypassPermissions` 相当)。`--skip-trust` は他 3 adapter (`claude-code` / `codex-cli` / `copilot`) と同じ「全権モード起動」の整合性回復であり、新たな権限付与ではない (folder trust は Gemini CLI 側の UI 制約)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
+
+#### Digest research
+
+`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の **digest レポート**にまとめる ([ADR-0011](./adr/0011-digest-research-output.md))。単体 research（1 item につき 1 ファイル）が `research/` に乱立するのを避け、関連 item を横断的に読みたい場面で使う。
+
+```bash
+radar research --digest <item-id-1> <item-id-2> <item-id-3>
+```
+
+##### いつ使うか (digest)
+
+- **短期間に類似トピックの item が複数ヒットしたとき**: 例えば 1 日に同じプロダクトのリリース・ブログ・SNS 投稿が連続検出された場合、それぞれ単体 research を回すよりも 1 本の digest にまとめたほうがレビュー負荷が下がる
+- **関連トピックの item を横断的にまとめたいとき**: 別 source（例: 公式 blog + GitHub Releases + npm registry）に跨る同テーマの item を、横断視点で 1 レポートに集約する。FeedRadar の multi-feed 強みを digest にも継承（ADR-0011 §3 で source 横断 digest を許可）
+- **共通テーマ・差分・対立点を可視化したいとき**: digest テンプレート（`templates/digest.md`）は「各 item の要点」「共通テーマ」「差分・対立点」「推奨アクション」の 4 観点で agent に書かせるため、単体 research では拾えない横断的な気づきを得られる
+
+##### 出力ファイル名
+
+```text
+research/<YYYYMMDD>_digest_<slug>_v1.md
+```
+
+- `<YYYYMMDD>`: digest 生成日（UTC、CLI 起動日）。単体 research と違い、構成 item の `publishedAt` は揃わないため**生成日**を使う
+- 固定リテラル `digest`: 単体 research との視覚的識別を容易にする（`ls research/ | grep digest` で digest だけ列挙できる）
+- `<slug>`: 含まれる全 item の `matchedKeywords` を頻度集計し、上位 1〜2 個を kebab-case で連結（例: `claude-code-anthropic`）。`matchedKeywords` が空の場合はフォールバックとして `digest` が入る
+
+命名規約・slug 導出アルゴリズム・supersedes チェーン・複数 item の status 遷移の詳細は [ADR-0011](./adr/0011-digest-research-output.md)（特に §1, §2, §4, §5）を参照。
+
+##### 制約
+
+- **2 件以上必須**: `--digest` に 1 件しか渡さないと exit code `2` で拒否（1 件 digest は単体 research と区別がつかないため）
+- **`dismissed` item は含められない**: 含まれていると exit code `1` で拒否（ADR-0011 §5）。digest 対象から外すか、対象 item が誤って dismiss されていたなら `items/<sourceId>/<item-id>.yaml` の `status` を手で戻してから再実行する
+- **digest v+1 の itemIds は不変**: `radar update` で v+1 を生成する際、含まれる item 集合は v1 と同じ。後から item を追加したい場合は新規 digest を作る（ADR-0011 §4）
+
+##### template のカスタマイズ
+
+digest レポートのテンプレートは `templates/digest.md` で、`radar init` が bundled default を workspace に配布する（[ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md) の bundled skills / templates 配布経路の一部）。**このファイルを手で編集すれば、以後の `radar research --digest` 実行に自動で反映される**（再 init 不要、CLI は実行時に `loadTemplate("digest", templates/)` で読み直す）。
+
+```bash
+# digest テンプレートを編集して digest 全体のフォーマットを変える
+$EDITOR templates/digest.md
+
+# 次回以降の digest 生成に即反映
+radar research --digest <id-1> <id-2>
+```
+
+`--template <id>` を明示すれば `templates/<id>.md` を使うこともできる（例: `--template digest-detailed`）。明示しない場合、`--digest` 時は `templates/digest.md`、単体 research 時は `templates/default.md` がそれぞれ default として選択される。
+
+`templates/digest.md` を削除した場合、次回の `radar init` で再配布される（既存ファイル保護仕様のため、編集を残したまま新 default を取り込みたい場合は `--force` を併用する）。digest テンプレートが workspace に無く `--digest` を実行した場合は、SKILL に同梱された内蔵 fallback 構造（要約 / 各 item の要点 / 共通テーマ / 出典）でレポートが生成される。
+
+##### 例
+
+```bash
+# 同日にヒットした Claude Code 関連 3 件を 1 digest にまとめる
+radar research --digest \
+  claude-code-announcement-a1b2c3d4 \
+  claude-code-blog-e5f6a7b8 \
+  claude-code-release-9c0d1e2f
+# → research/20260518_digest_claude-code_v1.md
+
+# source 横断 digest (anthropic-news + hacker-news + github-releases)
+radar research --digest \
+  anthropic-news-claude-code-agents-438eddad \
+  hacker-news-39876543-claude-code-feedback-7a8b9c \
+  github-releases-anthropics-claude-code-v0-5-0-cafe1234
+# → research/20260518_digest_claude-code-agents_v1.md
+```
 
 ### `radar dismiss <item-id>`
 
