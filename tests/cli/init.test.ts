@@ -937,6 +937,133 @@ describe("cli/init", () => {
     });
   });
 
+  describe("templates/digest.md (multi-item digest starter template)", () => {
+    // ADR-0011 (digest research output): bundles the default digest template
+    // and distributes it via `radar init` under the same `--no-templates`
+    // umbrella as `default.md`. The body instructs the agent to bundle
+    // multiple items into a single research report with sections for
+    // per-item summaries, common themes, differences, and recommended
+    // actions. Like default.md, it stores the body only (no frontmatter)
+    // because the CLI constructs `ResearchFrontmatter` per ADR-0003 / 0011.
+
+    it("emits <cwd>/templates/digest.md by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const dest = join(workdir, "templates", "digest.md");
+      expect(await pathExists(dest)).toBe(true);
+      expect(result.copiedFiles).toContain("templates/digest.md");
+    });
+
+    it("skips templates/digest.md when noTemplates: true (same umbrella as default.md)", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        noTemplates: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      // Both default.md and digest.md are gated by the same flag.
+      expect(await pathExists(join(workdir, "templates", "default.md"))).toBe(false);
+      expect(await pathExists(join(workdir, "templates", "digest.md"))).toBe(false);
+      const templateEntries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "templates/digest.md" || p === "templates/default.md",
+      );
+      expect(templateEntries).toEqual([]);
+    });
+
+    it("protects existing templates/digest.md without --force", async () => {
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const dest = join(workdir, "templates", "digest.md");
+      await writeFile(dest, "user-edited digest template", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited digest template");
+      expect(result.skippedFiles).toContain("templates/digest.md");
+      expect(warnings.some((m) => m.includes("templates/digest.md"))).toBe(true);
+    });
+
+    it("overwrites existing templates/digest.md with --force", async () => {
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const dest = join(workdir, "templates", "digest.md");
+      await writeFile(dest, "user-edited digest template", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited digest template");
+      expect(result.copiedFiles).toContain("templates/digest.md");
+    });
+
+    it("digest.md ships as body only (no frontmatter, per ADR-0003 / ADR-0011)", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noAgentsMd: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(join(workdir, "templates", "digest.md"), "utf8");
+      // Body only — frontmatter is constructed by the CLI per ADR-0003 /
+      // ADR-0011, so the bundled template must not start with `---`.
+      expect(body).not.toMatch(/^---/);
+      // ADR-0011 §Issue #139 suggested sections: per-item summaries,
+      // common themes, differences, recommended actions.
+      expect(body).toContain("## 要約");
+      expect(body).toContain("## 各 item の要点");
+      expect(body).toContain("## 共通テーマ");
+      expect(body).toContain("## 差分");
+      expect(body).toContain("## 推奨アクション");
+      expect(body).toContain("## 出典");
+      // ADR-0009 boundary marker (M1c) editorial guidance must be present
+      // so users editing this template understand the untrusted-content
+      // contract enforced by the prompt builder at runtime.
+      expect(body).toContain("ADR-0009");
+      expect(body).toContain("untrusted_item");
+    });
+  });
+
   describe("FEEDRADAR.md (human-facing workspace guide)", () => {
     // FEEDRADAR.md is the canonical entry point for the human who ran
     // init. Distinct from AGENTS.md / CLAUDE.md (AI-agent-facing). Same
