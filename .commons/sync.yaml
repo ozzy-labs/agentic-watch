@@ -12,3 +12,16 @@ skills_adapters:
   - codex-cli
   - gemini-cli
   - copilot
+
+# Files excluded from commons sync. Preserves local overrides that diverge
+# from the commons baseline (PR-specific decisions, incident remediations,
+# version migrations).
+pinned:
+  # PR #91 / #72: keep IDE/coverage/worktree/temp ignores; commons drops them
+  - .gitignore
+  # PR #127: biome pre-commit hook (CI breakage remediation, see file header)
+  - lefthook.yaml
+  # PR #128: biome schema migrated to 2.4.13; commons still on 2.4.9
+  - biome.json
+  # release-please generates CHANGELOG.md with style that doesn't match MD012
+  - .markdownlint-cli2.yaml
