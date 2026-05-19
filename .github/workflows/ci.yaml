@@ -108,6 +108,8 @@ jobs:
               'dist/gemini-commands/update.toml',
               'dist/gemini-commands/dismiss.toml',
               'dist/templates/agents/AGENTS.md',
+              'dist/templates/default.md',
+              'dist/templates/digest.md',
             ];
             const missing = required.filter(p => !files.includes(p));
             if (missing.length > 0) {
