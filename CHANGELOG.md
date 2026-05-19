@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.3](https://github.com/ozzy-labs/feedradar/compare/v0.1.2...v0.1.3) (2026-05-19)
+
+
+### Features
+
+* **agents:** support multi-item digest prompts across 4 adapters ([#154](https://github.com/ozzy-labs/feedradar/issues/154)) ([a5fb369](https://github.com/ozzy-labs/feedradar/commit/a5fb369344fa5ff683cdcd11b4474f5005921b3c))
+* **cli:** add radar research --digest with multi-item input ([#155](https://github.com/ozzy-labs/feedradar/issues/155)) ([1193575](https://github.com/ozzy-labs/feedradar/commit/119357590fc0ddd9e00fd98dd42f0ef320ee2cd7))
+* **cli:** add radar source test subcommand for source dry-run ([#149](https://github.com/ozzy-labs/feedradar/issues/149)) ([668057c](https://github.com/ozzy-labs/feedradar/commit/668057c60068b56e04c2e14c118a27b709715999))
+* **core:** add dryRun option to watchRun for source preview ([#146](https://github.com/ozzy-labs/feedradar/issues/146)) ([a9c5824](https://github.com/ozzy-labs/feedradar/commit/a9c58243f439ecc702936cb519a764a96ea3421b))
+* **feeds/html:** add If-Modified-Since to HTML adapter ([#148](https://github.com/ozzy-labs/feedradar/issues/148)) ([0484cd2](https://github.com/ozzy-labs/feedradar/commit/0484cd29e78efc4e823db75d29c654c911b9c112))
+* **feeds/rss:** persist Last-Modified for conditional GET ([#147](https://github.com/ozzy-labs/feedradar/issues/147)) ([e6785c4](https://github.com/ozzy-labs/feedradar/commit/e6785c4a4ef837f2c4051a06e18c34b4d847c56e))
+* **schemas, state:** add lastModified to SourceState ([#144](https://github.com/ozzy-labs/feedradar/issues/144)) ([859f154](https://github.com/ozzy-labs/feedradar/commit/859f15450799d083b77e4e8e9c8db017b68c4b22))
+* **templates, init:** bundle default digest template ([#153](https://github.com/ozzy-labs/feedradar/issues/153)) ([3f9ea84](https://github.com/ozzy-labs/feedradar/commit/3f9ea848584d40ed68a50fd8110dac1702d1ae65))
+
 ## [0.1.2](https://github.com/ozzy-labs/feedradar/compare/v0.1.1...v0.1.2) (2026-05-17)
 
 
