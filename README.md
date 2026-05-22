@@ -33,6 +33,24 @@ Run `radar doctor` to verify Playwright / Chromium are detected before adding an
 
 While developing locally, clone this repo and run `pnpm install && pnpm run build` to produce `dist/index.js`, then invoke `node dist/index.js <command>`.
 
+## Corporate proxy
+
+Behind a corporate HTTP / HTTPS proxy, just export the standard env vars and
+run `radar` — it auto-detects them and self-configures (no flags / config
+edits). For TLS-intercepting proxies (Zscaler / Netskope / etc.) set
+`NODE_EXTRA_CA_CERTS` instead of disabling certificate verification:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example.com:8080
+export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem   # only if TLS is intercepted
+radar doctor                                      # verify
+```
+
+NTLM / Kerberos proxies are not supported directly — bridge with `cntlm` / `Px`
+/ `Authoxy`. WSL2 → Windows host, `npm install` proxy config, and the live
+`radar doctor` healthcheck are documented in
+[docs/user-guide/proxy-setup.md](./docs/user-guide/proxy-setup.md).
+
 ## Usage
 
 ```bash
@@ -101,6 +119,7 @@ src/
 
 - [docs/architecture.md](./docs/architecture.md) — system diagrams / module responsibilities / data flow / per-phase scope
 - [docs/user-guide.md](./docs/user-guide.md) — install / quickstart / command reference
+- [docs/user-guide/proxy-setup.md](./docs/user-guide/proxy-setup.md) — corporate proxy / TLS interception / NTLM bridge / WSL2 setup
 - [docs/release.md](./docs/release.md) — release procedure (manual initial publish + Trusted Publisher registration + subsequent OIDC automation)
 - [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling)
 
