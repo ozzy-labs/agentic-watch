@@ -176,17 +176,18 @@ export const htmlJsAdapter: FeedAdapter = {
     // identical to the pre-proxy behavior in unproxied environments.
     const env = options.env ?? process.env;
     const detection = detectProxyUrl(env);
+    // Honor `NO_PROXY` end-to-end so internal hosts skip the corporate
+    // proxy. Computed once even when proxy detection fails — the helper is
+    // pure and the result is discarded with `detection`, which is cheaper
+    // than guarding the call site.
+    const bypass = noProxyToPlaywrightBypass(env.NO_PROXY ?? env.no_proxy);
     const proxyOption = detection
       ? {
           server: detection.url,
-          // Honor `NO_PROXY` end-to-end so internal hosts skip the corporate
-          // proxy. `noProxyToPlaywrightBypass` returns `undefined` when
-          // NO_PROXY is unset/empty; spreading `undefined` is a no-op so the
-          // `bypass` field is absent in that case (Playwright treats omitted
-          // vs `""` slightly differently — we want omitted).
-          ...(noProxyToPlaywrightBypass(env.NO_PROXY ?? env.no_proxy) !== undefined
-            ? { bypass: noProxyToPlaywrightBypass(env.NO_PROXY ?? env.no_proxy) as string }
-            : {}),
+          // Spreading `undefined` is a no-op so the `bypass` field is absent
+          // when NO_PROXY is unset (Playwright treats omitted vs `""`
+          // slightly differently — we want omitted).
+          ...(bypass !== undefined ? { bypass } : {}),
         }
       : undefined;
 
