@@ -32,7 +32,7 @@ npm i -g playwright
 npx playwright install chromium
 ```
 
-Run `radar doctor` to verify Playwright / Chromium are detected before adding an `html-js` source. CI setup details and a sample workflow are in [docs/user-guide.md → `--kind html-js` → CI で使う](./docs/user-guide.md#ci-で使う).
+Run `radar doctor` to verify Playwright / Chromium are detected before adding an `html-js` source. CI setup details and a sample workflow are in [the user-guide's `--kind html-js` → CI section](./docs/user-guide.md#ci-で使う) (the user-guide is Japanese-only today, so the anchor stays as-is).
 
 While developing locally, clone this repo and run `pnpm install && pnpm run build` to produce `dist/index.js`, then invoke `node dist/index.js <command>`.
 
