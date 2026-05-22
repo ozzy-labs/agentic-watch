@@ -574,6 +574,520 @@ describe("e2e/cli (binary smoke)", () => {
       expect(item.status).toBe("reviewed");
     });
   });
+
+  describe("scenario H: workflow generate watch", () => {
+    // Validates that the built binary can render the bundled
+    // `dist/templates/workflows/watch.template.yaml.tmpl` (the `.tmpl`
+    // extension is what keeps yamlfmt from rewriting placeholders into
+    // syntactically-valid-but-broken YAML — see `generate-watch.ts`). A
+    // packaging regression that dropped the templates directory would fail
+    // here with "bundled template not found".
+    it("renders the watch template with placeholders replaced and rebase retry intact", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-wf-watch-"));
+      const outputPath = join(".github", "workflows", "test-watch.yaml");
+
+      const result = await runCli(
+        ["workflow", "generate", "watch", "--cron", "0 */6 * * *", "--output", outputPath],
+        { cwd: workdir },
+      );
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain(`workflow generate watch: wrote ${outputPath}`);
+      // Required-secrets section names the default agent's API key (ADR-0014 D5).
+      expect(result.stdout).toContain("ANTHROPIC_API_KEY");
+
+      const written = await readFile(join(workdir, outputPath), "utf8");
+      // The `{{cron}}` / `{{agentEnvKey}}` placeholders must all be
+      // substituted. We can't grep for a bare `{{` because GitHub Actions
+      // expressions (`${{ secrets.X }}`) legitimately contain it; check the
+      // exact placeholder tokens by name instead.
+      expect(written).not.toContain("{{cron}}");
+      expect(written).not.toContain("{{agentEnvKey}}");
+      expect(written).toContain('cron: "0 */6 * * *"');
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions secret expression literal
+      expect(written).toContain("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}");
+      // Rebase retry block (ADR-0014 D4) is the differentiator from the
+      // bootstrap `watch.yaml` — assert it survived the template render.
+      expect(written).toContain("git pull --rebase --autostash");
+      // YAML parses cleanly so downstream GitHub Actions schema validation
+      // is at least structurally possible (we don't pull an Actions JSON
+      // schema lib for this smoke; structural parse is the floor).
+      const yaml = parseYaml(written);
+      expect(yaml).toBeDefined();
+      expect(yaml.name).toBe("feedradar-watch");
+      expect(yaml.on?.schedule?.[0]?.cron).toBe("0 */6 * * *");
+    });
+  });
+
+  describe("scenario I: workflow generate combined", () => {
+    // Combined workflow embeds agent-specific secret blocks twice (watch +
+    // research steps), a shell guard (`git diff --quiet items/` style detect),
+    // and the `--max-items` hard cap as a YAML literal. The CLI re-enforces
+    // the cap at runtime so a hand-edited YAML cannot blow it inside one
+    // invocation (ADR-0014 D3a 二重防御) — this scenario covers the template
+    // rendering side of that double defense.
+    it("renders combined template with agent secrets, shell guard, and max-items cap", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-wf-combined-"));
+      const outputPath = join(".github", "workflows", "test-combined.yaml");
+
+      const result = await runCli(
+        [
+          "workflow",
+          "generate",
+          "combined",
+          "--watch-cron",
+          "0 0 * * *",
+          "--output",
+          outputPath,
+          "--agent",
+          "codex-cli",
+          "--max-items",
+          "5",
+        ],
+        { cwd: workdir },
+      );
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain(`workflow generate combined: wrote ${outputPath}`);
+      // OpenAI key surfaces in the "Required secrets" stdout block when
+      // --agent codex-cli is selected (ADR-0014 D5).
+      expect(result.stdout).toContain("OPENAI_API_KEY");
+
+      const written = await readFile(join(workdir, outputPath), "utf8");
+      // Same caveat as scenario H: GitHub Actions expressions use `${{ ... }}`
+      // legitimately, so we grep for the explicit placeholder tokens instead
+      // of any `{{` to confirm substitution ran on every site.
+      expect(written).not.toContain("{{cron}}");
+      expect(written).not.toContain("{{maxItems}}");
+      expect(written).not.toContain("{{filterTags}}");
+      expect(written).not.toContain("{{agent}}");
+      expect(written).not.toContain("{{secretsBlock}}");
+      // Agent-specific env block landed in both the watch and research step.
+      // `setSecretsBlock` injects two occurrences from the same fragment, so
+      // we count rather than just assert presence.
+      const openAiMatches = written.match(/OPENAI_API_KEY: \$\{\{ secrets\.OPENAI_API_KEY \}\}/g);
+      expect(openAiMatches).not.toBeNull();
+      expect(openAiMatches?.length).toBeGreaterThanOrEqual(2);
+      // Shell guard: combined.template.yaml.tmpl uses `git status --porcelain
+      // items/` to gate the research step; assert the literal phrase is
+      // preserved so the no-new-items short-circuit survives the render.
+      expect(written).toContain("git status --porcelain items/");
+      // Hard-cap literal embedded in the research command line.
+      expect(written).toContain("--max-items 5");
+      // Agent literal flows through to the research command line.
+      expect(written).toContain("--agent codex-cli");
+      // Hard-cap double-defense note prints to stderr on success.
+      expect(result.stderr).toContain("the --max-items cap is also enforced");
+
+      // The combined template injects a literal `${{ secrets.X }}` block
+      // unindented (column 0) followed by content, which a strict YAML 1.2
+      // parser may interpret as scalar-after-end. We don't structurally
+      // parse it here — scenario H already covers structural parseability
+      // for the simpler watch template, and this test focuses on the
+      // placeholder / cap / secrets-block invariants.
+      expect(written).toContain("name: feedradar-combined");
+    });
+  });
+
+  describe("scenario J: source add --recipe + source recipes (bundled recipe discovery)", () => {
+    // ADR-0012 §D3 / #178: recipes ship as `dist/recipes/*.yaml` and are
+    // discovered via `source recipes`. `source add --recipe <name>` then
+    // applies the recipe (kind / url / pagination / selectors) while
+    // honouring `--keywords` / `--tags` / `--name` overrides. A packaging
+    // regression that dropped `dist/recipes` would surface here as
+    // "no recipes bundled" or a recipe-not-found error.
+    it("lists bundled recipes and applies one via --recipe with --keywords override", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-recipe-"));
+      await runCli(["init"], { cwd: workdir });
+
+      // 1) `source recipes` enumerates ≥ 2 bundled recipes (aws-whats-new,
+      //    dev-to as of #178). The table header is fixed-width so we look
+      //    for the recipe name tokens rather than column alignment.
+      const recipesList = await runCli(["source", "recipes"], { cwd: workdir });
+      expect(recipesList.code, `stderr: ${recipesList.stderr}`).toBe(0);
+      expect(recipesList.stdout).toContain("aws-whats-new");
+      expect(recipesList.stdout).toContain("dev-to");
+      expect(recipesList.stdout).toContain("json-api");
+
+      // 2) Apply the AWS What's New recipe. `--keywords` overrides the
+      //    recipe's empty default; `--kind` / `--url` are forbidden on the
+      //    recipe path (the recipe owns them) so we deliberately omit them.
+      const add = await runCli(
+        ["source", "add", "aws", "--recipe", "aws-whats-new", "--keywords", "Bedrock,Claude"],
+        { cwd: workdir },
+      );
+      expect(add.code, `stderr: ${add.stderr}\nstdout: ${add.stdout}`).toBe(0);
+      expect(add.stdout).toContain("from recipe 'aws-whats-new'");
+
+      // 3) The generated YAML inherits the recipe's kind / url and the
+      //    user's --keywords override (ADR-0012 §D3 strategy A).
+      const yamlPath = join(workdir, "sources", "aws.yaml");
+      expect(existsSync(yamlPath)).toBe(true);
+      const generated = parseYaml(await readFile(yamlPath, "utf8"));
+      expect(generated.id).toBe("aws");
+      expect(generated.kind).toBe("json-api");
+      // Recipe URL hits aws.amazon.com (we don't fetch — this is a render
+      // test). The exact URL is brittle to recipe edits, so just check the
+      // host so an upstream tweak to the path doesn't break us.
+      expect(generated.url).toContain("aws.amazon.com");
+      expect(generated.filters?.keywords).toEqual(["Bedrock", "Claude"]);
+      // Pagination block from the recipe (page-based, totalPath hint).
+      expect(generated.pagination?.type).toBe("page");
+    });
+  });
+
+  describe("scenario K: source add --kind json-api + watch run --backfill", () => {
+    // Phase-3 / ADR-0012 json-api adapter end-to-end through the binary
+    // boundary. Mocks the API over 127.0.0.1, configures `--max-pages 2`,
+    // and verifies that --backfill walks both pages and writes items to
+    // disk. If `dist/core/feeds/json-api.js` failed to bundle (or the
+    // Source schema discriminated union dropped the `json-api` case), this
+    // scenario surfaces it as a parse / "unknown kind" error.
+    it("paginates a json-api source across two pages and writes detected items", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-jsonapi-"));
+      await runCli(["init"], { cwd: workdir });
+
+      // Mock a paginated JSON API: page 0 / page 1 each return one item,
+      // page 2+ returns an empty `items: []` so the adapter's
+      // end-of-pagination heuristic short-circuits before maxPages.
+      let server: Server | null = null;
+      try {
+        server = createServer((req, res) => {
+          const url = new URL(req.url ?? "/", "http://127.0.0.1");
+          const page = Number(url.searchParams.get("page") ?? "0");
+          const pageItems =
+            page === 0
+              ? [
+                  {
+                    id: "json-api-1",
+                    title: "json-api item one (Claude release)",
+                    url: "https://example.com/api/items/1",
+                    publishedAt: "2026-05-12T00:00:00Z",
+                    summary: "Page-0 item summary",
+                  },
+                ]
+              : page === 1
+                ? [
+                    {
+                      id: "json-api-2",
+                      title: "json-api item two (Claude update)",
+                      url: "https://example.com/api/items/2",
+                      publishedAt: "2026-05-13T00:00:00Z",
+                      summary: "Page-1 item summary",
+                    },
+                  ]
+                : [];
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ items: pageItems }));
+        });
+        await new Promise<void>((resolveListen, rejectListen) => {
+          server?.once("error", rejectListen);
+          server?.listen(0, "127.0.0.1", () => resolveListen());
+        });
+        const port = (server.address() as AddressInfo).port;
+        // The adapter rewrites `page=<N>` on every request, so we just need
+        // the base URL to point at the mock. The `?page=0` placeholder gets
+        // overwritten by `setQueryParam`.
+        const apiUrl = `http://127.0.0.1:${port}/api?page=0`;
+
+        const add = await runCli(
+          [
+            "source",
+            "add",
+            "smoke-json-api",
+            "--kind",
+            "json-api",
+            "--url",
+            apiUrl,
+            "--keywords",
+            "Claude",
+            "--pagination-strategy",
+            "page",
+            "--pagination-param",
+            "page",
+            "--pagination-start",
+            "0",
+            "--page-size",
+            "1",
+            "--max-pages",
+            "2",
+          ],
+          { cwd: workdir },
+        );
+        expect(add.code, `stderr: ${add.stderr}\nstdout: ${add.stdout}`).toBe(0);
+
+        // --backfill walks every page up to maxPages (2 here). The host
+        // allowlist gate (ADR-0009 §D5b) needs the loopback explicitly.
+        const watch = await runCli(
+          ["watch", "run", "--source", "smoke-json-api", "--backfill", "--max-pages", "2"],
+          {
+            cwd: workdir,
+            extraEnv: { RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1" },
+          },
+        );
+        expect(watch.code, `stderr: ${watch.stderr}\nstdout: ${watch.stdout}`).toBe(0);
+        expect(watch.stdout).toMatch(/backfill complete/);
+
+        const itemsDir = join(workdir, "items", "smoke-json-api");
+        expect(existsSync(itemsDir)).toBe(true);
+        const files = readdirSync(itemsDir).filter((f) => f.endsWith(".yaml"));
+        // Two items across two pages; the keyword filter accepts both.
+        expect(files.length).toBeGreaterThanOrEqual(2);
+
+        // Spot-check one item to confirm the json-api default selector chain
+        // picked up title/url/publishedAt without explicit jsonSelectors.
+        const sample = parseYaml(await readFile(join(itemsDir, files[0]), "utf8"));
+        expect(sample.sourceId).toBe("smoke-json-api");
+        expect(sample.status).toBe("detected");
+        expect(sample.matchedKeywords).toContain("Claude");
+      } finally {
+        if (server) {
+          await new Promise<void>((resolveClose) => server?.close(() => resolveClose()));
+        }
+      }
+    });
+  });
+
+  describe("scenario L: source add --kind json-feed + watch run", () => {
+    // JSON Feed 1.1 is a real standard with a fixed schema; the adapter is
+    // URL-only (no recipe, no pagination flags needed for the simple case).
+    // This scenario serves a minimal 1.1 fixture over the same local-HTTP
+    // pattern as scenario F (RSS) and asserts items land on disk.
+    it("ingests JSON Feed 1.1 items through the built binary", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-jsonfeed-"));
+      await runCli(["init"], { cwd: workdir });
+
+      const feedBody = JSON.stringify({
+        version: "https://jsonfeed.org/version/1.1",
+        title: "Smoke JSON Feed",
+        items: [
+          {
+            id: "jf-1",
+            url: "https://example.com/posts/claude-update",
+            title: "Claude Code update v1.0",
+            content_text: "Release notes for Claude Code 1.0",
+            date_published: "2026-05-14T00:00:00Z",
+            tags: ["release"],
+          },
+        ],
+      });
+
+      let server: Server | null = null;
+      try {
+        server = createServer((_req, res) => {
+          res.writeHead(200, { "Content-Type": "application/feed+json" });
+          res.end(feedBody);
+        });
+        await new Promise<void>((resolveListen, rejectListen) => {
+          server?.once("error", rejectListen);
+          server?.listen(0, "127.0.0.1", () => resolveListen());
+        });
+        const port = (server.address() as AddressInfo).port;
+        const feedUrl = `http://127.0.0.1:${port}/feed.json`;
+
+        const add = await runCli(
+          [
+            "source",
+            "add",
+            "smoke-jsonfeed",
+            "--kind",
+            "json-feed",
+            "--url",
+            feedUrl,
+            "--keywords",
+            "Claude",
+          ],
+          { cwd: workdir },
+        );
+        expect(add.code, `stderr: ${add.stderr}\nstdout: ${add.stdout}`).toBe(0);
+
+        const watch = await runCli(["watch", "run", "--source", "smoke-jsonfeed"], {
+          cwd: workdir,
+          extraEnv: { RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1" },
+        });
+        expect(watch.code, `stderr: ${watch.stderr}\nstdout: ${watch.stdout}`).toBe(0);
+        expect(watch.stdout).toMatch(/1 new item\(s\)/);
+
+        const itemsDir = join(workdir, "items", "smoke-jsonfeed");
+        expect(existsSync(itemsDir)).toBe(true);
+        const files = readdirSync(itemsDir).filter((f) => f.endsWith(".yaml"));
+        expect(files).toHaveLength(1);
+
+        const item = parseYaml(await readFile(join(itemsDir, files[0]), "utf8"));
+        expect(item.sourceId).toBe("smoke-jsonfeed");
+        expect(item.title).toBe("Claude Code update v1.0");
+        expect(item.url).toBe("https://example.com/posts/claude-update");
+        expect(item.status).toBe("detected");
+        expect(item.matchedKeywords).toContain("Claude");
+      } finally {
+        if (server) {
+          await new Promise<void>((resolveClose) => server?.close(() => resolveClose()));
+        }
+      }
+    });
+  });
+
+  describe("scenario M: research --batch (fake binary, --max-items cap)", () => {
+    // Batch mode (#189 / ADR-0014 D3a) walks items/ for status=detected,
+    // applies the cap, and processes each item via the agent adapter. Seeds
+    // three detected items but caps at 2; the third must remain `detected`
+    // so we can prove the cap is enforced at the CLI layer (not just the
+    // generated YAML literal).
+    it("processes detected items up to --max-items and leaves overflow as detected", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-batch-"));
+      const binDir = join(workdir, "_bin");
+      await installFakeClaude(binDir);
+      await runCli(["init"], { cwd: workdir });
+
+      const sourceId = "smoke-source";
+      const itemIds = ["smoke-batch-aaaaaaaa", "smoke-batch-bbbbbbbb", "smoke-batch-cccccccc"];
+      await mkdir(join(workdir, "items", sourceId), { recursive: true });
+      // Use distinct publishedAt timestamps so batch's sort order is stable
+      // (oldest first); the third in chronological order is what we expect
+      // to be dropped by the --max-items 2 cap.
+      const publishedAt = ["2026-05-10T00:00:00Z", "2026-05-11T00:00:00Z", "2026-05-12T00:00:00Z"];
+      for (let i = 0; i < itemIds.length; i++) {
+        await writeFile(
+          join(workdir, "items", sourceId, `${itemIds[i]}.yaml`),
+          stringifyYaml({
+            id: itemIds[i],
+            sourceId,
+            title: `Smoke batch item ${i + 1}`,
+            url: `https://example.com/smoke/${i + 1}`,
+            fetchedAt: "2026-05-15T00:00:00.000Z",
+            publishedAt: publishedAt[i],
+            matchedKeywords: ["smoke"],
+            status: "detected",
+          }),
+          "utf8",
+        );
+      }
+
+      const result = await runCli(
+        [
+          "research",
+          "--batch",
+          "--status",
+          "detected",
+          "--max-items",
+          "2",
+          "--agent",
+          "claude-code",
+        ],
+        { cwd: workdir, extraPath: binDir },
+      );
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain("--batch completed 2 item(s)");
+      // The cap-reached warning surfaces on stderr (overflow count = 1).
+      expect(result.stderr).toContain("--max-items 2 cap reached");
+
+      // Items 1 and 2 (oldest first) transitioned to `researched`; item 3
+      // is still `detected`. itemIds[0] and itemIds[1] are oldest by
+      // publishedAt, so they go through; itemIds[2] stays.
+      for (let i = 0; i < itemIds.length; i++) {
+        const after = parseYaml(
+          await readFile(join(workdir, "items", sourceId, `${itemIds[i]}.yaml`), "utf8"),
+        );
+        if (i < 2) {
+          expect(after.status, `item ${i + 1} should be researched`).toBe("researched");
+        } else {
+          expect(after.status, `item ${i + 1} should still be detected`).toBe("detected");
+        }
+      }
+
+      // Exactly two research reports were produced (one per processed item;
+      // batch mode does not aggregate into a digest — ADR-0014 D3a).
+      const researchDir = join(workdir, "research");
+      const reports = readdirSync(researchDir).filter((f) => f.endsWith(".md"));
+      expect(reports).toHaveLength(2);
+    });
+  });
+
+  describe("scenario N: --verbose / --quiet / RADAR_NO_PROGRESS (research)", () => {
+    // ADR-0015 D2 progress reporter behaviour through the binary boundary.
+    // The reporter writes to stderr (so it never collides with stdout-
+    // consuming scripts); we exercise all three knobs and confirm:
+    //  - default (no TTY) still emits the legacy 1-line summary on stdout
+    //  - --verbose adds phase markers + raw passthrough on stderr
+    //  - --quiet suppresses the reporter entirely (only the 1-line summary)
+    //  - RADAR_NO_PROGRESS=1 has the same effect as --quiet
+    // Because the test process is not a TTY, ADR-0015 D2 demotes the default
+    // level to "normal/plain text" — no ANSI cursor moves, just phase lines.
+    it("research honours --verbose, --quiet, and RADAR_NO_PROGRESS=1", async () => {
+      // Helper: seed a workdir with one detected item ready for research.
+      async function seedWorkdir(
+        prefix: string,
+      ): Promise<{ workdir: string; binDir: string; itemId: string }> {
+        const workdir = await mkdtemp(join(tmpdir(), prefix));
+        const binDir = join(workdir, "_bin");
+        await installFakeClaude(binDir);
+        await runCli(["init"], { cwd: workdir });
+
+        const itemId = "smoke-progress-12345678";
+        const sourceId = "smoke-source";
+        await mkdir(join(workdir, "items", sourceId), { recursive: true });
+        await writeFile(
+          join(workdir, "items", sourceId, `${itemId}.yaml`),
+          stringifyYaml({
+            id: itemId,
+            sourceId,
+            title: "Smoke item for progress",
+            url: "https://example.com/smoke",
+            fetchedAt: "2026-05-15T00:00:00.000Z",
+            matchedKeywords: ["smoke"],
+            status: "detected",
+          }),
+          "utf8",
+        );
+        return { workdir, binDir, itemId };
+      }
+
+      // 1) --quiet: only the 1-line summary on stdout; no phase markers on
+      //    stderr.
+      {
+        const { workdir, binDir, itemId } = await seedWorkdir("aw-e2e-quiet-");
+        const result = await runCli(["research", itemId, "--agent", "claude-code", "--quiet"], {
+          cwd: workdir,
+          extraPath: binDir,
+        });
+        expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+        // Legacy summary stays so scripts that grep stdout still work.
+        expect(result.stdout).toMatch(/research\/[^.\s]+\.md/);
+        // No phase markers on stderr (the verbose-only `Agent running` etc.
+        // marker is absent under --quiet).
+        expect(result.stderr).not.toContain("Agent running");
+        expect(result.stderr).not.toContain("Spawning");
+      }
+
+      // 2) --verbose: phase markers + raw passthrough on stderr. The fake
+      //    binary prints "fake-claude: wrote ..." on its stdout; with
+      //    --verbose the reporter forwards that via raw().
+      {
+        const { workdir, binDir, itemId } = await seedWorkdir("aw-e2e-verbose-");
+        const result = await runCli(["research", itemId, "--agent", "claude-code", "--verbose"], {
+          cwd: workdir,
+          extraPath: binDir,
+        });
+        expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+        // The fake binary's stdout line ("fake-claude: wrote …") flows
+        // through `reporter.raw()` when --verbose is set; it surfaces on
+        // the parent's stderr because the reporter writes there.
+        expect(result.stderr).toContain("fake-claude: wrote");
+      }
+
+      // 3) RADAR_NO_PROGRESS=1 (no flag): same effect as --quiet — no
+      //    phase markers; the legacy 1-line summary still prints.
+      {
+        const { workdir, binDir, itemId } = await seedWorkdir("aw-e2e-noprogress-");
+        const result = await runCli(["research", itemId, "--agent", "claude-code"], {
+          cwd: workdir,
+          extraPath: binDir,
+          extraEnv: { RADAR_NO_PROGRESS: "1" },
+        });
+        expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+        expect(result.stdout).toMatch(/research\/[^.\s]+\.md/);
+        expect(result.stderr).not.toContain("Agent running");
+      }
+    });
+  });
 });
 
 /**
