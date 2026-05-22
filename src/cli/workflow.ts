@@ -1,4 +1,5 @@
 import type { Command } from "./index.js";
+import { runGenerateCombined } from "./workflow/generate-combined.js";
 import { runGenerateWatch } from "./workflow/generate-watch.js";
 
 /**
@@ -23,7 +24,7 @@ function printWorkflowHelp(log: (m: string) => void): void {
   log("");
   log("Subcommands:");
   log("  generate <type>  Generate a GitHub Actions workflow YAML");
-  log("                   Types: watch (more types in future sub-issues)");
+  log("                   Types: watch | combined (more types in future sub-issues)");
   log("");
   log("Run `radar workflow generate <type> --help` for type-specific options.");
 }
@@ -33,6 +34,7 @@ function printGenerateHelp(log: (m: string) => void): void {
   log("");
   log("Types:");
   log("  watch     Periodic `radar watch run` (cron + state commit with rebase retry)");
+  log("  combined  Periodic `radar watch run` -> auto research --batch with hard cap (ADR-0014)");
   log("");
   log("Run `radar workflow generate <type> --help` for type-specific options.");
 }
@@ -40,11 +42,10 @@ function printGenerateHelp(log: (m: string) => void): void {
 /**
  * Dispatcher for `radar workflow <subcommand>`.
  *
- * Today the only subcommand is `generate <type>`, and the only supported
- * `<type>` is `watch` (this issue, #188). The dispatcher is structured to
- * accept additional types (`combined` per #189, plus `research` / `review`
- * per #191) without changing the surface — each lands as a new branch in
- * the `generate` switch and the help table grows.
+ * Today the supported subcommands are `generate watch` (#188) and
+ * `generate combined` (this issue, #189). Additional `<type>` values
+ * (`research` / `review` per #191) will land as new branches in the
+ * `generate` switch without changing the surface.
  *
  * See ADR-0014 (workflow generate sub-command) for the full design rationale.
  */
@@ -77,6 +78,8 @@ export async function runWorkflow(
   switch (type) {
     case "watch":
       return runGenerateWatch(typeArgs, options.io ?? {}, cwd);
+    case "combined":
+      return runGenerateCombined(typeArgs, options.io ?? {}, cwd);
     default:
       error(`workflow generate: unknown type '${type}'`);
       printGenerateHelp(error);

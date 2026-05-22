@@ -24,9 +24,20 @@ import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/conf
 import { loadItems, saveItems } from "../core/items.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
-import type { AgentId, Item } from "../schemas/index.js";
-import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
+import { AgentIdSchema, ItemStatusSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import type { Command } from "./index.js";
+
+/**
+ * Default hard-cap for `radar research --batch`.
+ *
+ * ADR-0014 D3a pins the default to 10: 2-10x the empirical detection rate
+ * (1-5 items per cron tick) while keeping LLM cost-per-tick bounded
+ * (~$0.01/item * 10 ~= $0.1). Generated workflow YAML embeds this same
+ * literal via `combined.template.yaml`, but the CLI re-enforces it so the
+ * cap also applies when the YAML is hand-edited.
+ */
+export const RESEARCH_BATCH_DEFAULT_MAX_ITEMS = 10;
 
 /** Sinks for the research command's user-facing output. Tests inject capturing sinks. */
 export interface ResearchIO {
@@ -46,6 +57,14 @@ interface ResearchArgs {
   template?: string;
   digest?: boolean;
   help?: boolean;
+  /** Batch mode (#189 / ADR-0014): research every detected item matching filters. */
+  batch?: boolean;
+  /** Restrict batch mode to items with this status (default: `detected`). */
+  status?: string;
+  /** Hard-cap on items processed in batch mode (default: RESEARCH_BATCH_DEFAULT_MAX_ITEMS). */
+  maxItems?: string;
+  /** Comma-separated allow-list matched against each item's `matchedKeywords`. */
+  filterTags?: string;
 }
 
 function parseArgs(args: string[]): ResearchArgs {
@@ -60,12 +79,28 @@ function parseArgs(args: string[]): ResearchArgs {
       out.digest = true;
       continue;
     }
+    if (a === "--batch") {
+      out.batch = true;
+      continue;
+    }
     if (a === "--agent") {
       out.agent = args[++i];
       continue;
     }
     if (a === "--template") {
       out.template = args[++i];
+      continue;
+    }
+    if (a === "--status") {
+      out.status = args[++i];
+      continue;
+    }
+    if (a === "--max-items") {
+      out.maxItems = args[++i];
+      continue;
+    }
+    if (a === "--filter-tags") {
+      out.filterTags = args[++i];
       continue;
     }
     if (a?.startsWith("--")) {
@@ -82,10 +117,14 @@ function printHelp(log: (m: string) => void): void {
   log("Usage:");
   log("  radar research <item-id> [--agent <agent-id>] [--template <template-id>]");
   log("  radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]");
+  log(
+    `  radar research --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
+  );
   log("");
   log("Arguments:");
   log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
   log("                        Pass 2 or more ids together with --digest to bundle them.");
+  log("                        Omit positional ids with --batch — items are discovered.");
   log("");
   log("Options:");
   log(
@@ -93,10 +132,22 @@ function printHelp(log: (m: string) => void): void {
   );
   log("  --template <id>       Template id under templates/ (default: default; digest: digest)");
   log("  --digest              Bundle multiple items into a single digest report (ADR-0011)");
+  log("  --batch               Research every item matching --status (and --filter-tags)");
+  log("                        respecting the --max-items hard-cap (ADR-0014 D3a).");
+  log("  --status <status>     Batch-mode filter: detected | researched | reviewed | dismissed");
+  log("                        (default: detected).");
+  log(
+    `  --max-items N         Batch-mode hard-cap on processed items (default: ${RESEARCH_BATCH_DEFAULT_MAX_ITEMS}).`,
+  );
+  log("                        Excess items are dropped and announced via warn() so a runaway");
+  log("                        detection cannot blow the cap from inside a workflow.");
+  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
+  log("                        each item's matchedKeywords (case-insensitive). Default: all.");
   log("");
   log("Output:");
   log("  single-item:  research/<YYYYMMDD>_<slug>_v1.md (ADR-0003)");
   log("  digest:       research/<YYYYMMDD>_digest_<slug>_v1.md (ADR-0011)");
+  log("  batch:        one single-item report per matched item (no digest aggregation).");
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -108,14 +159,6 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-/**
- * Slug an Item into the `<sourceId>-<short-slug>` form used by the research
- * filename (`research/<YYYYMMDD>_<slug>_v1.md`).
- *
- * Falls back to the item id when the title is empty/unicode-only. We trim to
- * 60 chars so the resulting filename stays inside typical filesystem limits
- * after adding date prefix and version suffix.
- */
 function buildSlug(item: Item): string {
   const baseSource = item.sourceId.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const titleSlug = item.title
@@ -132,30 +175,15 @@ function buildSlug(item: Item): string {
   return `${baseSource}-${tail}`;
 }
 
-/**
- * Pick `YYYYMMDD` from the item's `publishedAt`, falling back to today (UTC)
- * when the source feed did not provide a publish date.
- */
 function buildDatePrefix(item: Item, now: Date): string {
   const iso = item.publishedAt ?? now.toISOString();
   return iso.slice(0, 10).replace(/-/g, "");
 }
 
-/**
- * Pick `YYYYMMDD` for digest output. Per ADR-0011 §1, digest filenames use the
- * **generation date** (UTC, CLI invocation time) rather than any item's
- * `publishedAt`. Constituent items rarely share a publish date and the digest
- * is a synthesis artifact, so the generation date is the only stable key.
- */
 function buildDigestDatePrefix(now: Date): string {
   return now.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
-/**
- * Kebab-case helper used by both digest slug derivation and the clamp routine.
- * Mirrors the algorithm pinned in ADR-0011 §2: lowercase, non-alphanumerics
- * collapse to a single hyphen, leading/trailing hyphens are stripped.
- */
 function kebabCase(s: string): string {
   return s
     .toLowerCase()
@@ -163,11 +191,6 @@ function kebabCase(s: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/**
- * Trim a slug to `max` characters, but never end mid-word: cut at the last
- * hyphen boundary inside the limit so the slug stays readable when truncated
- * (ADR-0011 §2). When no hyphen is present we fall back to a hard cut.
- */
 function clampSlug(s: string, max = 60): string {
   if (s.length <= max) return s;
   const cut = s.slice(0, max);
@@ -175,26 +198,6 @@ function clampSlug(s: string, max = 60): string {
   return lastHyphen > 0 ? cut.slice(0, lastHyphen) : cut;
 }
 
-/**
- * Derive the digest slug from the constituent items' `matchedKeywords`
- * (ADR-0011 §2).
- *
- * Algorithm:
- *   1. Aggregate every item's `matchedKeywords` into a frequency map keyed by
- *      the normalized (lowercased, trimmed) keyword. Empty strings are
- *      ignored so a noisy `[""]` entry cannot dominate the ranking.
- *   2. Sort by frequency descending, ties broken by lexicographic ascending so
- *      the output is deterministic regardless of input item order.
- *   3. Take the top 1-2 entries, kebab-case each, and join with `-`. If no
- *      keywords are present we fall back to the literal `"digest"` so the
- *      ADR-0011 filename pattern (`<date>_digest_<slug>_v<n>.md`) still
- *      produces a recognizable `<date>_digest_digest_v1.md` artifact.
- *   4. Clamp to 60 chars on hyphen boundaries (`clampSlug`).
- *
- * Stable ordering matters because the digest id is content-addressed: the
- * same item set must always yield the same filename so re-runs can detect
- * collisions deterministically.
- */
 function deriveDigestSlug(items: Item[]): string {
   const freq = new Map<string, number>();
   for (const item of items) {
@@ -212,14 +215,6 @@ function deriveDigestSlug(items: Item[]): string {
   return clampSlug(top.map(kebabCase).join("-"));
 }
 
-/**
- * Locate `items/<sourceId>/<item-id>.yaml` across all source directories,
- * since the CLI only takes `<item-id>` (sourceId is not on the command line).
- *
- * `loadItems` already walks every source subdir, so we delegate to it and
- * then match by id. Returning the full Item (rather than just the path) lets
- * the caller compute slug / date without a second read.
- */
 async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | null> {
   const itemsDir = join(cwd, "items");
   if (!(await pathExists(itemsDir))) return null;
@@ -229,15 +224,6 @@ async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | n
   return { item: match };
 }
 
-/**
- * Locate multiple items at once. We do a single `loadItems` walk and then
- * map the requested ids against the result, preserving the caller's order
- * for the eventual `itemIds` frontmatter array (ADR-0011 keeps no constraint
- * on order, but stable user-supplied order is the least surprising default).
- *
- * Returns `null` for the first missing id so the caller can emit a targeted
- * error rather than walking `items/` repeatedly.
- */
 async function findItems(
   cwd: string,
   itemIds: string[],
@@ -255,138 +241,52 @@ async function findItems(
   return { items: matched };
 }
 
-/**
- * Implementation of `radar research <item-id>` (single-item) and
- * `radar research --digest <id1> <id2> ...` (multi-item digest, ADR-0011).
- *
- * High-level flow (Phase 1):
- *   1. Parse + validate args (agent defaults to `claude-code`, template to
- *      `default` for single-item or `digest` for `--digest`).
- *   2. Locate `items/<sourceId>/<item-id>.yaml` for each id and parse it.
- *   3. Load `templates/<template-id>.md` (empty body when default is absent).
- *   4. Compute the output path:
- *        - single-item: `research/<YYYYMMDD>_<slug>_v1.md` (ADR-0003)
- *        - digest:      `research/<YYYYMMDD>_digest_<slug>_v1.md` (ADR-0011)
- *      Refuse to overwrite an existing file — re-runs go through `update`.
- *   5. Invoke the registered agent adapter; the agent writes the report.
- *   6. Validate the report's frontmatter against `ResearchFrontmatterSchema`.
- *   7. Transition every included item: `status` → `researched` and persist.
- *
- * Any step from 4 onward that fails surfaces a non-zero exit code with a
- * targeted message so the user can debug without re-reading the source.
- */
-export async function runResearch(
-  args: string[],
-  options: ResearchCommandOptions = {},
-): Promise<number> {
-  const cwd = options.cwd ?? process.cwd();
-  const log = options.io?.log ?? ((m: string) => console.log(m));
-  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
-  const error = options.io?.error ?? ((m: string) => console.error(m));
-
-  let parsed: ResearchArgs;
-  try {
-    parsed = parseArgs(args);
-  } catch (e) {
-    error(`research: ${e instanceof Error ? e.message : String(e)}`);
-    return 2;
-  }
-  if (parsed.help) {
-    printHelp(log);
-    return 0;
-  }
-  if (parsed.itemIds.length === 0) {
-    error("research: missing <item-id>");
-    printHelp(error);
-    return 2;
-  }
-  // Single-item mode: enforce exactly one positional id so the existing
-  // behavior of `radar research <id>` is unambiguous. The user must opt into
-  // multi-item mode via `--digest`.
-  if (!parsed.digest && parsed.itemIds.length > 1) {
-    error(
-      `research: multiple <item-id> arguments require --digest (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
-    );
-    return 2;
-  }
-  // Digest mode: must bundle 2+ items per ADR-0011 §1 (a single-item digest
-  // is indistinguishable from a regular research run and would muddy the ID
-  // space). Reject early with exit 2 (argument error).
-  if (parsed.digest && parsed.itemIds.length < 2) {
-    error(
-      `research: --digest requires 2 or more <item-id> arguments (got ${parsed.itemIds.length})`,
-    );
-    return 2;
-  }
-
-  // Resolve the agent honoring the priority chain:
-  //   explicit --agent > radar.config.yaml defaultResearchAgent > "claude-code"
-  // The explicit value is validated against AgentIdSchema first so a bogus
-  // --agent never reaches the config / fallback path.
+async function resolveAgent(
+  cwd: string,
+  rawAgent: string | undefined,
+  error: (m: string) => void,
+): Promise<{ agent: AgentId } | { exitCode: number }> {
   let explicitAgent: AgentId | undefined;
-  if (parsed.agent !== undefined) {
-    const agentResult = AgentIdSchema.safeParse(parsed.agent);
+  if (rawAgent !== undefined) {
+    const agentResult = AgentIdSchema.safeParse(rawAgent);
     if (!agentResult.success) {
       error(
-        `research: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
+        `research: invalid --agent '${rawAgent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
       );
-      return 2;
+      return { exitCode: 2 };
     }
     explicitAgent = agentResult.data;
   }
-  let agent: AgentId;
   try {
     const config = await loadRadarConfig(cwd);
-    agent = await getDefaultAgent("research", { explicit: explicitAgent, configOverride: config });
+    const agent = await getDefaultAgent("research", {
+      explicit: explicitAgent,
+      configOverride: config,
+    });
+    return { agent };
   } catch (e) {
     if (e instanceof RadarConfigError) {
       error(`research: ${e.message}`);
-      return 2;
+      return { exitCode: 2 };
     }
     throw e;
   }
-  // Phase 2 sub-issues B / C / D / E ship all four adapters. AgentIdSchema
-  // already rejected invalid `--agent` values upstream, so any value that
-  // reaches here is supported.
+}
 
-  // Default template depends on mode: ADR-0011 §6 pins `digest` as the digest
-  // templateId so the bundled `templates/digest.md` is picked up automatically
-  // when the user doesn't pass `--template`.
-  const templateId = parsed.template ?? (parsed.digest ? "digest" : "default");
+async function processResearchInvocation(params: {
+  cwd: string;
+  items: Item[];
+  digest: boolean;
+  agent: AgentId;
+  templateId: string;
+  template: ResearchTemplate;
+  now: Date;
+  log: (m: string) => void;
+  warn: (m: string) => void;
+  error: (m: string) => void;
+}): Promise<number> {
+  const { cwd, items, digest, agent, templateId, template, now, log, warn, error } = params;
 
-  // Locate the item(s). Digest mode collects every id up front so a missing id
-  // fails before we invoke the agent (cheap fail-fast vs. burning tokens).
-  let items: Item[];
-  if (parsed.digest) {
-    const result = await findItems(cwd, parsed.itemIds);
-    if ("missing" in result) {
-      error(`research: item '${result.missing}' not found under items/`);
-      return 1;
-    }
-    items = result.items;
-    // ADR-0011 §5: a `dismissed` item must not appear in a digest. Validate
-    // up-front so the user can either remove the id or re-detect the source
-    // before re-running.
-    const dismissed = items.filter((i) => i.status === "dismissed");
-    if (dismissed.length > 0) {
-      error(
-        `research: cannot include dismissed items in a digest: ${dismissed.map((i) => i.id).join(", ")}`,
-      );
-      return 1;
-    }
-  } else {
-    const found = await findItem(cwd, parsed.itemIds[0]);
-    if (!found) {
-      error(`research: item '${parsed.itemIds[0]}' not found under items/`);
-      return 1;
-    }
-    items = [found.item];
-  }
-
-  // Surface any prompt-injection pre-filter hits recorded by the watcher
-  // (ADR-0009 M1a / M5a — Adopt). Audit-only: the agent still runs against
-  // the original content, but the user gets an explicit warning so they can
-  // `radar dismiss` and re-evaluate before committing tokens.
   for (const item of items) {
     if (item.injectionFlags.length > 0) {
       warn(
@@ -395,21 +295,8 @@ export async function runResearch(
     }
   }
 
-  // Load template.
-  const templatesDir = join(cwd, "templates");
-  let template: ResearchTemplate;
-  try {
-    template = await loadTemplate(templateId, templatesDir);
-  } catch (e) {
-    error(`research: ${e instanceof Error ? e.message : String(e)}`);
-    return 1;
-  }
-
-  // Compute output path. Refuse to overwrite an existing file — re-runs go
-  // through `radar update` per ADR-0003 / ADR-0011 (immutable history).
-  const now = new Date();
   let filename: string;
-  if (parsed.digest) {
+  if (digest) {
     const datePrefix = buildDigestDatePrefix(now);
     const slug = deriveDigestSlug(items);
     filename = `${datePrefix}_digest_${slug}_v1.md`;
@@ -425,14 +312,11 @@ export async function runResearch(
     return 1;
   }
 
-  const itemDescription = parsed.digest
+  const itemDescription = digest
     ? `${items.length} items (${items.map((i) => i.id).join(", ")})`
     : `item '${items[0].id}'`;
   log(`research: invoking ${agent} adapter for ${itemDescription} -> ${filename}`);
 
-  // Invoke adapter. The multi-item signature lands via #140; the adapter
-  // already handles `items.length === 1` byte-equivalently for single-item
-  // callers so no branching is needed here.
   const adapter = getAgentAdapter(agent);
   try {
     await adapter.research({
@@ -448,7 +332,6 @@ export async function runResearch(
     return 1;
   }
 
-  // Validate the produced file: frontmatter must parse and match schema.
   if (!(await pathExists(outputPath))) {
     error(
       `research: adapter completed but did not write ${outputPath} (agent ignored the output path?)`,
@@ -479,11 +362,6 @@ export async function runResearch(
     }
     return 1;
   }
-  // Phase 1 contract: review fields must be null. The schema permits null;
-  // we additionally enforce that the agent did not jump ahead and stamp them.
-  // Phase 5 contract: `supersedes` is null on v1 by definition (no predecessor
-  // exists). Defensive reset applies if a misbehaving agent populates it; the
-  // `update` command (Sub-issue B / #41) is the only writer that may set it.
   const reviewedDrift = fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
   const supersedesDrift = fmResult.data.supersedes !== null;
   if (reviewedDrift || supersedesDrift) {
@@ -497,9 +375,9 @@ export async function runResearch(
         "research: agent populated supersedes; resetting to null (Phase 5 contract — v1 has no predecessor; `update` writes supersedes)",
       );
     }
-    const parsed = matter(body, matterOptions);
+    const parsedReport = matter(body, matterOptions);
     const rewritten = matter.stringify(
-      parsed.content,
+      parsedReport.content,
       {
         ...fmResult.data,
         reviewedAt: null,
@@ -511,16 +389,10 @@ export async function runResearch(
     await writeFile(outputPath, rewritten, "utf8");
   }
 
-  // Transition item status. ADR-0011 §5: every included item transitions
-  // `detected` → `researched`; terminal states (`researched` / `reviewed`)
-  // are protected and pass through unchanged so a digest that re-includes
-  // an already-researched item does not regress its status.
   const updated: Item[] = items.map((item) =>
     item.status === "detected" ? { ...item, status: "researched" } : item,
   );
   try {
-    // saveItems writes by sourceId+id, so it will overwrite the existing file
-    // in place. We rely on this rather than constructing the path manually.
     await saveItems(join(cwd, "items"), updated);
   } catch (e) {
     error(`research: failed to update item status: ${e instanceof Error ? e.message : String(e)}`);
@@ -535,6 +407,248 @@ export async function runResearch(
     }
   }
   return 0;
+}
+
+function parseMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+  if (raw === undefined) return RESEARCH_BATCH_DEFAULT_MAX_ITEMS;
+  if (!/^[0-9]+$/.test(raw)) {
+    error(`research: invalid --max-items '${raw}' (expected positive integer)`);
+    return null;
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    error(`research: invalid --max-items '${raw}' (must be > 0)`);
+    return null;
+  }
+  return n;
+}
+
+function parseFilterTags(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0),
+    ),
+  ];
+}
+
+async function runResearchBatch(
+  parsed: ResearchArgs,
+  cwd: string,
+  log: (m: string) => void,
+  warn: (m: string) => void,
+  error: (m: string) => void,
+): Promise<number> {
+  if (parsed.itemIds.length > 0) {
+    error(
+      `research: --batch is incompatible with positional <item-id> arguments (got ${parsed.itemIds.length})`,
+    );
+    return 2;
+  }
+  if (parsed.digest) {
+    error("research: --batch is incompatible with --digest");
+    return 2;
+  }
+
+  const rawStatus = parsed.status ?? "detected";
+  const statusResult = ItemStatusSchema.safeParse(rawStatus);
+  if (!statusResult.success) {
+    error(
+      `research: invalid --status '${rawStatus}' (expected: detected | dismissed | researched | reviewed)`,
+    );
+    return 2;
+  }
+  const status: ItemStatus = statusResult.data;
+
+  const maxItems = parseMaxItems(parsed.maxItems, error);
+  if (maxItems === null) return 2;
+  const filterTags = parseFilterTags(parsed.filterTags);
+
+  const agentResult = await resolveAgent(cwd, parsed.agent, error);
+  if ("exitCode" in agentResult) return agentResult.exitCode;
+  const agent = agentResult.agent;
+
+  const templateId = parsed.template ?? "default";
+  const templatesDir = join(cwd, "templates");
+  let template: ResearchTemplate;
+  try {
+    template = await loadTemplate(templateId, templatesDir);
+  } catch (e) {
+    error(`research: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  const itemsDir = join(cwd, "items");
+  const all = await loadItems(itemsDir);
+  const lowerFilterTags = filterTags;
+  const matches = all
+    .filter((it) => it.status === status)
+    .filter((it) => {
+      if (lowerFilterTags.length === 0) return true;
+      const haystack = new Set(it.matchedKeywords.map((k) => k.toLowerCase()));
+      return lowerFilterTags.some((t) => haystack.has(t));
+    })
+    .sort((a, b) => {
+      const ap = a.publishedAt ?? a.fetchedAt;
+      const bp = b.publishedAt ?? b.fetchedAt;
+      if (ap !== bp) return ap < bp ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+
+  if (matches.length === 0) {
+    log(
+      `research: no items matched --batch filters (status=${status}${
+        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+      })`,
+    );
+    return 0;
+  }
+
+  let selected = matches;
+  if (matches.length > maxItems) {
+    const dropped = matches.length - maxItems;
+    warn(
+      `research: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matches.length})`,
+    );
+    selected = matches.slice(0, maxItems);
+  }
+
+  log(
+    `research: --batch will process ${selected.length} item(s) (status=${status}${
+      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+    }, agent=${agent}, cap=${maxItems})`,
+  );
+
+  const now = new Date();
+  for (const item of selected) {
+    const exitCode = await processResearchInvocation({
+      cwd,
+      items: [item],
+      digest: false,
+      agent,
+      templateId,
+      template,
+      now,
+      log,
+      warn,
+      error,
+    });
+    if (exitCode !== 0) {
+      error(`research: --batch halted on item '${item.id}' (exit ${exitCode})`);
+      return exitCode;
+    }
+  }
+  log(`research: --batch completed ${selected.length} item(s)`);
+  return 0;
+}
+
+export async function runResearch(
+  args: string[],
+  options: ResearchCommandOptions = {},
+): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
+  const log = options.io?.log ?? ((m: string) => console.log(m));
+  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
+  const error = options.io?.error ?? ((m: string) => console.error(m));
+
+  let parsed: ResearchArgs;
+  try {
+    parsed = parseArgs(args);
+  } catch (e) {
+    error(`research: ${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  if (parsed.help) {
+    printHelp(log);
+    return 0;
+  }
+  if (parsed.batch) {
+    return runResearchBatch(parsed, cwd, log, warn, error);
+  }
+  if (parsed.status !== undefined) {
+    error("research: --status requires --batch");
+    return 2;
+  }
+  if (parsed.maxItems !== undefined) {
+    error("research: --max-items requires --batch");
+    return 2;
+  }
+  if (parsed.filterTags !== undefined) {
+    error("research: --filter-tags requires --batch");
+    return 2;
+  }
+  if (parsed.itemIds.length === 0) {
+    error("research: missing <item-id>");
+    printHelp(error);
+    return 2;
+  }
+  if (!parsed.digest && parsed.itemIds.length > 1) {
+    error(
+      `research: multiple <item-id> arguments require --digest (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
+    );
+    return 2;
+  }
+  if (parsed.digest && parsed.itemIds.length < 2) {
+    error(
+      `research: --digest requires 2 or more <item-id> arguments (got ${parsed.itemIds.length})`,
+    );
+    return 2;
+  }
+
+  const agentResult = await resolveAgent(cwd, parsed.agent, error);
+  if ("exitCode" in agentResult) return agentResult.exitCode;
+  const agent = agentResult.agent;
+
+  const templateId = parsed.template ?? (parsed.digest ? "digest" : "default");
+
+  let items: Item[];
+  if (parsed.digest) {
+    const result = await findItems(cwd, parsed.itemIds);
+    if ("missing" in result) {
+      error(`research: item '${result.missing}' not found under items/`);
+      return 1;
+    }
+    items = result.items;
+    const dismissed = items.filter((i) => i.status === "dismissed");
+    if (dismissed.length > 0) {
+      error(
+        `research: cannot include dismissed items in a digest: ${dismissed.map((i) => i.id).join(", ")}`,
+      );
+      return 1;
+    }
+  } else {
+    const found = await findItem(cwd, parsed.itemIds[0]);
+    if (!found) {
+      error(`research: item '${parsed.itemIds[0]}' not found under items/`);
+      return 1;
+    }
+    items = [found.item];
+  }
+
+  const templatesDir = join(cwd, "templates");
+  let template: ResearchTemplate;
+  try {
+    template = await loadTemplate(templateId, templatesDir);
+  } catch (e) {
+    error(`research: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  return processResearchInvocation({
+    cwd,
+    items,
+    digest: parsed.digest ?? false,
+    agent,
+    templateId,
+    template,
+    now: new Date(),
+    log,
+    warn,
+    error,
+  });
 }
 
 export const researchCommand: Command = {

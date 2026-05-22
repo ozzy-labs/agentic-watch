@@ -715,4 +715,272 @@ describe("cli/research", () => {
       expect(calls).toHaveLength(0);
     });
   });
+
+  describe("batch mode (--batch, #189 / ADR-0014)", () => {
+    /**
+     * Seed a workspace with `n` `detected` items so batch mode has something to
+     * walk. Item ids embed an ordinal so the test can assert sort order
+     * deterministically. `matchedKeywords` carries one shared tag plus an
+     * ordinal tag so we can exercise `--filter-tags` allow-list behavior.
+     */
+    async function setupBatchWorkspace(n: number): Promise<{ workdir: string; items: Item[] }> {
+      const workdir = await mkdtemp(join(tmpdir(), "feedradar-research-batch-"));
+      await mkdir(join(workdir, "items", "src-a"), { recursive: true });
+      await mkdir(join(workdir, "research"), { recursive: true });
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const items: Item[] = [];
+      for (let i = 0; i < n; i++) {
+        // publishedAt strictly ascending so the deterministic batch order
+        // is "lowest publishedAt first".
+        const published = new Date(Date.UTC(2026, 4, 10 + i)).toISOString();
+        const item = ItemSchema.parse({
+          id: `src-a-item-${String(i).padStart(2, "0")}`,
+          sourceId: "src-a",
+          title: `Item ${i}`,
+          url: `https://example.com/${i}`,
+          publishedAt: published,
+          fetchedAt: published,
+          matchedKeywords: ["claude-code", `tag-${i}`],
+          status: "detected",
+        });
+        await writeFile(
+          join(workdir, "items", item.sourceId, `${item.id}.yaml`),
+          stringifyYaml(item),
+          "utf8",
+        );
+        items.push(item);
+      }
+      return { workdir, items };
+    }
+
+    it("walks detected items, respects --max-items cap, and emits a per-item report", async () => {
+      const { workdir, items } = await setupBatchWorkspace(5);
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("# batch body\n", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--max-items", "3"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // Hard cap: only 3 invocations even though 5 items match.
+      expect(calls).toHaveLength(3);
+      // Each invocation receives a single item (batch is not a digest).
+      for (const c of calls) {
+        expect(c.items).toHaveLength(1);
+      }
+      // Deterministic order: ascending by publishedAt → items[0..2].
+      expect(calls.map((c) => c.items[0].id)).toEqual([items[0].id, items[1].id, items[2].id]);
+      // CLI-layer cap warning surfaces the dropped item count.
+      expect(
+        captured.warn.some(
+          (m) => m.includes("--max-items 3 cap reached") && m.includes("dropping 2"),
+        ),
+      ).toBe(true);
+      // Processed items transitioned to researched; excess items remain detected.
+      for (let i = 0; i < 3; i++) {
+        const raw = await readFile(
+          join(workdir, "items", items[i].sourceId, `${items[i].id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(raw).status).toBe("researched");
+      }
+      for (let i = 3; i < 5; i++) {
+        const raw = await readFile(
+          join(workdir, "items", items[i].sourceId, `${items[i].id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(raw).status).toBe("detected");
+      }
+    });
+
+    it("defaults --max-items to RESEARCH_BATCH_DEFAULT_MAX_ITEMS when omitted", async () => {
+      const { workdir } = await setupBatchWorkspace(15);
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // Default cap = 10 (ADR-0014 D3a).
+      expect(calls).toHaveLength(10);
+      expect(captured.warn.some((m) => m.includes("--max-items 10 cap reached"))).toBe(true);
+    });
+
+    it("applies --filter-tags as a lower-cased allow-list against matchedKeywords", async () => {
+      const { workdir, items } = await setupBatchWorkspace(4);
+      // Override item 2 so it lacks the shared 'claude-code' tag — only
+      // items[0] / items[1] / items[3] should match `--filter-tags claude-code`.
+      const isolated = { ...items[2], matchedKeywords: ["other-topic"] };
+      await writeFile(
+        join(workdir, "items", isolated.sourceId, `${isolated.id}.yaml`),
+        stringifyYaml(isolated),
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      // Uppercase intentionally so the test asserts the case-insensitive
+      // comparison (parseFilterTags lower-cases the literal).
+      const code = await runResearch(["--batch", "--filter-tags", "Claude-Code"], {
+        cwd: workdir,
+        io,
+      });
+
+      expect(code).toBe(0);
+      expect(calls.map((c) => c.items[0].id)).toEqual([items[0].id, items[1].id, items[3].id]);
+    });
+
+    it("emits a no-match log when zero detected items satisfy the filter", async () => {
+      const { workdir } = await setupBatchWorkspace(3);
+      const { adapter, calls } = buildMockAdapter(async () => undefined);
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--filter-tags", "nonexistent-tag"], {
+        cwd: workdir,
+        io,
+      });
+
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(0);
+      expect(
+        captured.log.some(
+          (m) => m.includes("no items matched --batch filters") && m.includes("nonexistent-tag"),
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects --batch combined with positional ids", async () => {
+      const { workdir } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "src-a-item-00"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with positional"))).toBe(true);
+    });
+
+    it("rejects --batch combined with --digest", async () => {
+      const { workdir } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--digest"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with --digest"))).toBe(true);
+    });
+
+    it("rejects an invalid --status value", async () => {
+      const { workdir } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--status", "detcted"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("invalid --status"))).toBe(true);
+    });
+
+    it("rejects non-positive --max-items", async () => {
+      const { workdir } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--max-items", "0"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("invalid --max-items"))).toBe(true);
+    });
+
+    it("rejects --status outside of --batch (no silent ignore)", async () => {
+      const { workdir, items } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch([items[0].id, "--status", "detected"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--status requires --batch"))).toBe(true);
+    });
+
+    it("rejects --max-items outside of --batch", async () => {
+      const { workdir, items } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runResearch([items[0].id, "--max-items", "5"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--max-items requires --batch"))).toBe(true);
+    });
+
+    it("halts the batch when an inner item invocation fails", async () => {
+      const { workdir, items } = await setupBatchWorkspace(3);
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        if (req.items[0].id === items[1].id) {
+          throw new Error("simulated adapter crash on item 2");
+        }
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch"], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      // First item succeeded; second crashed → third is never invoked.
+      expect(calls.map((c) => c.items[0].id)).toEqual([items[0].id, items[1].id]);
+      expect(captured.error.some((m) => m.includes("--batch halted on item"))).toBe(true);
+    });
+  });
 });
