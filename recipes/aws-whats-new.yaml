@@ -1,0 +1,59 @@
+name: AWS What's New
+description: AWS What's New announcements (page-based JSON API, full-history backfill capable)
+kind: json-api
+url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&item.locale=en_US
+tags:
+  - aws
+  - cloud
+# `filters.keywords` is intentionally left empty — `radar source add` callers
+# pick keywords per workspace via `--keywords` (ADR-0012 §D3 strategy A). For
+# reference, common Bedrock / Claude / agent-watching keyword sets:
+#
+#   --keywords "Bedrock,Claude,agents,Inferentia"
+#   --keywords "RDS,Aurora,DynamoDB"        # database watchers
+#   --keywords "Lambda,Step Functions"      # serverless watchers
+#
+# Empty keywords match every item — useful for raw firehose ingest, but
+# almost every user will want to narrow this.
+filters:
+  keywords: []
+  excludeKeywords: []
+  matchMode: word
+  matchFields:
+    - title
+    - summary
+  caseSensitive: false
+http:
+  method: GET
+  headers:
+    accept: application/json
+pagination:
+  type: page
+  param: page
+  start: 0
+  pageSize: 100
+  pageSizeParam: size
+  # 200 pages * 100 items/page = ~20,000 items, well above the ~16,281 total
+  # observed in 2026-05. `--backfill --max-pages N` can narrow further.
+  maxPages: 200
+  # `metadata.totalHits` is the AWS-reported total; the adapter uses it to
+  # short-circuit backfill once `ceil(totalHits / pageSize)` pages have been
+  # walked (ADR-0012 §D2 backfill early-stop hint).
+  totalPath: $.metadata.totalHits
+jsonSelectors:
+  # Each result is wrapped in `{ "item": { ... } }`, so we dereference one
+  # extra level inside `items[*].item` to keep the per-element selectors
+  # rooted at the actual record.
+  items: $.items[*].item
+  title: $.additionalFields.headline
+  # KNOWN LIMITATION (#178): `headlineUrl` is a relative path like
+  # `/about-aws/whats-new/.../`, but `Item.url` requires an absolute URL
+  # (zod `.url()`). The smoke test will flag every item as drop-on-parse
+  # until the json-api adapter learns to resolve relative paths against
+  # `source.url` (tracked as follow-up). dev.to and most other bundled
+  # recipes return absolute URLs and are unaffected.
+  link: $.additionalFields.headlineUrl
+  publishedAt: $.additionalFields.postDateTime
+  summary: $.additionalFields.postBody
+  publisherId: $.id
+trustLevel: untrusted

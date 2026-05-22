@@ -1,0 +1,40 @@
+name: dev.to articles
+description: dev.to public articles API (page-based, zero-config via default selector chain)
+kind: json-api
+# dev.to returns an array of article objects directly at the JSON root, so the
+# default selector chain `$[*]` matches without an explicit `jsonSelectors.items`.
+# Each article has `title` / `url` / `description` / `published_at` at the top
+# level, which the default per-field chains pick up automatically.
+url: https://dev.to/api/articles?per_page=30&page=1
+tags:
+  - blog
+# Empty keywords match every article — narrow with `--keywords` per workspace.
+# Suggested keyword sets for common tag follows:
+#
+#   --keywords "Claude,Anthropic,Claude Code"
+#   --keywords "rust,axum,tokio"
+#   --keywords "kubernetes,helm,istio"
+#
+# You can also point the URL at a specific tag (e.g. add `&tag=claude` to
+# the `url` above) when overriding the source after `--recipe`.
+filters:
+  keywords: []
+  excludeKeywords: []
+  matchMode: word
+  matchFields:
+    - title
+    - summary
+  caseSensitive: false
+pagination:
+  type: page
+  param: page
+  start: 1
+  pageSize: 30
+  pageSizeParam: per_page
+  # 10 pages * 30 items = 300 items, comfortably above dev.to's normal
+  # "what's new" reading horizon. Bump via `--backfill --max-pages N` for
+  # deeper history (the API serves several thousand pages back).
+  maxPages: 10
+# `jsonSelectors` omitted intentionally: the default chain (ADR-0012 §D2 /
+# #174) handles the dev.to shape end-to-end.
+trustLevel: untrusted

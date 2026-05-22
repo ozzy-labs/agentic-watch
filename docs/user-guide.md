@@ -828,6 +828,19 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 バンドル recipe が 1 件もない（または `recipes/` ディレクトリ自体が無い）場合は `no recipes bundled` を返して exit 0 する。malformed な recipe があると `Recipes with errors:` ブロックで個別に報告するが、それ以外の有効 recipe は通常通り一覧表示される（fail-soft）。
 
+#### 同梱されている公式 recipe（Phase 1）
+
+現在リポに同梱されている公式 recipe は次の通り（#178 / [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3 strategy A）。各 recipe の生身の YAML は `recipes/<name>.yaml` を参照する（docs 側に再掲すると site 仕様変更との同期コストが二重に発生するため、`recipes/` を SSoT とする）。
+
+| recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
+|---|---|---|---|---|---|
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/) (JSON API) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`） | `--backfill` で AWS の全履歴 16,000+ 件を取り込み可能。**既知の制約**: AWS API の `headlineUrl` は相対パスのため、現状の json-api adapter では `Item.url` schema 検証で drop される。絶対 URL 解決は別 issue でフォロー（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2 拡張候補）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
+
+> **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。
+
+CI smoke test ([`.github/workflows/recipes-smoke.yaml`](../.github/workflows/recipes-smoke.yaml)) が週次 cron で上記 recipe の page 0 fetch + parse を流し、selector drift / API breakage を早期検知する。失敗は `::warning::` annotation で surface するのみで release を block しない（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3）。
+
 #### 自分で recipe を追加するには
 
 現時点では「バンドル recipe（リポ同梱）」のみがサポートされており、user-local の recipe ディレクトリは未対応。新しい公式 recipe を追加したい場合は [ozzy-labs/feedradar](https://github.com/ozzy-labs/feedradar) リポの `recipes/*.yaml` に PR を送る。recipe 1 件あたり ~30 行 YAML で済むため、対応 site を増やすコストは低い（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D1）。
