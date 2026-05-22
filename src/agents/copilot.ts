@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 import { renderItemsForPrompt, wrapUntrusted } from "./_boundary.js";
-import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from "./types.js";
+import type {
+  AgentAdapter,
+  AgentProgressCallback,
+  ResearchRequest,
+  ReviewRequest,
+  UpdateRequest,
+} from "./types.js";
 
 /**
  * Build the prompt handed to `copilot -p`.
@@ -163,6 +169,12 @@ function buildUpdatePrompt(req: UpdateRequest): string {
 interface SpawnOptions {
   cwd: string;
   stdin: string;
+  /**
+   * Optional per-chunk callback for the spawned child's stdout / stderr.
+   * See `src/agents/claude-code.ts` `SpawnOptions.onProgress` (#196 /
+   * ADR-0015 D3) — same contract.
+   */
+  onProgress?: AgentProgressCallback;
 }
 
 interface SpawnResult {
@@ -195,10 +207,14 @@ async function runCopilotCli(prompt: string, options: SpawnOptions): Promise<Spa
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onProgress?.("stdout", text);
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onProgress?.("stderr", text);
     });
     child.on("error", (err) => {
       reject(
@@ -271,7 +287,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         if (isAuthError(tail)) {
@@ -296,7 +312,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         if (isAuthError(tail)) {
@@ -321,7 +337,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         if (isAuthError(tail)) {

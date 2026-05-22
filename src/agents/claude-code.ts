@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
 import { renderItemsForPrompt, wrapUntrusted } from "./_boundary.js";
-import type { AgentAdapter, ResearchRequest, ReviewRequest, UpdateRequest } from "./types.js";
+import type {
+  AgentAdapter,
+  AgentProgressCallback,
+  ResearchRequest,
+  ReviewRequest,
+  UpdateRequest,
+} from "./types.js";
 
 /**
  * Build the prompt handed to `claude -p`.
@@ -171,6 +177,17 @@ interface SpawnOptions {
   stdin: string;
   log?: (message: string) => void;
   warn?: (message: string) => void;
+  /**
+   * Optional per-chunk callback for the spawned child's stdout / stderr.
+   *
+   * Added in #196 (ADR-0015 D3) to let callers wire a `ProgressReporter` —
+   * for example, bumping `stdout: 4.2 KB` on the spinner row or piping the
+   * chunk verbatim under `--verbose`. Adapter spawners MUST keep the
+   * existing `stdout`/`stderr` buffering behaviour and ALSO invoke this
+   * callback on each chunk. Unset means "no progress reporting" so existing
+   * call sites are byte-equivalent.
+   */
+  onProgress?: AgentProgressCallback;
 }
 
 interface SpawnResult {
@@ -196,10 +213,14 @@ async function runClaudeCli(prompt: string, options: SpawnOptions): Promise<Spaw
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onProgress?.("stdout", text);
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onProgress?.("stderr", text);
     });
     child.on("error", (err) => {
       reject(
@@ -253,7 +274,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         throw new Error(`claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`);
@@ -273,7 +294,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         throw new Error(`claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`);
@@ -293,7 +314,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
         null,
         2,
       )}\n`;
-      const result = await run(prompt, { cwd: req.cwd, stdin });
+      const result = await run(prompt, { cwd: req.cwd, stdin, onProgress: req.onProgress });
       if (result.code !== 0) {
         const tail = result.stderr.trim() || result.stdout.trim() || "(no output)";
         throw new Error(`claude-code adapter: claude CLI exited with code ${result.code}: ${tail}`);

@@ -1,5 +1,23 @@
 import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 
+/**
+ * Low-level stream pass-through callback (ADR-0015 D3).
+ *
+ * Adapters wire this to each `child.stdout` / `child.stderr` `"data"` chunk
+ * so the caller (`research` / `review` / `update` CLI in #197) can keep a
+ * `ProgressReporter` ticking — e.g. update `stdout: 4.2 KB` on the spinner
+ * row, or stream the chunk verbatim under `--verbose`.
+ *
+ * Stays at the lowest level (raw chunk text) so the adapter contract does
+ * not have to know about the `ProgressReporter` shape; callers translate
+ * chunks into reporter calls. `kind` distinguishes streams because some
+ * callers render stderr differently (warning colour, separate buffer).
+ *
+ * Optional everywhere: leaving `onProgress` unset is byte-equivalent to the
+ * pre-#196 adapter behaviour.
+ */
+export type AgentProgressCallback = (kind: "stdout" | "stderr", text: string) => void;
+
 export interface ResearchRequest {
   agent: AgentId;
   templateId: string;
@@ -14,6 +32,12 @@ export interface ResearchRequest {
    * `research/`, and resolve relative paths the same way the CLI does.
    */
   cwd: string;
+  /**
+   * Optional progress callback. Invoked once per `stdout` / `stderr` chunk
+   * from the spawned agent CLI. Unset means "no progress reporting"
+   * (#196 forward-compat: existing call sites work unchanged).
+   */
+  onProgress?: AgentProgressCallback;
 }
 
 /**
@@ -50,6 +74,11 @@ export interface ReviewRequest {
    * `items/`, `sources/`, etc. with relative paths.
    */
   cwd: string;
+  /**
+   * Optional progress callback. See {@link AgentProgressCallback} /
+   * {@link ResearchRequest.onProgress}.
+   */
+  onProgress?: AgentProgressCallback;
 }
 
 /**
@@ -96,6 +125,11 @@ export interface UpdateRequest {
    * `items/`, `sources/`, etc. with relative paths.
    */
   cwd: string;
+  /**
+   * Optional progress callback. See {@link AgentProgressCallback} /
+   * {@link ResearchRequest.onProgress}.
+   */
+  onProgress?: AgentProgressCallback;
 }
 
 export interface AgentAdapter {
