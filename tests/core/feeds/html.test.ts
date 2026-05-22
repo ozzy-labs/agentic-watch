@@ -259,8 +259,15 @@ describe("core/feeds/html — adapter", () => {
     expect(second.state.lastEtag).toBe(first.state.lastEtag);
   });
 
-  it("throws on 5xx responses", async () => {
-    const { fetch } = mockFetch([{ status: 500, body: "boom" }]);
+  it("throws on 5xx responses (after retry exhaustion)", async () => {
+    // The shared fetch wrapper retries 5xx responses (issue #165), so we have
+    // to script three 5xx replies to exhaust the default 2 retries before the
+    // adapter's HTTP-status error fires.
+    const { fetch } = mockFetch([
+      { status: 500, body: "boom" },
+      { status: 500, body: "boom" },
+      { status: 500, body: "boom" },
+    ]);
     await expect(htmlAdapter.fetch(makeSource(), { fetch })).rejects.toThrow(/HTTP 500/);
   });
 

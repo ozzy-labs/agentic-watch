@@ -235,16 +235,18 @@ describe("cli/watch run", () => {
   it("returns non-zero when a source fetch fails but continues with others", async () => {
     await writeSource(workdir, "good");
     await writeSource(workdir, "bad");
-    let callCount = 0;
+    let goodCalls = 0;
+    let badCalls = 0;
     const fetchImpl: FetchLike = async (url) => {
-      callCount++;
       if (String(url).includes("bad")) {
+        badCalls++;
         return {
           status: 500,
           headers: { get: () => null },
           text: async () => "err",
         };
       }
+      goodCalls++;
       return {
         status: 200,
         headers: { get: () => null },
@@ -258,7 +260,10 @@ describe("cli/watch run", () => {
       fetch: fetchImpl as never,
     });
     expect(code).toBe(1);
-    expect(callCount).toBe(2);
+    // The good source is fetched once; the bad source goes through the shared
+    // fetch wrapper's retry loop (1 + 2 retries = 3 attempts) before failing.
+    expect(goodCalls).toBe(1);
+    expect(badCalls).toBe(3);
     expect(captured.error.some((m) => m.includes("bad"))).toBe(true);
   });
 

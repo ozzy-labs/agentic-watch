@@ -536,6 +536,29 @@ radar watch run --source anthropic-news
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
 - 一部 source で失敗した場合でも他 source は続行し、exit code は `1` を返す（CI で検知可能）
 
+#### Fetch のタイムアウトとリトライ
+
+全 feed adapter (`rss` / `html` / `npm-registry` / `github-releases`) は共通の fetch wrapper を経由する。プロキシ越し / 不安定な公衆 RSS / 一時的な 5xx でも `watch run` が止まらないよう、デフォルトで次の挙動が入っている:
+
+- **タイムアウト**: 1 attempt あたり 30 秒（`AbortSignal.timeout` 実装）
+- **リトライ**: 5xx 応答および transient なネットワークエラー (`ECONNRESET` / `ETIMEDOUT` / `ENETUNREACH` / `EAI_AGAIN`) で最大 2 回
+- **バックオフ**: 200ms → 800ms の指数バックオフ
+- **リトライしないケース**: 4xx（404 / 401 / 403 等の恒久エラー）、呼び出し側からの abort
+
+挙動は環境変数で上書きできる:
+
+| 環境変数 | 既定値 | 説明 |
+|---|---|---|
+| `RADAR_FETCH_TIMEOUT_MS` | `30000` | 1 attempt あたりのタイムアウト (ms) |
+| `RADAR_FETCH_RETRIES` | `2` | 初回失敗後のリトライ回数（`0` で即失敗） |
+
+```bash
+# 例: タイムアウトを 10 秒、リトライを 4 回に
+export RADAR_FETCH_TIMEOUT_MS=10000
+export RADAR_FETCH_RETRIES=4
+radar watch run
+```
+
 ### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
 ```text

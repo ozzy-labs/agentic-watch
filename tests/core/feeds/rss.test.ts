@@ -174,10 +174,17 @@ describe("core/feeds/rss — adapter", () => {
     expect(result.state.lastEtag).toBe('"keep"');
   });
 
-  it("throws on non-2xx, non-304 responses", async () => {
+  it("throws on non-2xx, non-304 responses (after retry exhaustion)", async () => {
+    // The shared fetch wrapper retries 5xx responses (issue #165), so we have
+    // to script three 5xx replies to exhaust the default 2 retries before the
+    // adapter's HTTP-status error fires.
     await expect(
       rssAdapter.fetch(makeSource(), {
-        fetch: mockFetch([{ status: 500, body: "boom" }]),
+        fetch: mockFetch([
+          { status: 500, body: "boom" },
+          { status: 500, body: "boom" },
+          { status: 500, body: "boom" },
+        ]),
       }),
     ).rejects.toThrow(/HTTP 500/);
   });

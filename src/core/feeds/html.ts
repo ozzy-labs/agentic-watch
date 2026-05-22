@@ -1,4 +1,5 @@
 import type { Source } from "../../schemas/index.js";
+import { fetchWithRetry } from "./_fetch.js";
 import { CONTENT_HASH_PREFIX, contentHash, parseHtmlDocument } from "./_html-common.js";
 import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
 
@@ -38,7 +39,7 @@ async function fetchHtml(
   }
   if (options.lastModified) headers["if-modified-since"] = options.lastModified;
 
-  const response = await fetchImpl(url, { headers, signal: options.signal });
+  const response = await fetchWithRetry(fetchImpl, url, { headers, signal: options.signal });
   const etag = response.headers.get("etag");
   const lastModified = response.headers.get("last-modified");
   if (response.status === 304) {

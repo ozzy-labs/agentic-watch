@@ -1,5 +1,6 @@
 import type { Item, Source } from "../../schemas/index.js";
 import { ItemSchema } from "../../schemas/index.js";
+import { fetchWithRetry } from "./_fetch.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
 import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
 
@@ -180,7 +181,7 @@ async function fetchPackument(
   };
   if (options.etag) headers["if-none-match"] = options.etag;
 
-  const response = await fetchImpl(url, { headers, signal: options.signal });
+  const response = await fetchWithRetry(fetchImpl, url, { headers, signal: options.signal });
   const etag = response.headers.get("etag");
   if (response.status === 304) {
     return { status: 304, body: "", etag };
