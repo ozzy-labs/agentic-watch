@@ -78,6 +78,6 @@
   ],
   "author": "ozzy-labs",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.21.0 || >=24.5.0"
   }
 }

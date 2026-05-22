@@ -36,7 +36,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # Node 22.21+ (or 24.5+) is required so radar can auto-detect
+          # HTTPS_PROXY / HTTP_PROXY and respawn with --use-env-proxy.
+          # Older 22.x lacks the flag and `radar` runs without proxy
+          # support even when HTTPS_PROXY is set.
+          node-version: "22.21"
 
       - name: Install FeedRadar
         # Pin to a release once you've decided on a version; this scaffold

@@ -411,7 +411,7 @@ GitHub Actions で `kind: html-js` source を含む workspace の `watch run` �
 
 - uses: actions/setup-node@v4
   with:
-    node-version: "22"
+    node-version: "22.21" # or "24"; radar requires Node 22.21+ / 24.5+ for HTTPS_PROXY support
 
 - run: npm i -g @ozzylabs/feedradar playwright
 
