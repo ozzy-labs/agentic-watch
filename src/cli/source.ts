@@ -269,7 +269,9 @@ function printAddHelp(log: (m: string) => void): void {
   log("Usage: radar source add <id> --kind <kind> --url <url> [options]");
   log("");
   log("Options:");
-  log("  --kind <kind>            rss | html | html-js | github-releases | npm-registry");
+  log(
+    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed",
+  );
   log("  --url <url>              fetch target URL");
   log("  --name <name>            display name (defaults to <id>)");
   log("  --tags <a,b>             comma-separated tags");
@@ -373,7 +375,7 @@ export async function addSource(
   const kindResult = SourceKindSchema.safeParse(parsed.kind);
   if (!kindResult.success) {
     error(
-      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry)`,
+      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed)`,
     );
     return 2;
   }
