@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.4](https://github.com/ozzy-labs/feedradar/compare/v0.1.3...v0.1.4) (2026-05-22)
+
+
+### Features
+
+* **cli:** auto-enable HTTPS_PROXY via NODE_OPTIONS self-respawn ([#166](https://github.com/ozzy-labs/feedradar/issues/166)) ([42afaa3](https://github.com/ozzy-labs/feedradar/commit/42afaa36fb9b6f1abe55d70c3a577b391285ca60))
+* **doctor:** add proxy/TLS diagnostics with credential masking ([#170](https://github.com/ozzy-labs/feedradar/issues/170)) ([d9a48d7](https://github.com/ozzy-labs/feedradar/commit/d9a48d7d7995276d19a877dc61590b0b9566e58c))
+* **feeds:** add default timeout and retry to fetch adapters ([#167](https://github.com/ozzy-labs/feedradar/issues/167)) ([4d14277](https://github.com/ozzy-labs/feedradar/commit/4d1427751c1bce53652ddba87b782b6e8663878a))
+* **feeds:** inject proxy env into Playwright launch for html-js adapter ([#169](https://github.com/ozzy-labs/feedradar/issues/169)) ([881935e](https://github.com/ozzy-labs/feedradar/commit/881935e66cb6a5a52c693f283d7946bd771b2144))
+
 ## [0.1.3](https://github.com/ozzy-labs/feedradar/compare/v0.1.2...v0.1.3) (2026-05-19)
 
 
