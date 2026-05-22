@@ -176,6 +176,33 @@ describe("schemas/source - kind: json-api (ADR-0012)", () => {
     }
   });
 
+  it("accepts a fully-qualified http(s) URL for jsonSelectors.linkBase (#204)", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      jsonSelectors: {
+        ...baseJsonApi.jsonSelectors,
+        linkBase: "https://aws.amazon.com",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.jsonSelectors?.linkBase).toBe("https://aws.amazon.com");
+    }
+  });
+
+  it("rejects a non-URL value for jsonSelectors.linkBase (#204)", () => {
+    // The schema fails fast on a malformed base because silently mis-resolving
+    // every per-item link would be worse than a parse error.
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      jsonSelectors: {
+        ...baseJsonApi.jsonSelectors,
+        linkBase: "not a url",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("requires `pagination` when kind is json-api", () => {
     const result = SourceSchema.safeParse({
       ...baseJsonApi,

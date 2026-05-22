@@ -688,6 +688,7 @@ interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c
 | `publisherId` | (default chain なし) | optional |
 | `body` | (default chain なし、recipe 明示時のみ参照される) | optional |
 | `tags` | (default chain なし、現状 `Item.raw` 経由でのみ surface) | optional |
+| `linkBase` | (default chain なし、未指定時は `source.url` を base に相対 link を絶対化 / #204) | optional |
 
 明示 selector を指定する判断基準:
 
@@ -809,6 +810,7 @@ selector に書ける JSONPath は `src/core/feeds/_jsonpath.ts` の **lite 版*
 | `json-api adapter: HTTP 304` 後も何も取れない | normal mode で前回 `lastEtag` が hit。`--backfill` を付けると conditional GET が skip されるので、過去履歴を取り直したいなら `--backfill` で再実行 |
 | `${VAR}` を含む header を入れたのに 401 が出る | env が未解決で header が omit されている。`echo $VAR` で実値を確認し、`radar watch run` を呼ぶ shell に export されているか check |
 | `pagination.maxPages` が小さくて backfill が途中で打ち切られる | `--max-pages N` でその場限り上書き（`pagination.maxPages` と min を取る）。恒久的に上げるなら recipe 側の `maxPages` を編集 |
+| `items` の `url` が相対パス（`/about-aws/...` 等）で全件 drop される | API が link を相対パスで返す場合、adapter は自動的に `jsonSelectors.linkBase`（未指定なら `source.url`）を base として絶対化する（#204）。`source test --show-content` の `items` が 0 件で `selector adoption` 表は埋まっている時はこの症状を疑う。明示的に base を指定したいときは `jsonSelectors.linkBase: https://<host>` を追加（fully-qualified http(s) URL のみ受け付ける） |
 
 詳細な設計判断は [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) を参照。
 
@@ -834,7 +836,7 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 | recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
 |---|---|---|---|---|---|
-| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/) (JSON API) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`） | `--backfill` で AWS の全履歴 16,000+ 件を取り込み可能。**既知の制約**: AWS API の `headlineUrl` は相対パスのため、現状の json-api adapter では `Item.url` schema 検証で drop される。絶対 URL 解決は別 issue でフォロー（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2 拡張候補）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/) (JSON API) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の全履歴 16,000+ 件を取り込み可能。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
 | `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
 
 > **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。

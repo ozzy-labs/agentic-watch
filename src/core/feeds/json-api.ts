@@ -222,6 +222,31 @@ function resolveFieldWithFallback(
   return { value: undefined, path: null };
 }
 
+/**
+ * Resolve a `link` value against a base URL (#204).
+ *
+ * Many JSON APIs (notably AWS What's New) return the per-item link as a
+ * relative path like `/about-aws/whats-new/.../` rather than a fully
+ * qualified URL. Without resolution `ItemSchema`'s `z.string().url()`
+ * silently drops every item.
+ *
+ * The base is `selectors.linkBase` when set, otherwise `source.url` (which
+ * mirrors the html adapter's `new URL(href, source.url)` behavior). Absolute
+ * URLs pass through unchanged because `new URL("https://x/y", base)` ignores
+ * the base.
+ *
+ * We swallow `URL` constructor errors so a malformed `link` surfaces as a
+ * normal `ItemSchema` validation drop later (preserving the existing "one
+ * broken record does not abort the whole page" semantics).
+ */
+function resolveLinkUrl(raw: string, base: string): string {
+  try {
+    return new URL(raw, base).toString();
+  } catch {
+    return raw;
+  }
+}
+
 /** Coerce a JSON value to a trimmed non-empty string, or `undefined`. */
 function coerceString(value: unknown): string | undefined {
   if (value == null) return undefined;
@@ -275,8 +300,13 @@ function elementToItem(
   if (adoption.link === undefined) {
     adoption.link = linkResolved.path;
   }
-  const url = coerceString(linkResolved.value);
-  if (!url) return null;
+  const rawLink = coerceString(linkResolved.value);
+  if (!rawLink) return null;
+  // Resolve relative paths against `linkBase` (or `source.url` as fallback)
+  // so APIs that return `/about-aws/whats-new/.../` instead of an absolute
+  // URL still produce valid `Item.url` values (#204). Absolute URLs pass
+  // through `new URL()` unchanged.
+  const url = resolveLinkUrl(rawLink, selectors.linkBase ?? source.url);
 
   const publisherId = selectors.publisherId
     ? coerceString(selectOne(selectors.publisherId, element))

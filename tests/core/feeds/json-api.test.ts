@@ -798,6 +798,117 @@ describe("core/feeds/json-api — normalization defenses", () => {
     expect(result.items[0]?.publishedAt).toBe("2026-05-12T09:00:00.000Z");
   });
 
+  it("resolves a relative link against source.url (#204)", async () => {
+    const source = makeSource({
+      url: "https://aws.amazon.com/api/dirs/items/search",
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: {
+        items: "$.items[*]",
+        title: "$.title",
+        link: "$.url",
+      },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            {
+              title: "Relative link",
+              url: "/about-aws/whats-new/2026/05/foo/",
+            },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.url).toBe("https://aws.amazon.com/about-aws/whats-new/2026/05/foo/");
+  });
+
+  it("passes absolute links through untouched even when linkBase is set (#204)", async () => {
+    const source = makeSource({
+      url: "https://aws.amazon.com/api/dirs/items/search",
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: {
+        items: "$.items[*]",
+        title: "$.title",
+        link: "$.url",
+        linkBase: "https://aws.amazon.com",
+      },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            { title: "Absolute", url: "https://example.com/p/123" },
+            { title: "Relative", url: "/about-aws/foo/" },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]?.url).toBe("https://example.com/p/123");
+    expect(result.items[1]?.url).toBe("https://aws.amazon.com/about-aws/foo/");
+  });
+
+  it("linkBase overrides source.url as the resolution base (#204)", async () => {
+    const source = makeSource({
+      // `source.url` points at the API endpoint host (different from the
+      // public site host); linkBase should win.
+      url: "https://api.example.com/v1/articles",
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: {
+        items: "$.items[*]",
+        title: "$.title",
+        link: "$.url",
+        linkBase: "https://www.example.com",
+      },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [{ title: "T", url: "/blog/post-1" }],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.url).toBe("https://www.example.com/blog/post-1");
+  });
+
+  it("drops items whose link is empty or non-string after coercion (#204)", async () => {
+    // Resolution should never paper over an empty / null link value: the
+    // existing `if (!rawLink) return null` guard runs before resolution
+    // and silently drops the candidate, mirroring the html adapter.
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: {
+        items: "$.items[*]",
+        title: "$.title",
+        link: "$.url",
+      },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            { title: "Empty link", url: "" }, // dropped (empty after trim)
+            { title: "Whitespace", url: "   " }, // dropped (empty after trim)
+            { title: "Null link", url: null }, // dropped (coerceString returns undefined)
+            { title: "Good", url: "https://x.example/ok" },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items.map((i) => i.title)).toEqual(["Good"]);
+  });
+
   it("falls back to body when the recipe only mapped a body selector", async () => {
     const source = makeSource({
       pagination: { type: "none", maxPages: 20 },

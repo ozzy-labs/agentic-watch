@@ -191,6 +191,8 @@ export type SourcePagination = z.infer<typeof SourcePaginationSchema>;
  * - `publisherId` has no fallback chain (stable id derivation falls through
  *   to `link` URL by default; see `derive-id.ts`).
  * - `body` / `tags` have no fallback chain (rarely needed for normalization).
+ * - `linkBase` resolves relative `link` values against an explicit base URL
+ *   (defaults to `source.url`). See field-level docstring for details (#204).
  *
  * Note that selectors are evaluated against each item element (already
  * dereferenced via `items`), so paths inside this schema commonly use `$` as
@@ -205,6 +207,20 @@ export const SourceJsonApiSelectorsSchema = z.object({
   publishedAt: z.string().min(1).optional(),
   body: z.string().min(1).optional(),
   tags: z.string().min(1).optional(),
+  /**
+   * Base URL used to resolve relative `link` values returned by the API
+   * (#204). Many APIs (e.g. AWS What's New) return `headlineUrl` as a path
+   * like `/about-aws/whats-new/.../` instead of a full URL, which causes
+   * every item to be silently dropped at `ItemSchema` validation. When
+   * `linkBase` is set, the adapter resolves relative `link` values against
+   * it (`new URL(raw, linkBase)`); when omitted, `source.url` is used as
+   * the base, mirroring how the html adapter resolves `<a href="/...">`.
+   * Absolute links pass through untouched in either case.
+   *
+   * Must be a fully-qualified http(s) URL — invalid bases would silently
+   * mis-resolve, so we fail-fast at schema parse time.
+   */
+  linkBase: z.string().url().optional(),
 });
 export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema>;
 

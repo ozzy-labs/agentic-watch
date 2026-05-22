@@ -136,6 +136,11 @@ describe("bundled recipes :: documented bundle (Phase 1 set)", () => {
     // The AWS response wraps items inside `{item: ...}`; the dereferencing
     // selector is what differentiates this from the default chain.
     expect(aws?.recipe?.jsonSelectors?.items).toBe("$.items[*].item");
+    // `headlineUrl` is a relative path; the adapter resolves it against
+    // `linkBase` so `Item.url` validates. Pinning the explicit base here
+    // protects against accidental edits that would silently drop every
+    // AWS item again (#204).
+    expect(aws?.recipe?.jsonSelectors?.linkBase).toBe("https://aws.amazon.com");
   });
 
   it("dev-to relies on the default selector chain (no jsonSelectors block)", async () => {
