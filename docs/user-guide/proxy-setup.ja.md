@@ -230,13 +230,15 @@ TLS / 接続エラーが出る場合は `NODE_EXTRA_CA_CERTS` を再確認する
 ## fetch タイムアウト / リトライ調整
 
 低速な社内プロキシではタイムアウトを伸ばしたいことがある。`radar` の
-`fetch()` 系 adapter (`rss` / `html` / `github-releases` / `npm-registry`)
-は次の 2 つの env var で既定値を上書きできる:
+`fetch()` 系 adapter (`rss` / `html` / `html-js` / `github-releases` /
+`npm-registry` / `json-api` / `json-feed`) は次の env var で既定値を
+上書きできる:
 
 | 環境変数 | 既定値 | 用途 |
 |---|---|---|
 | `RADAR_FETCH_TIMEOUT_MS` | `30000` | 1 attempt あたりのタイムアウト (ms) |
 | `RADAR_FETCH_RETRIES`    | `2`     | 初回失敗後のリトライ回数 (`0` で即失敗) |
+| `RADAR_FETCH_HOST_ALLOWLIST` | _(空)_ | SSRF blocklist を bypass する host literal (カンマ区切り、例: `127.0.0.1,example.test`)。テスト用 override で、通常は private IP / non-HTTP scheme を reject する |
 
 ```bash
 # 遅いプロキシ向けに緩める
