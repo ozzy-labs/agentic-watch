@@ -1176,7 +1176,7 @@ radar research --batch --agent codex-cli
 | フラグ | 既定 | 説明 |
 |---|---|---|
 | `--status <status>` | `detected` | 対象 item の status (`detected` / `researched` / `reviewed` / `dismissed`)。通常は `detected` のまま使う |
-| `--max-items N` | `10` | 1 実行で処理する item 数のハードキャップ。N を超える match があると、超過分は **dropped** されて warn() に列挙される |
+| `--max-items N` | `10` | 1 実行で処理する item 数のハードキャップ。N を超える match があると、超過分は **dropped** され warn() に件数が出力される (次回 cron で続きを処理) |
 | `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各 item の `matchedKeywords` と大小無視で照合し、いずれか 1 つでも一致すれば対象。未指定なら全 match item が対象 |
 | `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
 
@@ -1191,10 +1191,11 @@ radar research --batch --agent codex-cli
 
 ##### 順次実行とエラー時の挙動
 
-- match 件数 > `--max-items` の場合、超過分は **dropped** され、warn() に id 一覧が出力される (次回 cron で続きを処理)
-- 1 件失敗しても次の item には進む。最終的に exit code は **成功件数 > 0 なら 0**、全件失敗なら `1`
-- 既に同日 `<YYYYMMDD>_<slug>_v1.md` が存在する item は上書きせず skip (通常モードと同じ挙動、再 research は `radar update` 経由)
-- batch 中の各 item は status を `detected → researched` に遷移する
+- match 件数 > `--max-items` の場合、超過分は **dropped** され、warn() に件数が出力される (次回 cron で続きを処理)
+- match を `publishedAt` (なければ `fetchedAt`) 昇順でソートしてから先頭 `--max-items` 件を順次処理する (古い順)
+- **fail-fast**: 1 件失敗した時点でバッチ全体が halt し、その exit code をそのまま返す (`research: --batch halted on item '<id>' (exit N)` を stderr に出力)。残り未処理 item は次回 cron で再選別される
+- 既に同日 `<YYYYMMDD>_<slug>_v1.md` が存在する item は上書きせずエラーで halt する (通常モードと同じ挙動、再 research は `radar update` 経由)
+- 各 item の処理成功時に status を `detected → researched` に遷移する
 
 ### `radar dismiss <item-id>`
 
@@ -1575,7 +1576,7 @@ jobs:
 
 これを防ぐため `combined` は以下 2 段の防御を持つ:
 
-1. **`--max-items N` ハードキャップ** (既定 `10`): 1 cron tick で処理する item 数の上限。N を超える match は **dropped** (warn() に列挙、次回 cron で続きを処理)
+1. **`--max-items N` ハードキャップ** (既定 `10`): 1 cron tick で処理する item 数の上限。N を超える match は **dropped** (warn() に件数を出力、次回 cron で続きを処理)
 2. **`--filter-tags <list>` allow-list**: `matchedKeywords` (item の filter ヒット結果) を allow-list で絞る。例: `--filter-tags security,breaking-change` なら security / breaking-change tag が付いた item だけ research
 
 両方とも **workflow YAML に literal として焼き込まれる** ため、PR diff レビューで「`--max-items 1000` のような暴走設定が混入していないか」を audit できる。
@@ -1694,7 +1695,7 @@ cost が想定外に増えていることに気付いた場合の止め方:
 | `Error: cron expression invalid` (workflow generate 時) | `--cron` / `--watch-cron` の値が 5 field POSIX cron でない。例: `"0 0 * * *"` (毎日 0 時 UTC)。`@daily` 等の alias は GitHub Actions が受け付けないため、CLI 側でも拒否 |
 | `output file already exists: ... (use --force to overwrite)` | 同名 file が既存。意図的な再生成なら `--force` を付ける。複数 cadence を共存させたいなら `--output .github/workflows/<type>-<cadence>.yaml` で別名で生成 |
 | `Process completed with exit code 128.` + `non-fast-forward` (Actions ログ) | 同時刻に複数 workflow が `items/` / `state/` を push し合った。内蔵の 3 回 rebase retry が走るが、4 回以上失敗する場合は branch protection / token 失効 / true merge conflict を確認 |
-| `radar research --batch: capped at 10 (dropped: ...)` warning が毎回出る | 検出件数が `--max-items` 上限を超えている。`--filter-tags` で絞る or `--max-items` を増やす or `--backfill` の事故起動を疑う |
+| `research: --max-items 10 cap reached; dropping N excess item(s)` warning が毎回出る | 検出件数が `--max-items` 上限を超えている。`--filter-tags` で絞る or `--max-items` を増やす or `--backfill` の事故起動を疑う |
 | `Error: ANTHROPIC_API_KEY is not set` (Actions ログ) | Settings → Secrets → Actions で agent 別 secret を登録していない (`--agent <name>` に応じた secret 名は ADR-0014 D5 / 本セクションの「agent 別 secrets 設定例」を参照) |
 | billing dashboard で LLM cost が想定の 10 倍 | `--max-items` を意図せず高く設定した / `--filter-tags` 無しで全件 research している / `combined` workflow を複数 branch で並走させている。「[暴走時の止め方](#暴走時の止め方)」を参照して即座に disable する |
 | `permission denied to push` (Actions ログ) | `permissions: contents: write` が org / repo 設定で抑制されている。リポジトリ Settings → Actions → General → `Workflow permissions` を `Read and write permissions` にする |
