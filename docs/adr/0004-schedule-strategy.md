@@ -79,3 +79,4 @@ GitHub Actions workflow 雛形 `.github/workflows/watch.yaml` を生成。
 
 - knowledge: [`ai/practice/scheduled-tasks`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/scheduled-tasks.md)
 - Phase 4 で `init --with-routines` / `init --with-actions` を実装 (#27 / #39)
+- 後追い生成・複数 workflow 共存・自動 research セーフティは [ADR-0014](./0014-workflow-generate-and-auto-research-safety.md) を参照（本 ADR の拡張）
