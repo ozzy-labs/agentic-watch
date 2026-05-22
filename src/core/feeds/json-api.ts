@@ -187,35 +187,6 @@ function coerceIsoDate(value: unknown): string | undefined {
 }
 
 /**
- * Normalize the `tags` selector result. JSON APIs are inconsistent:
- *
- *   - Array of strings: `["release", "beta"]`           → kept as-is
- *   - Array of objects:  `[{ name: "release" }, ...]`    → return `[]` (recipe
- *                                                          should target the
- *                                                          string field instead)
- *   - Comma-separated string: `"release, beta"`          → split + trim
- *   - Single string:     `"release"`                      → `[raw]`
- *
- * We keep the implementation defensive so a single bad item does not poison
- * the whole feed.
- */
-function coerceTags(value: unknown): string[] {
-  if (value == null) return [];
-  if (Array.isArray(value)) {
-    return value
-      .map((v) => coerceString(v))
-      .filter((v): v is string => v !== undefined && v.length > 0);
-  }
-  if (typeof value === "string") {
-    return value
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-  }
-  return [];
-}
-
-/**
  * Normalize one element matched by `selectors.items` into our canonical
  * `Item` shape. Returns `null` when the candidate fails schema validation
  * (e.g. missing url) so one broken record does not abort the whole page.
@@ -245,7 +216,11 @@ function elementToItem(
     ? coerceString(selectOne(selectors.summary, element))
     : undefined;
   const body = selectors.body ? coerceString(selectOne(selectors.body, element)) : undefined;
-  const tags = selectors.tags ? coerceTags(selectOne(selectors.tags, element)) : [];
+  // `selectors.tags` is recognized by the schema but currently silently passed
+  // through into `raw` only. The filter pipeline (`buildHaystack`) does not
+  // structurally read `Item.tags` for any adapter, so surfacing tags
+  // structurally here would not improve filtering. Keep them inside `raw`
+  // (already attached below) until a future filter extension consumes them.
 
   const stableKey = deriveStableKey({
     publisherId,
@@ -269,12 +244,6 @@ function elementToItem(
   // keeps the Item schema lean while still letting recipes pull in a long
   // description.
   if (!summary && body) candidate.summary = body;
-  if (tags.length > 0) {
-    // Schema's `tags` is on Source (publisher tags). Item carries
-    // matchedKeywords/raw; we surface item-level tags through `raw` (already
-    // included) and via `matchedKeywords` later in the watcher's filter
-    // pipeline. No-op here.
-  }
 
   const result = ItemSchema.safeParse(candidate);
   return result.success ? result.data : null;
@@ -293,7 +262,7 @@ async function fetchPage(
   headers: Record<string, string>,
   pagination: SourcePagination,
   pageIndex: number,
-  state: { etag?: string },
+  state: { etag?: string; sendConditional?: boolean },
 ): Promise<{
   body: unknown;
   bodyText: string;
@@ -304,9 +273,13 @@ async function fetchPage(
   // Forward conditional-GET headers only on page 0 — pagination URLs are
   // ephemeral and most servers will not 304 them. ETag-aware short-circuit
   // is mainly useful for the "no items have changed since last run" case.
+  // We also skip conditional GET in backfill mode (caller sets
+  // `sendConditional: false`) so a stale ETag from a previous normal-mode
+  // run does not 304-out the requested full-history traversal.
   const requestHeaders: Record<string, string> = { ...headers };
   if (
     pageIndex === 0 &&
+    state.sendConditional !== false &&
     state.etag &&
     !state.etag.startsWith(CONTENT_HASH_PREFIX) &&
     !("if-none-match" in requestHeaders)
@@ -499,6 +472,10 @@ export const jsonApiAdapter: FeedAdapter = {
     while (pageIndex < effectiveCap) {
       const response = await fetchPage(currentUrl, fetchImpl, headers, pagination, pageIndex, {
         etag: previous?.lastEtag,
+        // Skip conditional GET in backfill mode so a stale ETag from a
+        // previous normal-mode run does not 304-out a requested full-history
+        // traversal.
+        sendConditional: !backfill,
       });
       if (pageIndex === 0) {
         firstBody = response.body;

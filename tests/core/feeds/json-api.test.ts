@@ -141,6 +141,22 @@ describe("core/feeds/json-api — single fetch (kind: none)", () => {
     expect(result.items).toEqual([]);
     expect(calls[0]?.headers?.["if-none-match"]).toBe('"keep"');
   });
+
+  it("skips conditional GET in backfill mode (no If-None-Match)", async () => {
+    // Backfill should fetch full history even if the server would have
+    // 304'd against the previous-run ETag — that ETag was captured from a
+    // partial fetch and should not block a deliberate backfill.
+    const source = makeSource({
+      pagination: { type: "page", param: "page", start: 0, pageSize: 1, maxPages: 1 },
+    });
+    const { fetch, calls } = mockFetch([{ status: 200, body: pageBody(1, 1) }]);
+    await jsonApiAdapter.fetch(source, {
+      fetch,
+      backfill: true,
+      state: { sourceId: "x", lastEtag: '"stale"', lastSeenIds: [] },
+    });
+    expect(calls[0]?.headers?.["if-none-match"]).toBeUndefined();
+  });
 });
 
 describe("core/feeds/json-api — pagination strategies", () => {
