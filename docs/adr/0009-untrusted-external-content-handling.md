@@ -59,7 +59,7 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 | ID | 防御策 | 状態 |
 |---|---|---|
 | **D5a** | レスポンスサイズキャップ (デフォルト 10 MB / page) | Adopt (ADR-0012 D5 で確立、実装は #173 で sub-issue 化) |
-| **D5b** | host allowlist / blocklist (private IP / loopback / file:// / cloud metadata 遮断) | Adopt (既存 `src/core/feeds/_fetch.ts` の遮断ロジックを json-api adapter にも適用) |
+| **D5b** | host allowlist / blocklist (private IP / loopback / file:// / cloud metadata 遮断) | **Shipped (#206)** — `validateFetchUrl()` を `src/core/feeds/_fetch.ts` に実装、`fetchWithRetry` 経由の全 adapter (`rss` / `html` / `json-feed` / `json-api` / `github-releases` / `npm-registry`) に適用 |
 | **D5c** | credential 漏洩防止 (env var interpolation: `${VAR}` のみ、log redact) | Adopt |
 | **D5d** | JSON body の prompt injection | 既存 M1c (boundary marker) で十分 — 追加策不要 |
 
@@ -78,11 +78,18 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 |---|---|
 | `127.0.0.0/8` / `localhost` / `0.0.0.0` | SSRF: user の localhost で動く管理画面 / dev server を fetch される |
 | RFC1918 private IP (`10.0.0.0/8` / `172.16.0.0/12` / `192.168.0.0/16`) | SSRF: 同一 VPC / LAN 内の internal service へ到達 |
-| `169.254.169.254` / `metadata.google.internal` / `metadata.azure.com` | cloud instance metadata service: IAM role credentials の窃取 |
-| `file://` / `ftp://` / その他 non-http(s) scheme | local filesystem / 異プロトコル経由の任意 read |
-| DNS rebinding 経路 (動的 IP 変化) | resolver hook で fetch 時の IP も確認 (実装は #173 で詳細) |
+| `169.254.0.0/16` (AWS / GCP / Azure metadata service: `169.254.169.254` 等) | cloud instance metadata service: IAM role credentials の窃取 |
+| IPv6 loopback (`::1`) / link-local (`fe80::/10`) / ULA (`fc00::/7`) | IPv6 経路での同等 SSRF |
+| `file://` / `data:` / `gopher://` / `ftp://` / その他 non-http(s) scheme | local filesystem / 異プロトコル経由の任意 read |
+| DNS rebinding 経路 (動的 IP 変化) | resolver hook で fetch 時の IP も確認 (本実装は URL hostname literal のみチェック、DNS rebinding 防御は将来検討) |
 
 既存 5 adapter は固定 endpoint のため遮断ロジックは事実上 no-op だったが、recipe で任意 URL を書ける `kind: json-api` では **必須**。
+
+**実装** (#206): `validateFetchUrl(url, env)` を `src/core/feeds/_fetch.ts` に追加し、`fetchWithRetry` の retry loop に入る前に呼び出す。`fetchWithRetry` を経由する全 adapter (`rss` / `html` / `json-feed` / `json-api` / `github-releases` / `npm-registry`) で有効。`kind: html-js` は Playwright (`page.goto()`) 経由のため本 wrapper を通らず、Chromium 自体の sandbox + headless 防御 ([ADR-0010 §D5](./0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件)) に依存する別経路。
+
+**override**: `RADAR_FETCH_HOST_ALLOWLIST=<host1>,<host2>,...` 環境変数で個別 host literal を allowlist できる。testing (e2e CLI smoke test が `127.0.0.1` のローカル fixture を fetch する用途) や user の明示 opt-in 用途を想定。CIDR / glob は未サポート (exact match のみ)。
+
+**scope の限界**: 本実装は URL hostname literal の単純チェックであり DNS は引かない。公開 DNS レコードが `127.0.0.1` を指す DNS rebinding 攻撃は防げない。defense-in-depth として metadata IP / `localhost` / `file://` 等の典型 SSRF レシピは確実に切れるが、より深い防御 (resolver hook での fetch 時 IP 再確認) は将来検討。
 
 #### D5c Credential 漏洩防止 (env var interpolation)
 
@@ -200,6 +207,7 @@ M4 (`Source.trustLevel`) は **schema レベルの基盤**として上記スタ�
 | **M3b** | workspace 外 write 禁止 (SKILL guidance) | **Shipped** | 同上 "Untrusted content boundary" セクション |
 | **M4** | `Source.trustLevel` metadata (default `"untrusted"`) | **Shipped** | [`src/schemas/source.ts`](../../src/schemas/source.ts) — `TrustLevelSchema.default("untrusted")` |
 | **M5a** | injection 検出を frontmatter / log に記録 | **Shipped** | [`src/schemas/item.ts`](../../src/schemas/item.ts) — `injectionFlags: z.array(z.string()).default([])`、M1a の検出結果が item frontmatter に載る |
+| **D5b** | SSRF host blocklist (private IP / loopback / file:// / cloud metadata 遮断) | **Shipped (#206)** | [`src/core/feeds/_fetch.ts`](../../src/core/feeds/_fetch.ts) — `validateFetchUrl()` を `fetchWithRetry` から呼び出し、`RADAR_FETCH_HOST_ALLOWLIST` で override 可 |
 | M1b | LLM-as-a-judge 前処理 | Reject — **未実装、再評価予定なし** | (なし) |
 | M5b | 検出時 status=dismissed 自動遷移 | Reject — **未実装、status machine 改訂と pair で再評価** | (なし) |
 | M3a | sandbox / container 実行 | Defer — **FeedRadar 側では未実装、user-side dedicated dev container 運用で代替** | (なし、[`docs/user-guide.md`](../user-guide.md) § Security 警告 + ADR-0009 § Defer 理由を参照) |

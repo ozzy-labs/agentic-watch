@@ -34,12 +34,18 @@ const CLI = join(REPO_ROOT, "dist", "index.js");
  */
 async function runCli(
   args: string[],
-  options: { cwd: string; extraPath?: string },
+  options: { cwd: string; extraPath?: string; extraEnv?: Record<string, string> },
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolveProm, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (options.extraPath) {
       env.PATH = `${options.extraPath}:${env.PATH ?? ""}`;
+    }
+    if (options.extraEnv) {
+      // Extra env is layered on top of the inherited process.env so a test
+      // can flip RADAR_FETCH_HOST_ALLOWLIST=127.0.0.1 just for one CLI call
+      // (the SSRF blocklist in src/core/feeds/_fetch.ts is opt-in here).
+      Object.assign(env, options.extraEnv);
     }
     const child = spawn("node", [CLI, ...args], {
       cwd: options.cwd,
@@ -457,7 +463,13 @@ describe("e2e/cli (binary smoke)", () => {
         );
         expect(add.code, `stderr: ${add.stderr}`).toBe(0);
 
-        const watch = await runCli(["watch", "run", "--source", "smoke-rss"], { cwd: workdir });
+        // The shared fetch wrapper enforces an SSRF host blocklist
+        // (ADR-0009 §D5b); the fixture serves on 127.0.0.1 so we have to
+        // opt that loopback host into the allowlist for this test only.
+        const watch = await runCli(["watch", "run", "--source", "smoke-rss"], {
+          cwd: workdir,
+          extraEnv: { RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1" },
+        });
         expect(watch.code, `stderr: ${watch.stderr}\nstdout: ${watch.stdout}`).toBe(0);
         expect(watch.stdout).toMatch(/1 new item\(s\)/);
 

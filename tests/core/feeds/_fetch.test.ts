@@ -4,6 +4,7 @@ import {
   DEFAULT_FETCH_TIMEOUT_MS,
   fetchWithRetry,
   resolveFetchConfig,
+  validateFetchUrl,
 } from "../../../src/core/feeds/_fetch.js";
 import type { FetchLike } from "../../../src/core/feeds/types.js";
 
@@ -252,5 +253,144 @@ describe("core/feeds/_fetch — fetchWithRetry", () => {
     );
     expect(res.status).toBe(500);
     expect(calls).toHaveLength(1);
+  });
+
+  it("rejects a blocked URL before issuing a request (private IP)", async () => {
+    // ADR-0009 §D5b: SSRF host blocklist runs ahead of the retry loop, so
+    // a blocked URL surfaces a single TypeError rather than 3 transient-
+    // looking failures.
+    const { fetch, calls } = makeFetch([]);
+    await expect(
+      fetchWithRetry(fetch, "http://192.168.1.1/admin", {}, { sleep: noSleep, env: {} }),
+    ).rejects.toThrow(/private \/ loopback IPv4 address/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("honors RADAR_FETCH_HOST_ALLOWLIST for the blocklist (testing override)", async () => {
+    // The e2e CLI smoke test serves a fixture from 127.0.0.1; the same
+    // override path needs to work end-to-end through the wrapper.
+    const { fetch, calls } = makeFetch([{ status: 200, body: "ok" }]);
+    const res = await fetchWithRetry(
+      fetch,
+      "http://127.0.0.1:8080/feed.xml",
+      {},
+      { sleep: noSleep, env: { RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1" } },
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("core/feeds/_fetch — validateFetchUrl (ADR-0009 §D5b SSRF blocklist)", () => {
+  it("allows public https URLs", () => {
+    expect(() => validateFetchUrl("https://aws.amazon.com/blogs/", {})).not.toThrow();
+    expect(() => validateFetchUrl("https://api.github.com/repos/o/r/releases", {})).not.toThrow();
+    expect(() => validateFetchUrl("http://example.com/feed.xml", {})).not.toThrow();
+  });
+
+  it("rejects non-HTTP schemes", () => {
+    // `file://` could read arbitrary local files when proxied through an
+    // adapter; data: bypasses retry semantics entirely; gopher: / ftp:
+    // are protocol-confusion vectors.
+    expect(() => validateFetchUrl("file:///etc/passwd", {})).toThrow(/non-HTTP scheme/);
+    expect(() => validateFetchUrl("data:text/plain,hello", {})).toThrow(/non-HTTP scheme/);
+    expect(() => validateFetchUrl("gopher://example.com/", {})).toThrow(/non-HTTP scheme/);
+    expect(() => validateFetchUrl("ftp://example.com/file", {})).toThrow(/non-HTTP scheme/);
+    expect(() => validateFetchUrl("javascript:alert(1)", {})).toThrow(/non-HTTP scheme/);
+  });
+
+  it("rejects IPv4 RFC1918 private ranges", () => {
+    expect(() => validateFetchUrl("http://10.0.0.1/", {})).toThrow(/private/);
+    expect(() => validateFetchUrl("http://10.255.255.255/", {})).toThrow(/private/);
+    expect(() => validateFetchUrl("http://172.16.0.1/", {})).toThrow(/private/);
+    expect(() => validateFetchUrl("http://172.31.255.255/", {})).toThrow(/private/);
+    expect(() => validateFetchUrl("http://192.168.1.1/", {})).toThrow(/private/);
+    expect(() => validateFetchUrl("http://192.168.255.255/", {})).toThrow(/private/);
+  });
+
+  it("rejects IPv4 loopback (127.0.0.0/8) and unspecified (0.0.0.0/8)", () => {
+    expect(() => validateFetchUrl("http://127.0.0.1/", {})).toThrow(/loopback/);
+    expect(() => validateFetchUrl("http://127.99.99.99/", {})).toThrow(/loopback/);
+    expect(() => validateFetchUrl("http://0.0.0.0/", {})).toThrow(/loopback/);
+  });
+
+  it("rejects IPv4 link-local (169.254.0.0/16, AWS metadata)", () => {
+    // 169.254.169.254 is the well-known AWS / GCP / Azure metadata endpoint
+    // — the canonical SSRF-to-IAM-credentials pipeline that this blocklist
+    // is primarily defending against.
+    expect(() => validateFetchUrl("http://169.254.169.254/latest/meta-data/", {})).toThrow(
+      /private/,
+    );
+    expect(() => validateFetchUrl("http://169.254.0.1/", {})).toThrow(/private/);
+  });
+
+  it("rejects 'localhost' and IPv6 localhost aliases", () => {
+    expect(() => validateFetchUrl("http://localhost:8080/", {})).toThrow(/loopback hostname/);
+    expect(() => validateFetchUrl("http://LOCALHOST/", {})).toThrow(/loopback hostname/);
+    expect(() => validateFetchUrl("http://ip6-localhost/", {})).toThrow(/loopback hostname/);
+  });
+
+  it("rejects IPv6 loopback (::1) and unspecified (::)", () => {
+    expect(() => validateFetchUrl("http://[::1]/", {})).toThrow(/IPv6/);
+    expect(() => validateFetchUrl("http://[::]/", {})).toThrow(/IPv6/);
+  });
+
+  it("rejects IPv6 link-local (fe80::/10)", () => {
+    expect(() => validateFetchUrl("http://[fe80::1]/", {})).toThrow(/IPv6/);
+    expect(() => validateFetchUrl("http://[febf::abcd]/", {})).toThrow(/IPv6/);
+  });
+
+  it("rejects IPv6 ULA (fc00::/7)", () => {
+    expect(() => validateFetchUrl("http://[fc00::1]/", {})).toThrow(/IPv6/);
+    expect(() => validateFetchUrl("http://[fd12:3456:789a::1]/", {})).toThrow(/IPv6/);
+  });
+
+  it("rejects IPv4-mapped IPv6 loopback (::ffff:127.0.0.1)", () => {
+    // Without this guard an attacker can sneak past the IPv4 check by
+    // forcing the URL parser into IPv4-mapped form.
+    expect(() => validateFetchUrl("http://[::ffff:127.0.0.1]/", {})).toThrow(/IPv6/);
+    expect(() => validateFetchUrl("http://[::ffff:10.0.0.1]/", {})).toThrow(/IPv6/);
+  });
+
+  it("honors RADAR_FETCH_HOST_ALLOWLIST as comma-separated host literals", () => {
+    expect(() =>
+      validateFetchUrl("http://127.0.0.1:8080/", {
+        RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1",
+      }),
+    ).not.toThrow();
+    // Multiple entries, whitespace tolerated.
+    expect(() =>
+      validateFetchUrl("http://192.168.1.5/", {
+        RADAR_FETCH_HOST_ALLOWLIST: "127.0.0.1, 192.168.1.5 , localhost",
+      }),
+    ).not.toThrow();
+    // IPv6 with or without brackets — both should be accepted.
+    expect(() =>
+      validateFetchUrl("http://[::1]/", { RADAR_FETCH_HOST_ALLOWLIST: "::1" }),
+    ).not.toThrow();
+    expect(() =>
+      validateFetchUrl("http://[::1]/", { RADAR_FETCH_HOST_ALLOWLIST: "[::1]" }),
+    ).not.toThrow();
+  });
+
+  it("still rejects file:// URLs even when an allowlist is set (file:// has no host)", () => {
+    // `file://localhost/etc/passwd` parses to hostname=""; the allowlist
+    // check is by exact host match, so the scheme rejection still fires.
+    // Documenting this: the allowlist is *not* a scheme-bypass for the
+    // empty-host shape that `file://` produces.
+    expect(() =>
+      validateFetchUrl("file://localhost/etc/passwd", {
+        RADAR_FETCH_HOST_ALLOWLIST: "localhost",
+      }),
+    ).toThrow(/non-HTTP scheme/);
+  });
+
+  it("rejects malformed / unparseable URLs", () => {
+    expect(() => validateFetchUrl("not a url", {})).toThrow(/invalid URL/);
+  });
+
+  it("accepts URL objects, not just strings", () => {
+    expect(() => validateFetchUrl(new URL("https://example.com/"), {})).not.toThrow();
+    expect(() => validateFetchUrl(new URL("http://10.0.0.1/"), {})).toThrow(/private/);
   });
 });
