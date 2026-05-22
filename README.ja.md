@@ -33,6 +33,24 @@ npx playwright install chromium
 
 開発中は本リポを clone し、`pnpm install && pnpm run build` で `dist/index.js` を生成して `node dist/index.js <command>` で起動する。
 
+## 企業プロキシ環境
+
+社内 HTTP / HTTPS プロキシ越しでも、標準の env var を export して `radar` を
+起動するだけで自動検出されて動く（CLI フラグ / 設定ファイルの編集は不要）。
+TLS 中継プロキシ (Zscaler / Netskope 等) では証明書検証を切るのではなく
+`NODE_EXTRA_CA_CERTS` を設定する:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example.com:8080
+export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem   # TLS 中継時のみ
+radar doctor                                      # 動作確認
+```
+
+NTLM / Kerberos プロキシは直接対応しない（`cntlm` / `Px` / `Authoxy` で
+ローカル変換）。WSL2 から Windows ホストのプロキシを参照する場合、
+`npm install` 自体のプロキシ設定、`radar doctor` の live healthcheck の
+詳細は [docs/user-guide/proxy-setup.ja.md](./docs/user-guide/proxy-setup.ja.md) を参照。
+
 ## 使い方
 
 ```bash
@@ -100,6 +118,7 @@ src/
 
 - [docs/architecture.md](./docs/architecture.md) — システム全体図 / モジュール責務 / データフロー / Phase 別スコープ
 - [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様
+- [docs/user-guide/proxy-setup.ja.md](./docs/user-guide/proxy-setup.ja.md) — 企業プロキシ / TLS 中継 / NTLM ブリッジ / WSL2 環境のセットアップ
 - [docs/release.md](./docs/release.md) — リリース手順（初回手動 publish + Trusted Publisher 登録 + 以降の OIDC 自動化）
 - [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling）
 
