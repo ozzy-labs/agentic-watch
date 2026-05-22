@@ -270,7 +270,7 @@ function printAddHelp(log: (m: string) => void): void {
   log("");
   log("Options:");
   log(
-    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed",
+    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed | json-api",
   );
   log("  --url <url>              fetch target URL");
   log("  --name <name>            display name (defaults to <id>)");
@@ -285,6 +285,11 @@ function printAddHelp(log: (m: string) => void): void {
   log("                           For kind=html-js, selectors evaluate against the post-JS DOM.");
   log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");
   log("                           via flags; edit sources/<id>.yaml after add. See ADR-0010.");
+  log("");
+  log("                           For kind=json-api, edit sources/<id>.yaml after `add` to set");
+  log(
+    "                           the `pagination:` / `jsonSelectors:` / `http:` blocks (ADR-0012).",
+  );
 }
 
 function printListHelp(log: (m: string) => void): void {
@@ -375,7 +380,7 @@ export async function addSource(
   const kindResult = SourceKindSchema.safeParse(parsed.kind);
   if (!kindResult.success) {
     error(
-      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed)`,
+      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed | json-api)`,
     );
     return 2;
   }

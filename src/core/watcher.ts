@@ -76,6 +76,20 @@ export interface WatchRunOptions extends WorkspacePaths {
    */
   bootstrap?: boolean;
   /**
+   * Backfill mode (ADR-0012 §D4): walk paginated sources to ingest all
+   * available history into items/. Emits items AND updates state, unlike
+   * `bootstrap` which only updates state. Mutually exclusive with
+   * `bootstrap`; the CLI layer enforces the exclusivity, the watcher accepts
+   * whichever flag was passed.
+   */
+  backfill?: boolean;
+  /**
+   * Override the per-source `pagination.maxPages` cap. Threaded straight
+   * through to adapters that paginate (json-api / github-releases /
+   * npm-registry). Only honored when `backfill` is true.
+   */
+  maxPagesOverride?: number;
+  /**
    * Dry-run mode: run the full fetch + filter pipeline but do not persist
    * anything to disk — neither item YAMLs under `items/` nor the updated
    * `state/<sourceId>.yaml`. `WatchRunResult.detected` is still populated
@@ -299,6 +313,9 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       const fetchResult = await adapter.fetch(source, {
         fetch: options.fetch,
         state: previousState,
+        backfill: options.backfill,
+        maxPagesOverride: options.maxPagesOverride,
+        env: options.env,
       });
       fetched = fetchResult.items;
       nextStatePatch = fetchResult.state;

@@ -377,6 +377,98 @@ describe("cli/watch run", () => {
     });
   });
 
+  describe("--backfill (ADR-0012 §D4)", () => {
+    async function writeJsonApiSource(workdir: string, id: string): Promise<void> {
+      await writeFile(
+        join(workdir, "sources", `${id}.yaml`),
+        stringifyYaml({
+          id,
+          kind: "json-api",
+          url: "https://aws.amazon.com/api/dirs/items/search",
+          tags: [],
+          filters: { keywords: ["release"] },
+          pagination: {
+            type: "page",
+            param: "page",
+            start: 0,
+            pageSize: 2,
+            pageSizeParam: "size",
+            maxPages: 20,
+          },
+          jsonSelectors: {
+            items: "$.items[*]",
+            title: "$.title",
+            link: "$.url",
+            publisherId: "$.id",
+          },
+        }),
+        "utf8",
+      );
+    }
+
+    function mockPagedFetch(pages: Array<{ items: number; idStart: number }>): FetchLike {
+      const queue = pages.map(({ items, idStart }) =>
+        JSON.stringify({
+          total: 1000,
+          items: Array.from({ length: items }, (_, i) => ({
+            id: `awn-${idStart + i}`,
+            title: `Release ${idStart + i}`,
+            url: `https://aws.amazon.com/whats-new/${idStart + i}/`,
+          })),
+        }),
+      );
+      let i = 0;
+      return async () => {
+        const body = queue[i++] ?? JSON.stringify({ items: [] });
+        return {
+          status: 200,
+          headers: { get: () => null },
+          text: async () => body,
+        };
+      };
+    }
+
+    it("walks history pages and emits items in --backfill mode", async () => {
+      await writeJsonApiSource(workdir, "aws");
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--backfill", "--max-pages", "3"], {
+        cwd: workdir,
+        io,
+        fetch: mockPagedFetch([
+          { items: 2, idStart: 1 },
+          { items: 2, idStart: 3 },
+          { items: 1, idStart: 5 },
+        ]) as never,
+      });
+      expect(code).toBe(0);
+      const itemDir = join(workdir, "items", "aws");
+      const itemFiles = await readdir(itemDir);
+      expect(itemFiles.length).toBe(5);
+      expect(captured.log.some((m) => m.includes("backfill complete"))).toBe(true);
+    });
+
+    it("rejects --backfill + --bootstrap as mutually exclusive", async () => {
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--backfill", "--bootstrap"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("mutually exclusive"))).toBe(true);
+    });
+
+    it("rejects --max-pages without --backfill", async () => {
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--max-pages", "5"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("requires --backfill"))).toBe(true);
+    });
+
+    it("rejects --max-pages with non-numeric value", async () => {
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--backfill", "--max-pages", "abc"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("positive integer"))).toBe(true);
+    });
+  });
+
   it("leaves injectionFlags empty for benign content", async () => {
     await writeSource(workdir, "blog");
     const { io } = captureIo();

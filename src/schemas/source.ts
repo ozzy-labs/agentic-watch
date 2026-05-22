@@ -7,6 +7,7 @@ export const SourceKindSchema = z.enum([
   "github-releases",
   "npm-registry",
   "json-feed",
+  "json-api",
 ]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
 
@@ -110,6 +111,99 @@ export const SourceJsOptionsSchema = z.object({
 export type SourceJsOptions = z.infer<typeof SourceJsOptionsSchema>;
 
 /**
+ * HTTP options for `kind: json-api` sources (ADR-0012 §D2).
+ *
+ * Phase 1 supports GET only. `headers` accepts arbitrary key/value pairs and
+ * supports `${VAR}` env-var interpolation (resolved by the adapter, never
+ * persisted to log / frontmatter — see ADR-0012 §D5c).
+ *
+ * The schema deliberately does not validate header values against env names —
+ * the adapter handles unresolved `${VAR}` placeholders by omitting the header
+ * (degraded fetch). This lets public APIs work without env wiring while
+ * authenticated APIs fail-fast with a 401/403 at runtime.
+ */
+export const SourceHttpOptionsSchema = z.object({
+  method: z.literal("GET").default("GET"),
+  headers: z.record(z.string(), z.string()).default({}),
+});
+export type SourceHttpOptions = z.infer<typeof SourceHttpOptionsSchema>;
+
+/**
+ * Pagination configuration for `kind: json-api` sources (ADR-0012 §D2).
+ *
+ * Five wire formats are supported:
+ *
+ *   page         — `?page=K&pageSize=N` (e.g. AWS What's New, dev.to)
+ *   offset       — `?offset=K&limit=N`
+ *   cursor       — `?after=<cursorValue>` with `nextCursor` extracted via JSONPath
+ *   link-header  — `Link: <...>; rel="next"` HTTP header
+ *   token        — `?pageToken=<opaque>` opaque continuation token
+ *   none         — single request, no pagination
+ *
+ * `maxPages` is a hard cap to prevent runaway loops / DoS on misconfigured
+ * recipes. The default (20) matches a conservative bound for normal-mode
+ * fetching; `--backfill` can override via `--max-pages` to walk further.
+ *
+ * `nextCursorPath` / `totalPath` are JSONPath-lite expressions resolved against
+ * the parsed response body. `totalPath` is consulted in backfill mode to
+ * compute an upper bound on pages and short-circuit early when the total is
+ * known.
+ */
+export const SourcePaginationSchema = z.object({
+  type: z.enum(["page", "offset", "cursor", "link-header", "token", "none"]),
+  /**
+   * Query parameter name for the page / offset / token (e.g. `page`, `offset`,
+   * `after`, `pageToken`). Required for `page` / `offset` / `cursor` / `token`;
+   * ignored for `link-header` / `none`.
+   */
+  param: z.string().min(1).optional(),
+  /** Initial value (e.g. 0 for offset, 1 for page-number, undefined for cursor/token). */
+  start: z.number().int().optional(),
+  /** Items per page (e.g. 100 for AWS, 30 for dev.to). */
+  pageSize: z.number().int().positive().optional(),
+  /** Query parameter name for the page-size value. Defaults to `pageSize` when present. */
+  pageSizeParam: z.string().min(1).optional(),
+  /** JSONPath-lite to the next-cursor / next-token value in the response body. */
+  nextCursorPath: z.string().min(1).optional(),
+  /** JSONPath-lite to the total-count value in the response body (backfill-mode early-stop hint). */
+  totalPath: z.string().min(1).optional(),
+  /** Hard cap on pages traversed. Default 20 (normal mode); `--max-pages` overrides in backfill. */
+  maxPages: z.number().int().positive().default(20),
+});
+export type SourcePagination = z.infer<typeof SourcePaginationSchema>;
+
+/**
+ * Selector ruleset for `kind: json-api` sources (ADR-0012 §D2).
+ *
+ * Every selector is a JSONPath-lite expression (`src/core/feeds/_jsonpath.ts`).
+ *
+ * - `items` extracts the per-item list from the response. When omitted the
+ *   adapter falls back to a default selector chain
+ *   (`$.items[*] || $.data[*] || $.results[*] || $.posts[*] || $.entries[*] || $[*]`).
+ * - `title` is required to derive a slug-friendly `Item.id`.
+ * - `link` is required because `Item.url` is the only field every downstream
+ *   consumer (research / review / dedup) depends on.
+ * - `publisherId` is preferred for stable id derivation; the adapter falls
+ *   back to `link` URL when omitted.
+ * - `summary` / `publishedAt` / `body` / `tags` are optional.
+ *
+ * Note that selectors are evaluated against each item element (already
+ * dereferenced via `items`), so paths inside this schema commonly use `$` as
+ * the per-item root (e.g. `$.title`, `$.created_at`).
+ */
+export const SourceJsonApiSelectorsSchema = z.object({
+  items: z.string().min(1).optional(),
+  title: z.string().min(1),
+  link: z.string().min(1),
+  publisherId: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+  publishedAt: z.string().min(1).optional(),
+  body: z.string().min(1).optional(),
+  tags: z.string().min(1).optional(),
+});
+export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema>;
+
+/**
  * Validate `Source.url` per kind.
  *
  * Every kind except `npm-registry` requires a fully-qualified `http(s)` URL.
@@ -153,6 +247,13 @@ export const SourceSchema = z
     // existing source YAMLs (and `kind: html` ones) parse unchanged; the
     // adapter applies defaults when the field is omitted entirely.
     js: SourceJsOptionsSchema.optional(),
+    // `http` / `pagination` / `jsonSelectors` are consulted only by the
+    // `json-api` adapter (ADR-0012). Marked optional so existing source YAMLs
+    // and other kinds parse unchanged. The `jsonSelectors` name disambiguates
+    // from the css-selector `selectors` field that html / html-js use.
+    http: SourceHttpOptionsSchema.optional(),
+    pagination: SourcePaginationSchema.optional(),
+    jsonSelectors: SourceJsonApiSelectorsSchema.optional(),
     // `trustLevel` defaults to `"untrusted"` so existing source YAMLs (which
     // omit the field entirely) keep their current treatment. Per ADR-0009 M4
     // this is schema-only; policy branches that read `trustLevel` arrive in a
@@ -173,6 +274,22 @@ export const SourceSchema = z
         path: ["selectors"],
         message: `selectors is required when kind is '${value.kind}'`,
       });
+    }
+    if (value.kind === "json-api") {
+      if (value.jsonSelectors === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["jsonSelectors"],
+          message: "jsonSelectors is required when kind is 'json-api'",
+        });
+      }
+      if (value.pagination === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["pagination"],
+          message: "pagination is required when kind is 'json-api'",
+        });
+      }
     }
   });
 export type Source = z.infer<typeof SourceSchema>;
