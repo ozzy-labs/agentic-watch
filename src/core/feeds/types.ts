@@ -1,4 +1,5 @@
 import type { Item, Source, SourceState } from "../../schemas/index.js";
+import type { ProgressReporter } from "../progress.js";
 
 /**
  * Minimal `fetch` signature an adapter needs.
@@ -120,6 +121,43 @@ export interface FeedAdapterOptions {
    * a no-op when unset.
    */
   warn?: (message: string) => void;
+  /**
+   * Optional progress reporter for long-running fetches (ADR-0015 D3 / #198).
+   *
+   * - `kind: html-js` calls `phase()` around Playwright Chromium lifecycle
+   *   (`Launching Chromium…` / `Navigating to <url>…` / `Waiting for
+   *   selector "<sel>" (timeout: <ms>ms)…` / `Capturing page content…` /
+   *   `Closing browser…`).
+   * - `kind: json-api` in `--backfill` mode fires page-level progress via
+   *   {@link FeedAdapterOptions.onPage} (see below) and uses `phase()` for
+   *   one-shot start/stop markers.
+   * - Other adapters (rss / atom / html / github-releases / npm-registry)
+   *   currently ignore the reporter — fetches complete in a single
+   *   short-lived HTTP round trip with no meaningful intermediate phase.
+   *
+   * Unset is byte-equivalent to the pre-#198 behaviour (no progress output).
+   */
+  onProgress?: ProgressReporter;
+  /**
+   * Per-page progress callback for paginating adapters (json-api / future
+   * github-releases / npm-registry). Fired after each page is fetched and
+   * normalized so the watcher / CLI can update a `Page <i>/<n>: <items>`
+   * spinner row without the adapter needing to know about the
+   * `ProgressReporter` shape.
+   *
+   * - `pageIndex` is 0-based (page 0 = the first response).
+   * - `pageTotal` is the recipe-implied cap (`pagination.maxPages` or
+   *   `--max-pages`); when `totalPath` resolves on page 0 it tightens
+   *   further so the user sees a meaningful denominator instead of the
+   *   conservative cap.
+   * - `items` is the count of items extracted from this page (post-schema
+   *   validation, pre-filter / pre-dedup).
+   *
+   * Unset means no per-page callback. Independent of `onProgress`: callers
+   * that want the spinner but not per-page metrics can wire one and not the
+   * other.
+   */
+  onPage?: (info: { pageIndex: number; pageTotal: number; items: number }) => void;
 }
 
 export interface FeedAdapter {

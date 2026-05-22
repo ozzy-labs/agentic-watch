@@ -16,6 +16,7 @@ import {
   type ProbeOptions,
   probePlaywright,
 } from "./playwright-check.js";
+import type { ProgressReporter } from "./progress.js";
 import { loadSourceState, saveSourceState } from "./state.js";
 
 async function pathExists(p: string): Promise<boolean> {
@@ -124,6 +125,17 @@ export interface WatchRunOptions extends WorkspacePaths {
    * records invocation without actually spawning `npx playwright install`.
    */
   installChromiumImpl?: typeof installChromium;
+  /**
+   * Optional progress reporter for per-source fetch phases (#198 /
+   * ADR-0015). The watcher gates wiring on a heuristic
+   * ({@link shouldEnableProgress}) so the typical small / fast workspace
+   * never sees flicker: progress is enabled only when at least 3 sources
+   * run together OR any source uses a slow kind (`html-js` / `json-api`).
+   *
+   * When the reporter is unset (or the heuristic is off) every source runs
+   * with no progress wiring — byte-equivalent to the pre-#198 behaviour.
+   */
+  progress?: ProgressReporter;
 }
 
 export interface WatchRunResult {
@@ -209,6 +221,37 @@ export async function loadSources(
 }
 
 /**
+ * Heuristic: should the watcher actively report per-source progress to the
+ * supplied {@link ProgressReporter}?
+ *
+ * The typical small workspace (1-2 RSS sources, ~3 seconds end-to-end)
+ * gains nothing from a spinner that flashes in and out faster than the eye
+ * can track. We therefore enable progress only when:
+ *
+ * 1. There are 3 or more sources to fetch in this run — at that scale the
+ *    user wants per-source orientation as the loop iterates, OR
+ * 2. Any source uses a slow kind — `html-js` (Playwright launch + render =
+ *    seconds-to-tens-of-seconds) or `json-api` in `--backfill` mode
+ *    (~80 page traversal). Even a single one of these makes the per-source
+ *    indicator worth the noise.
+ *
+ * The heuristic is intentionally NOT user-configurable (ADR-0015 D5 /
+ * issue #198 note). `--quiet` / `RADAR_NO_PROGRESS=1` are the documented
+ * escape hatches when even the heuristic-on output is undesirable.
+ *
+ * Exported so the watcher / CLI can share one definition; tests pin
+ * behaviour against this single source of truth.
+ */
+export function shouldEnableProgress(sources: Source[], backfill: boolean): boolean {
+  if (sources.length >= 3) return true;
+  for (const s of sources) {
+    if (s.kind === "html-js") return true;
+    if (s.kind === "json-api" && backfill) return true;
+  }
+  return false;
+}
+
+/**
  * Execute one full watch cycle.
  *
  * Per source:
@@ -252,6 +295,15 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     stats: {},
     diag: {},
   };
+
+  // Heuristic gate: only wire the reporter when the run is worth narrating.
+  // Without this guard, `radar watch run` on a 1-source RSS workspace would
+  // spam the spinner for ~3 seconds straight with no informational value.
+  // `options.progress` being unset already means no output regardless.
+  const progress =
+    options.progress && shouldEnableProgress(filtered, options.backfill === true)
+      ? options.progress
+      : undefined;
 
   // Lazy Playwright probe cache. We only run the probe when the first
   // `html-js` source comes up so RSS / GitHub / npm-only workspaces never pay
@@ -326,6 +378,14 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     let fetched: Item[];
     let nextStatePatch: Partial<SourceState>;
     let notModified = false;
+    // Per-source phase markers (#198). `Fetching…` is the start-of-source
+    // boundary the user sees in the spinner; the adapter may emit its own
+    // sub-phases (html-js Chromium lifecycle, json-api page x/n) between
+    // here and `Completed`. Side metrics for the spinner row default to
+    // the source kind so even non-paginating adapters surface useful info.
+    progress?.phase(`[${source.id}] Fetching…`, `kind: ${source.kind}`);
+    progress?.start(`[${source.id}] ${source.kind}`);
+    const sourceStartedAt = Date.now();
     try {
       const fetchResult = await adapter.fetch(source, {
         fetch: options.fetch,
@@ -341,6 +401,24 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
         // json-api, etc.) through the same warn sink we use for
         // schema-mismatch / playwright-skip messages.
         warn: (m) => warn(`watch run: ${m}`),
+        // Forward the source-scoped reporter so adapter phases nest under
+        // the parent `[<source-id>] …` marker. html-js uses it for the
+        // Chromium lifecycle; other kinds currently ignore it.
+        onProgress: progress,
+        // Per-page hook for paginating adapters (json-api). We translate
+        // each page event into a phase marker so non-TTY logs preserve the
+        // narrative ("Page 3/80: 100 items") and TTY rows pick up the
+        // metric on the spinner.
+        onPage: progress
+          ? ({ pageIndex, pageTotal, items: pageItems }) => {
+              const human = `Page ${pageIndex + 1}/${pageTotal}: ${pageItems} items fetched`;
+              progress.phase(`[${source.id}] ${human}`);
+              progress.update({
+                page: `${pageIndex + 1}/${pageTotal}`,
+                items: String(pageItems),
+              });
+            }
+          : undefined,
       });
       fetched = fetchResult.items;
       nextStatePatch = fetchResult.state;
@@ -350,6 +428,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      progress?.fail(`[${source.id}] Failed`, message);
       error(`watch run: '${source.id}' fetch failed: ${message}`);
       result.errors.push({ sourceId: source.id, message });
       continue;
@@ -437,6 +516,20 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     result.detected[source.id] = detectedItems;
     result.states[source.id] = nextState;
     result.stats[source.id] = { fetched: fetched.length, filtered: filteredCount };
+
+    // Per-source completion phase. We use the reporter's `succeed()` so the
+    // spinner row stops cleanly and the user gets a single summary line
+    // (`[<source-id>] Completed: <items> total, <new> new (<duration>)`).
+    // The legacy plain log lines further up the loop are intentionally
+    // preserved (acceptance criterion #7) so scripts that grep stdout
+    // continue to work.
+    if (progress) {
+      const duration = Date.now() - sourceStartedAt;
+      progress.succeed(
+        `[${source.id}] Completed: ${fetched.length} total, ${detectedItems.length} new`,
+        duration,
+      );
+    }
   }
 
   return result;

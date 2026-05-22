@@ -566,3 +566,142 @@ describe("html-js adapter — real Chromium render", () => {
     expect(result.items[1]?.title).toBe("SPA Two");
   });
 });
+
+describe("html-js adapter — progress reporter phase markers (#198)", () => {
+  function recordingReporter() {
+    const phases: Array<{ name: string; info?: string }> = [];
+    return {
+      phases,
+      reporter: {
+        phase: (name: string, info?: string) => {
+          phases.push({ name, info });
+        },
+        start: () => {},
+        update: () => {},
+        succeed: () => {},
+        fail: () => {},
+        raw: () => {},
+      },
+    };
+  }
+
+  it("emits the documented Playwright lifecycle phase markers in order", async () => {
+    const { playwright } = makeFakePlaywright();
+    const { reporter, phases } = recordingReporter();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      onProgress: reporter,
+    } as HtmlJsAdapterOptions);
+    const names = phases.map((p) => p.name);
+    // Order matters: the user-guide and ADR-0015 D4 both pin the
+    // Launching → Navigating → Waiting → Capturing → Closing sequence.
+    expect(names).toEqual([
+      "Launching Chromium…",
+      "Navigating to https://example.com/changelog…",
+      'Waiting for selector "article.post" (timeout: 30000ms)…',
+      "Capturing page content…",
+      "Closing browser…",
+    ]);
+  });
+
+  it("emits Still waiting reminder when waitForSelector exceeds stillWaitingMs", async () => {
+    vi.useFakeTimers();
+    try {
+      const { playwright } = makeFakePlaywright();
+      // Override waitForSelector to never resolve until we advance the
+      // fake clock past the threshold; this lets us assert the reminder
+      // fires without burning real time.
+      const realLaunch = playwright.chromium.launch;
+      playwright.chromium.launch = async (opts) => {
+        const browser = await realLaunch.call(playwright.chromium, opts);
+        const realNewContext = browser.newContext.bind(browser);
+        browser.newContext = async (ctxOpts) => {
+          const ctx = await realNewContext(ctxOpts);
+          const realNewPage = ctx.newPage.bind(ctx);
+          ctx.newPage = async () => {
+            const page = await realNewPage();
+            page.waitForSelector = async (_sel: string, _opts?: { timeout?: number }) => {
+              // Hold the selector wait open for 50 fake-ms so the
+              // setTimeout(stillWaitingMs=10ms) callback gets a chance to
+              // fire before we resolve.
+              await new Promise<void>((resolve) => {
+                setTimeout(resolve, 50);
+              });
+              return null;
+            };
+            return page;
+          };
+          return ctx;
+        };
+        return browser;
+      };
+      const { reporter, phases } = recordingReporter();
+      const fetchPromise = htmlJsAdapter.fetch(makeSource(), {
+        playwright,
+        onProgress: reporter,
+        stillWaitingMs: 10,
+      } as HtmlJsAdapterOptions);
+      // Advance through the still-waiting threshold THEN the selector wait.
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(40);
+      await fetchPromise;
+      const stillWaitingHits = phases.filter((p) => p.name.startsWith("Still waiting"));
+      expect(stillWaitingHits.length).toBeGreaterThanOrEqual(1);
+      // The reminder embeds the selector verbatim so the user can tell
+      // which wait is hanging when multiple are nested.
+      expect(stillWaitingHits[0]?.name).toContain('"article.post"');
+      // Reminder must include the elapsed-time prefix [mm:ss] so the user
+      // can gauge whether to wait or Ctrl+C.
+      expect(stillWaitingHits[0]?.name).toMatch(/\[\d{2}:\d{2}\]/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not emit Still waiting when selector resolves before threshold", async () => {
+    // Default fake Playwright resolves waitForSelector immediately; the
+    // 10s default threshold (or any positive value) must NOT fire when
+    // the wait completes synchronously.
+    const { playwright } = makeFakePlaywright();
+    const { reporter, phases } = recordingReporter();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      onProgress: reporter,
+      stillWaitingMs: 10,
+    } as HtmlJsAdapterOptions);
+    expect(phases.some((p) => p.name.startsWith("Still waiting"))).toBe(false);
+  });
+
+  it("still emits Closing browser when waitForSelector throws", async () => {
+    // Closure invariant: the `Closing browser…` marker is in a `finally`
+    // and must fire even on timeout / selector failure, so the user sees
+    // a clean end-of-fetch boundary in the spinner.
+    const { playwright } = makeFakePlaywright();
+    const realLaunch = playwright.chromium.launch;
+    playwright.chromium.launch = async (opts) => {
+      const browser = await realLaunch.call(playwright.chromium, opts);
+      const realNewContext = browser.newContext.bind(browser);
+      browser.newContext = async (ctxOpts) => {
+        const ctx = await realNewContext(ctxOpts);
+        const realNewPage = ctx.newPage.bind(ctx);
+        ctx.newPage = async () => {
+          const page = await realNewPage();
+          page.waitForSelector = async () => {
+            throw new Error("Timeout 30000ms exceeded.");
+          };
+          return page;
+        };
+        return ctx;
+      };
+      return browser;
+    };
+    const { reporter, phases } = recordingReporter();
+    await expect(
+      htmlJsAdapter.fetch(makeSource(), {
+        playwright,
+        onProgress: reporter,
+      } as HtmlJsAdapterOptions),
+    ).rejects.toThrow(/Timeout/);
+    expect(phases.map((p) => p.name)).toContain("Closing browser…");
+  });
+});

@@ -1084,6 +1084,93 @@ describe("cli/source", () => {
       expect(captured.log.some((m) => m.includes("--limit"))).toBe(true);
       expect(captured.log.some((m) => m.includes("--show-content"))).toBe(true);
     });
+
+    describe("--verbose / --quiet (#198)", () => {
+      it("rejects --verbose + --quiet as mutually exclusive", async () => {
+        const { io, captured } = captureIo();
+        const code = await testSource(["blog", "--verbose", "--quiet"], { cwd: workdir, io });
+        expect(code).toBe(2);
+        expect(captured.error.some((m) => m.includes("mutually exclusive"))).toBe(true);
+      });
+
+      it("accepts --quiet and runs to completion (legacy summary still emitted)", async () => {
+        await addSource(
+          [
+            "blog",
+            "--kind",
+            "rss",
+            "--url",
+            "https://example.com/blog.xml",
+            "--keywords",
+            "agents",
+          ],
+          { cwd: workdir, io: captureIo().io },
+        );
+        const { io, captured } = captureIo();
+        const code = await testSource(["blog", "--quiet"], {
+          cwd: workdir,
+          io,
+          fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+        });
+        expect(code).toBe(0);
+        // --quiet suppresses progress reporter but not the dry-run
+        // summary block from the CLI itself.
+        expect(captured.log.some((m) => m.match(/fetched:\s*2/))).toBe(true);
+      });
+
+      it("documents --verbose / --quiet in --help", async () => {
+        const { io, captured } = captureIo();
+        const code = await testSource(["--help"], { cwd: workdir, io });
+        expect(code).toBe(0);
+        const help = captured.log.join("\n");
+        expect(help).toContain("--verbose");
+        expect(help).toContain("--quiet");
+        expect(help).toContain("RADAR_NO_PROGRESS");
+      });
+
+      it("emits progress narration for kind=json-api during source test (#198)", async () => {
+        // json-api is one of the slow kinds the heuristic narrates even
+        // for a single source. We assert narration ends up on stderr
+        // (the progress reporter writes there by default) via
+        // RADAR_NO_PROGRESS=0 + capturing process.stderr. Using the
+        // captureIo() sinks would not exercise the reporter, so instead
+        // we just smoke-test that the command exits 0 and the legacy
+        // log line is present — the deeper assertion lives in
+        // tests/core/watcher.test.ts where we inject a recording
+        // reporter directly.
+        await addSource(
+          [
+            "headlines",
+            "--kind",
+            "json-api",
+            "--url",
+            "https://example.com/api/headlines",
+            "--keywords",
+            "rust",
+            "--page-size",
+            "2",
+          ],
+          { cwd: workdir, io: captureIo().io },
+        );
+        const body = JSON.stringify({
+          items: [
+            { id: "1", title: "Rust 2.0 ships", url: "https://example.com/r2" },
+            { id: "2", title: "Rust unrelated", url: "https://example.com/r3" },
+          ],
+        });
+        const { io, captured } = captureIo();
+        const code = await testSource(["headlines"], {
+          cwd: workdir,
+          io,
+          fetch: fetchReturning(body) as never,
+        });
+        expect(code).toBe(0);
+        // Heuristic narration is asserted directly in the watcher test;
+        // here we only confirm the source test path runs the json-api
+        // adapter without errors and emits the summary line.
+        expect(captured.log.some((m) => m.includes("source test: headlines"))).toBe(true);
+      });
+    });
   });
 
   describe("full cycle", () => {

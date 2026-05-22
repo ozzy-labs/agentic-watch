@@ -469,6 +469,39 @@ describe("cli/watch run", () => {
     });
   });
 
+  describe("--verbose / --quiet (#198)", () => {
+    it("rejects --verbose + --quiet as mutually exclusive", async () => {
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--verbose", "--quiet"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("mutually exclusive"))).toBe(true);
+    });
+
+    it("accepts --quiet without error and still runs the watcher", async () => {
+      // --quiet only suppresses the progress reporter; the legacy 1-line
+      // log path remains and the run completes normally.
+      await writeSource(workdir, "blog");
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--quiet"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("1 new"))).toBe(true);
+    });
+
+    it("documents the flags in --help output", async () => {
+      const { io, captured } = captureIo();
+      const code = await runWatch(["--help"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      const help = captured.log.join("\n");
+      expect(help).toContain("--verbose");
+      expect(help).toContain("--quiet");
+      expect(help).toContain("RADAR_NO_PROGRESS");
+    });
+  });
+
   it("leaves injectionFlags empty for benign content", async () => {
     await writeSource(workdir, "blog");
     const { io } = captureIo();

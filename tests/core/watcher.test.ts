@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { FetchLike } from "../../src/core/feeds/types.js";
-import { watchRun } from "../../src/core/watcher.js";
+import type { ProgressReporter } from "../../src/core/progress.js";
+import { shouldEnableProgress, watchRun } from "../../src/core/watcher.js";
+import type { Source } from "../../src/schemas/index.js";
 
 /**
  * Tests for the `dryRun` option on `watchRun` (#132 / parent epic #129).
@@ -210,5 +212,260 @@ describe("watchRun dryRun option", () => {
     const state = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
     expect(state).toContain("lastEtag: '\"v1\"'");
     expect(state).toContain("lastSeenIds:");
+  });
+});
+
+function makeSourceLite(kind: Source["kind"], id = "x"): Source {
+  // Minimal `Source` shaped enough to feed `shouldEnableProgress`. We
+  // intentionally do NOT round-trip through `SourceSchema.parse` here
+  // because the heuristic only reads `kind`, and the other fields would
+  // pull in fixture sprawl unrelated to the assertion under test.
+  return {
+    id,
+    kind,
+    url: "https://example.com",
+    tags: [],
+    filters: {
+      keywords: [],
+      excludeKeywords: [],
+      matchMode: "word",
+      matchFields: ["title", "summary"],
+      caseSensitive: false,
+    },
+    trustLevel: "untrusted",
+  } as Source;
+}
+
+describe("shouldEnableProgress (heuristic, #198)", () => {
+  it("returns false for 1-2 fast-kind sources (typical small workspace)", () => {
+    expect(shouldEnableProgress([makeSourceLite("rss")], false)).toBe(false);
+    expect(shouldEnableProgress([makeSourceLite("rss"), makeSourceLite("html", "b")], false)).toBe(
+      false,
+    );
+  });
+
+  it("returns true once 3 or more sources are queued", () => {
+    expect(
+      shouldEnableProgress(
+        [makeSourceLite("rss", "a"), makeSourceLite("rss", "b"), makeSourceLite("rss", "c")],
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true for any html-js source regardless of count", () => {
+    expect(shouldEnableProgress([makeSourceLite("html-js")], false)).toBe(true);
+    expect(
+      shouldEnableProgress([makeSourceLite("rss", "a"), makeSourceLite("html-js", "b")], false),
+    ).toBe(true);
+  });
+
+  it("returns true for json-api in --backfill mode but not in normal mode", () => {
+    expect(shouldEnableProgress([makeSourceLite("json-api")], true)).toBe(true);
+    // Normal mode: a single json-api fetch is fast (1 page) so the
+    // heuristic stays off until the 3-source threshold trips.
+    expect(shouldEnableProgress([makeSourceLite("json-api")], false)).toBe(false);
+  });
+});
+
+describe("watchRun progress integration (#198)", () => {
+  let workdir: string;
+
+  beforeEach(async () => {
+    workdir = await mkdtemp(join(tmpdir(), "feedradar-watcher-progress-"));
+    await mkdir(join(workdir, "sources"), { recursive: true });
+    await mkdir(join(workdir, "state"), { recursive: true });
+    await mkdir(join(workdir, "items"), { recursive: true });
+  });
+
+  function recordingReporter() {
+    const events: Array<{ kind: string; arg1?: string; arg2?: string | number }> = [];
+    const reporter: ProgressReporter = {
+      phase: (name, info) => {
+        events.push({ kind: "phase", arg1: name, arg2: info });
+      },
+      start: (label) => {
+        events.push({ kind: "start", arg1: label });
+      },
+      update: (metrics) => {
+        events.push({ kind: "update", arg1: JSON.stringify(metrics) });
+      },
+      succeed: (label, duration) => {
+        events.push({ kind: "succeed", arg1: label, arg2: duration });
+      },
+      fail: (label, reason) => {
+        events.push({ kind: "fail", arg1: label, arg2: reason });
+      },
+      raw: () => {},
+    };
+    return { reporter, events };
+  }
+
+  async function writeJsonApiSource(id: string): Promise<void> {
+    await writeFile(
+      join(workdir, "sources", `${id}.yaml`),
+      [
+        `id: ${id}`,
+        "kind: json-api",
+        "url: https://example.com/api",
+        "tags: []",
+        "filters:",
+        "  keywords:",
+        "    - release",
+        "pagination:",
+        "  type: page",
+        "  param: page",
+        "  start: 0",
+        "  pageSize: 2",
+        "  maxPages: 5",
+        "jsonSelectors:",
+        "  items: $.items[*]",
+        "  title: $.title",
+        "  link: $.url",
+        "  publisherId: $.id",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+  }
+
+  function mockPagedFetch(pages: Array<{ items: number; idStart: number }>): FetchLike {
+    const queue = pages.map(({ items, idStart }) =>
+      JSON.stringify({
+        items: Array.from({ length: items }, (_, i) => ({
+          id: `r-${idStart + i}`,
+          title: `release ${idStart + i}`,
+          url: `https://example.com/r/${idStart + i}`,
+        })),
+      }),
+    );
+    let i = 0;
+    return async () => {
+      const body = queue[i++] ?? JSON.stringify({ items: [] });
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => body,
+      };
+    };
+  }
+
+  it("emits per-page phase markers during --backfill on a json-api source", async () => {
+    await writeJsonApiSource("aws");
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 3,
+      fetch: mockPagedFetch([
+        { items: 2, idStart: 1 },
+        { items: 2, idStart: 3 },
+        { items: 1, idStart: 5 },
+      ]) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+    });
+    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    // Per-source start marker.
+    expect(phaseNames).toContain("[aws] Fetching…");
+    // One Page X/Y marker per fetched page (3 pages here).
+    const pageMarkers = phaseNames.filter((n) => n.startsWith("[aws] Page "));
+    expect(pageMarkers).toEqual([
+      "[aws] Page 1/3: 2 items fetched",
+      "[aws] Page 2/3: 2 items fetched",
+      "[aws] Page 3/3: 1 items fetched",
+    ]);
+    // Per-source completion goes through succeed() so the spinner row
+    // stops cleanly.
+    const succeed = events.find((e) => e.kind === "succeed");
+    expect(succeed?.arg1).toContain("[aws] Completed:");
+    expect(succeed?.arg1).toContain("5 total");
+    expect(succeed?.arg1).toContain("5 new");
+  });
+
+  it("no-ops when the heuristic is off (single rss source, no backfill)", async () => {
+    // Single rss source ≠ html-js/json-api ≠ 3+ sources: the heuristic
+    // gate must drop the reporter so the typical small workspace stays
+    // clean even when the CLI happened to construct a reporter.
+    await writeSource(workdir, "blog");
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+    });
+    // Zero events — the watcher never invoked the reporter because the
+    // run was too small to narrate.
+    expect(events).toEqual([]);
+  });
+
+  it("RADAR_NO_PROGRESS=1 produces a no-op reporter whose stream stays empty", async () => {
+    // End-to-end proof of the ADR-0015 D2 env escape hatch: feed the
+    // CLI's own `createProgressReporter()` factory into the watcher
+    // with the env flag set, and assert the writable stream receives
+    // zero bytes even though the heuristic-eligible json-api source
+    // would otherwise narrate per page.
+    const { createProgressReporter } = await import("../../src/core/progress.js");
+    await writeJsonApiSource("aws");
+    const io = silentIo();
+    const chunks: string[] = [];
+    const stream = {
+      write(data: string | Uint8Array): boolean {
+        chunks.push(typeof data === "string" ? data : Buffer.from(data).toString());
+        return true;
+      },
+    } as NodeJS.WritableStream;
+    const prev = process.env.RADAR_NO_PROGRESS;
+    process.env.RADAR_NO_PROGRESS = "1";
+    try {
+      const reporter = createProgressReporter({ level: "normal", tty: true, stream });
+      await watchRun({
+        cwd: workdir,
+        backfill: true,
+        maxPagesOverride: 1,
+        fetch: mockPagedFetch([{ items: 1, idStart: 0 }]) as never,
+        log: io.log,
+        warn: io.warn,
+        error: io.error,
+        progress: reporter,
+      });
+      // No bytes written to the reporter stream — the no-op reporter
+      // discarded everything despite the heuristic being on.
+      expect(chunks.join("")).toBe("");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.RADAR_NO_PROGRESS;
+      } else {
+        process.env.RADAR_NO_PROGRESS = prev;
+      }
+    }
+  });
+
+  it("preserves the legacy 1-line log even when progress is enabled (#198 ac#7)", async () => {
+    // Acceptance criterion 7: existing 1-line logs must remain so users
+    // who scripted around them are not broken. We pin this by enabling
+    // the reporter AND asserting the legacy line still appears.
+    await writeJsonApiSource("aws");
+    const logs: string[] = [];
+    const { reporter } = recordingReporter();
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 1,
+      fetch: mockPagedFetch([{ items: 1, idStart: 0 }]) as never,
+      log: (m) => logs.push(m),
+      warn: () => {},
+      error: () => {},
+      progress: reporter,
+    });
+    // Legacy 1-line per source summary.
+    expect(logs.some((m) => m.includes("'aws' fetched 1 items"))).toBe(true);
   });
 });

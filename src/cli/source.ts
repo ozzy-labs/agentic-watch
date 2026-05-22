@@ -2,6 +2,7 @@ import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { FetchLike } from "../core/feeds/types.js";
+import { createProgressReporter, type ProgressLevel } from "../core/progress.js";
 import {
   listRecipes,
   loadRecipe,
@@ -320,6 +321,13 @@ interface TestArgs {
   limit?: number;
   /** `--show-content` toggle for printing first 200 chars of the body. */
   showContent?: boolean;
+  /**
+   * Progress verbosity flags (#198 / ADR-0015 D2). Mirror `radar watch
+   * run`: `--verbose` enables stdout pass-through, `--quiet` suppresses
+   * the progress reporter entirely. Mutually exclusive.
+   */
+  verbose?: boolean;
+  quiet?: boolean;
   help?: boolean;
 }
 
@@ -352,6 +360,14 @@ function parseTestArgs(args: string[]): TestArgs {
       out.showContent = true;
       continue;
     }
+    if (a === "--verbose" || a === "-v") {
+      out.verbose = true;
+      continue;
+    }
+    if (a === "--quiet" || a === "-q") {
+      out.quiet = true;
+      continue;
+    }
     if (a?.startsWith("--")) {
       throw new Error(`unknown option: ${a}`);
     }
@@ -360,6 +376,9 @@ function parseTestArgs(args: string[]): TestArgs {
       continue;
     }
     throw new Error(`unexpected positional argument: ${a}`);
+  }
+  if (out.verbose && out.quiet) {
+    throw new Error("--verbose and --quiet are mutually exclusive");
   }
   return out;
 }
@@ -472,6 +491,10 @@ function printTestHelp(log: (m: string) => void): void {
   log("  --show-content   Also print the first 200 chars of each item's body, plus");
   log("                   (kind=json-api) the selector adoption table and pagination");
   log("                   preview (would-be next URL / Link header / nextCursor).");
+  log("  -v, --verbose    Enable progress-reporter raw() pass-through (adapter stdout).");
+  log("                   Most useful with kind=html-js (Playwright phase markers).");
+  log("  -q, --quiet      Suppress the progress reporter entirely. RADAR_NO_PROGRESS=1");
+  log("                   has the same effect.");
 }
 
 function printRecipesHelp(log: (m: string) => void): void {
@@ -1090,6 +1113,14 @@ export async function testSource(
 
   const limit = parsed.limit ?? 10;
 
+  // Build the progress reporter (#198). `source test` runs exactly one
+  // source so the watcher heuristic only enables narration when the kind
+  // is `html-js` / `json-api`; for rss / html / npm-registry / etc. the
+  // legacy 1-line summary remains the only output. Tests pin the level
+  // explicitly via `--quiet` or `RADAR_NO_PROGRESS=1`.
+  const level: ProgressLevel = parsed.quiet ? "quiet" : parsed.verbose ? "verbose" : "normal";
+  const progress = createProgressReporter({ level });
+
   let result: WatchRunResult;
   try {
     result = await watchRun({
@@ -1100,6 +1131,7 @@ export async function testSource(
       log,
       warn,
       error,
+      progress,
     });
   } catch (e) {
     error(`source test: ${e instanceof Error ? e.message : String(e)}`);
