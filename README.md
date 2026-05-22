@@ -15,6 +15,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 - **Bundled recipes**: `radar source recipes` lists maintained YAML recipes (e.g. AWS What's New, dev.to) and `radar source add <id> --recipe <name>` applies one in a single line — no boilerplate ([ADR-0012 §D3](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md)).
 - **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
+- **Scheduled workflows**: `radar workflow generate watch` / `combined` emits GitHub Actions YAML on demand — combine watch with auto-research under a hard-capped `--max-items` budget so a runaway feed cannot blow your LLM bill ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md)).
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
 ## Install
@@ -73,6 +74,8 @@ radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)
 radar doctor                  # check workspace / agent CLI / Playwright / proxy / TLS health
                               #   --no-proxy-check skips the live proxy round-trip (offline-friendly)
+radar workflow generate watch     # emit a GitHub Actions watch workflow on demand (ADR-0014)
+radar workflow generate combined  # watch + auto-research with --max-items hard cap (ADR-0014)
 radar --help                  # help
 ```
 

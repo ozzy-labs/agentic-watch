@@ -24,7 +24,7 @@ radar watch run
 # (c) あとは AI エージェントに頼む (次セクション)
 ```
 
-`source add` と `watch run` は scheduler 連携を想定して CLI のままです。`--with-actions` / `--with-routines` を付けて init すれば、GitHub Actions / Claude Routines で定期実行する雛形が出ます。
+`source add` と `watch run` は scheduler 連携を想定して CLI のままです。`--with-actions` / `--with-routines` を付けて init すれば、GitHub Actions / Claude Routines で定期実行する雛形が出ます。後から workflow を追加 / cadence 切替 / watch + 自動 research の連鎖が必要になったら `radar workflow generate watch | combined` で後追い生成できます ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
 
 ## 主要操作: エージェントに頼む
 
@@ -123,11 +123,14 @@ radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 ite
 radar review <research-id> --agent <agent>
 radar update <research-id> --agent <agent>
 radar dismiss <item-id>
+radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (ADR-0014)
+radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]            # GitHub Actions watch 雛形を後追い生成 (ADR-0014)
+radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]   # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
 ```
 
 JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` を YAML に書く（[ADR-0012](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0012-json-api-adapter-and-recipe-strategy.md)）。JSON Feed 1.0 / 1.1 標準に準拠したサイトは URL だけで動く zero-config kind (`kind: json-feed`)。過去の全件取り込みは `radar watch run --backfill` を使う (kind: json-api / github-releases / npm-registry 対応)。
 
-定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で生成できます。
+定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md)) を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
 
 ## このディレクトリのレイアウト
 

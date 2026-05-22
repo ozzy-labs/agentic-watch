@@ -1153,6 +1153,49 @@ radar research --digest \
 # → research/20260518_digest_claude-code-agents_v1.md
 ```
 
+#### `radar research --batch` (バッチモード)
+
+`--batch` を付けると、`items/` 配下から status 条件にマッチする item を自動的に選別し、`--max-items` のハードキャップ内で順次 research を実行する ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a)。GitHub Actions の `combined` workflow から呼ばれる主要モードだが、ローカルでも「未 research の detected を一括処理する」用途で直接呼べる。
+
+```bash
+# detected 全件を一括 research (max 10 件まで)
+radar research --batch
+
+# 上限を 20 件に変更
+radar research --batch --max-items 20
+
+# tag (matchedKeywords) でさらに絞り込む
+radar research --batch --filter-tags "security,breaking-change"
+
+# claude-code 以外の agent で
+radar research --batch --agent codex-cli
+```
+
+##### バッチモードのフラグ
+
+| フラグ | 既定 | 説明 |
+|---|---|---|
+| `--status <status>` | `detected` | 対象 item の status (`detected` / `researched` / `reviewed` / `dismissed`)。通常は `detected` のまま使う |
+| `--max-items N` | `10` | 1 実行で処理する item 数のハードキャップ。N を超える match があると、超過分は **dropped** されて warn() に列挙される |
+| `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各 item の `matchedKeywords` と大小無視で照合し、いずれか 1 つでも一致すれば対象。未指定なら全 match item が対象 |
+| `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
+
+##### 暴走防止 (hard-cap の二重防御)
+
+`--max-items` は CLI と workflow YAML の **2 箇所**で同じ値を強制する設計 (ADR-0014 D3a "二重防御"):
+
+- **YAML literal**: `radar workflow generate combined --max-items 20` で生成した workflow は `radar research --batch --max-items 20` を埋め込む (PR diff / audit で上限が一目で分かる)
+- **CLI 側**: workflow YAML を手で書き換えて `--max-items` を消しても、CLI の default (`10`) が二重防御として効く
+
+これにより、ある日 RSS source が `--backfill` 事故 / publisher bug で過去履歴を一気に吐いても、1 cron tick あたり最大 `--max-items` 件で打ち止まる。
+
+##### 順次実行とエラー時の挙動
+
+- match 件数 > `--max-items` の場合、超過分は **dropped** され、warn() に id 一覧が出力される (次回 cron で続きを処理)
+- 1 件失敗しても次の item には進む。最終的に exit code は **成功件数 > 0 なら 0**、全件失敗なら `1`
+- 既に同日 `<YYYYMMDD>_<slug>_v1.md` が存在する item は上書きせず skip (通常モードと同じ挙動、再 research は `radar update` 経由)
+- batch 中の各 item は status を `detected → researched` に遷移する
+
 ### `radar dismiss <item-id>`
 
 検出 (`detected`) 状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。
@@ -1349,19 +1392,321 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 ## スケジュール実行
 
-`radar` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。
+`radar` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md) / [ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。後追いで workflow を追加・複数共存させたい場合は `radar workflow generate` を使う（後述「[`radar workflow generate`](#radar-workflow-generate)」）。
 
-| フラグ | 生成先 | 用途 |
+| フラグ / コマンド | 生成先 | 用途 |
 |---|---|---|
 | `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
-| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch) |
+| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch、初回 init 時の bootstrap 用) |
+| `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch 雛形を **後追い生成**（複数 cadence / agent 切替対応、ADR-0014） |
+| `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | watch → 自動 research の連鎖（ハードキャップ + rebase リトライ内蔵、ADR-0014） |
 
 既存ファイル保護 + `--force` 上書きは bundled skills と同じ挙動。
 
+> **後追い生成**: `init --with-actions` は初回 workspace setup 用の "1 度だけ" 生成、`workflow generate` は **複数 workflow を共存させたい / 後から追加したい** ユースケース向け。詳細は「[`radar workflow generate`](#radar-workflow-generate)」を参照。
+
+### `radar workflow generate`
+
+`init --with-actions` が生成する workflow は 1 種類 (`watch.yaml`) かつ初期化時にしか作れない。後から `watch` を別 cadence で追加したい / `combined` (watch + 自動 research) を追加したい / agent を切り替えたい場合は **`radar workflow generate <type>`** を使う ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。
+
+```text
+radar workflow generate <type> [options]
+```
+
+#### サポートされる workflow タイプ
+
+| `<type>` | 用途 | 主要 step | 実装状況 |
+|---|---|---|---|
+| `watch` | `radar watch run` のみを定期実行 | `radar watch run` | **実装済み (#188)** |
+| `combined` | watch → 自動 research → commit の連鎖 (ハードキャップ付き) | `watch run` → `research --batch --max-items N` | **実装済み (#189)** |
+| `research` | `detected` item を batch research する単独 workflow | `radar research --batch ...` | Phase 2 (#191) |
+| `review` | researched item を別 agent でレビュー | `radar review <ids...>` | Phase 2 (#191) |
+
+`research` / `review` 単独タイプは現状未実装で、Phase 2 (sub-issue [#191](https://github.com/ozzy-labs/feedradar/issues/191)) で追加される。当面は `combined` で watch + 自動 research を 1 workflow にまとめる構成を推奨する (検出 → research 連鎖の遅延が無い、ADR-0014 §X5)。
+
+#### タイプ別 設定 YAML 完全例
+
+##### `radar workflow generate watch`
+
+```bash
+# 既定値で生成 (cron: 0 0 * * *, agent: claude-code)
+radar workflow generate watch
+
+# 1 時間ごと + 別ファイル名で生成
+radar workflow generate watch \
+  --cron "0 * * * *" \
+  --output .github/workflows/watch-hourly.yaml \
+  --agent claude-code
+
+# Codex CLI で生成
+radar workflow generate watch --agent codex-cli
+```
+
+生成される `.github/workflows/feedradar-watch.yaml` の主要箇所:
+
+```yaml
+name: feedradar-watch
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: feedradar-watch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.21" }
+      - run: npm install -g @ozzylabs/feedradar
+      - name: Run watch
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: radar watch run
+      - name: Commit and push with retry
+        run: |
+          # ... git add items/ state/, commit, push with 3-attempt rebase retry
+```
+
+ポイント:
+
+- `concurrency.group: feedradar-watch-...` は **watch 専用 group**。`combined` と同じ branch にあっても互いに cancel しない (ADR-0014 D4)
+- `Commit and push with retry` step は `git push` が `non-fast-forward` で失敗したら `git pull --rebase --autostash` を最大 3 回試行する (`combined` と同時刻に発火しても自動回復)
+
+##### `radar workflow generate combined`
+
+```bash
+# 既定値で生成 (cron: 0 0 * * *, max-items: 10, agent: claude-code)
+radar workflow generate combined
+
+# 週次 cadence + 自動 research 上限 20 + tag 絞り込み
+radar workflow generate combined \
+  --watch-cron "0 0 * * 1" \
+  --max-items 20 \
+  --filter-tags "security,breaking-change" \
+  --output .github/workflows/combined-weekly.yaml
+
+# Gemini CLI 版
+radar workflow generate combined --agent gemini-cli
+```
+
+生成される `.github/workflows/feedradar-combined.yaml` の主要箇所:
+
+```yaml
+name: feedradar-combined
+
+on:
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: feedradar-combined-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22.21" }
+      - run: npm install -g @ozzylabs/feedradar
+
+      - name: Run watch
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: radar watch run
+
+      - name: Skip research when no new items
+        id: detect_changes
+        run: |
+          if [ -z "$(git status --porcelain items/)" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run research on detected items (capped at 20, agent=claude-code)
+        if: steps.detect_changes.outputs.has_changes == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # ハードキャップ 20 + tag filter が YAML literal として焼き込まれる
+        run: radar research --batch --status detected --max-items 20 --filter-tags security,breaking-change --agent claude-code
+
+      - name: Commit and push with retry
+        if: steps.detect_changes.outputs.has_changes == 'true'
+        run: |
+          # ... git add items/ state/ research/, commit, push with 3-attempt rebase retry
+```
+
+ポイント:
+
+- **`--max-items` ハードキャップが YAML literal として焼き込まれる** (ADR-0014 D3a)。`radar research --batch --max-items 20` が直接 step の `run:` に書かれるため、workflow を読めば上限が即わかる
+- **二重防御**: YAML を手で書き換えて `--max-items` を消しても、CLI の default (`10`) が効く
+- 「Skip research when no new items」ガード step が `items/` に変更が無いときの research step 全体をスキップする (`watch run` が空だった日に LLM cost を 0 に抑える)
+
+#### `--max-items` / `--filter-tags` の自動 research セーフティ
+
+`combined` workflow の最大の懸念は **自動 research の暴走** (ADR-0014 §Context):
+
+- ある日 RSS source が **過去履歴を一気に吐く** (publisher 側 bug / `--backfill` の事故起動)
+- 検出 item 数が想定の 10 → 数百〜数千件に膨らむ
+- 自動 research が全件に走り、**LLM cost が爆発** / agent CLI の rate limit / billing alert を一気に踏み抜く
+
+これを防ぐため `combined` は以下 2 段の防御を持つ:
+
+1. **`--max-items N` ハードキャップ** (既定 `10`): 1 cron tick で処理する item 数の上限。N を超える match は **dropped** (warn() に列挙、次回 cron で続きを処理)
+2. **`--filter-tags <list>` allow-list**: `matchedKeywords` (item の filter ヒット結果) を allow-list で絞る。例: `--filter-tags security,breaking-change` なら security / breaking-change tag が付いた item だけ research
+
+両方とも **workflow YAML に literal として焼き込まれる** ため、PR diff レビューで「`--max-items 1000` のような暴走設定が混入していないか」を audit できる。
+
+##### `--max-items` の既定値が `10` の根拠
+
+- 通常運用での 1 cron tick の検出件数は経験的に 1〜5 件
+- その 2〜10 倍の余裕を見つつ、暴走時のコスト爆発を「LLM 1 call ~0.01 USD × 10 = 0.1 USD」程度に押さえる水準
+
+「もっと多く処理したい」場合は明示的に `radar workflow generate combined --max-items 100` 等で生成しなおす。後から workflow YAML を手編集することも可能だが、CLI 再生成のほうが意図が記録される。
+
+#### agent 別 secrets 設定例
+
+`--agent` で 4 種類の agent から選べる ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D5)。**OAuth トークンは禁止**: すべて API key 認証 (Anthropic 利用ポリシー上、unattended workflow で OAuth は "ordinary individual use" の範囲外)。
+
+| `--agent` | 必要な secret (`Settings → Secrets and variables → Actions`) | OAuth |
+|---|---|---|
+| `claude-code` (default) | `ANTHROPIC_API_KEY` | **禁止** (`CLAUDE_CODE_OAUTH_TOKEN` を使わない) |
+| `codex-cli` | `OPENAI_API_KEY` | **禁止** |
+| `gemini-cli` | `GEMINI_API_KEY` | **禁止** |
+| `copilot` | (`secrets.GITHUB_TOKEN` を自動利用、ユーザー登録不要) | n/a (個人 OAuth ではない) |
+
+すべての agent で `GITHUB_TOKEN` は `secrets.GITHUB_TOKEN` (Actions が自動付与) を forward する。これは `github-releases` adapter の rate limit を 60 → 5000 req/h に引き上げるため (ADR-0002 / Phase 3)。
+
+##### agent 切替の実例
+
+```bash
+# 各 agent ごとに workflow を生成
+radar workflow generate combined --agent claude-code   # ANTHROPIC_API_KEY が必要
+radar workflow generate combined --agent codex-cli     # OPENAI_API_KEY が必要
+radar workflow generate combined --agent gemini-cli    # GEMINI_API_KEY が必要
+radar workflow generate combined --agent copilot       # secret 登録不要
+```
+
+`radar workflow generate <type>` 実行時、必要な secret 名は CLI の stdout に明示される (Settings → Secrets で何を登録すればよいか迷わない設計):
+
+```text
+workflow generate combined: wrote .github/workflows/feedradar-combined.yaml
+  agent:       gemini-cli
+  cron:        0 0 * * *
+  max-items:   10
+  filter-tags: (none)
+
+Required GitHub Actions secrets (Settings → Secrets and variables → Actions):
+  GEMINI_API_KEY
+  GITHUB_TOKEN (auto-provisioned)
+```
+
+#### push 競合とリトライ機構
+
+`watch` / `combined` を **同一 branch で複数 workflow 並走** させると、片方が `items/` / `state/` を push した直後にもう一方が push しようとして `non-fast-forward` エラーで失敗するケースが構造的に発生する (例: `0 * * * *` の watch と `0 */6 * * *` の combined は 6 時間ごとに 1 回必ず衝突する)。
+
+ADR-0014 D4 で採用した対策: **生成された workflow の `Commit and push with retry` step に `git pull --rebase --autostash` リトライを最大 3 回内蔵する**。
+
+```yaml
+- name: Commit and push with retry
+  run: |
+    set -euo pipefail
+    git config user.name "github-actions[bot]"
+    git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    git add items/ state/
+    git diff --cached --quiet && exit 0
+    git commit -m "chore(watch): detected items $(date -u +%Y-%m-%d)"
+    for attempt in 1 2 3; do
+      if git push origin "${GITHUB_REF_NAME}"; then
+        exit 0
+      fi
+      echo "push failed (attempt ${attempt}/3), rebasing..."
+      git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+    done
+    echo "push failed after 3 attempts" >&2
+    exit 1
+```
+
+ポイント:
+
+- `concurrency.group` を **type ごとに分ける** (`feedradar-watch-...` / `feedradar-combined-...`) ことで、watch と combined は同時に走れる (互いに cancel しない)。同 type 内の overlapping のみ `concurrency` で serialize
+- `git pull --rebase --autostash`: `--autostash` で bot 側の uncommitted 変更が rebase の邪魔をしないようにする
+- **3 回上限**: GitHub Actions の rate limit / cron スロット競合の経験的な収束回数。4 回以降の失敗は workflow 外の問題 (branch protection / token 失効 / true merge conflict) なので、retry より fail-fast (`exit 1`) のほうが debuggability が高い
+
+#### コスト試算とコスト警告
+
+`combined` workflow は **自動的に LLM API を叩く** ため、cost monitoring が運用上の必須事項になる。目安:
+
+| 構成 | 1 cron tick あたりの LLM call 数 | 試算 cost (USD) | 月次 cost (24 cron tick/日 × 30 日 = 720 tick) |
+|---|---|---|---|
+| `combined --max-items 10` (default) | 最大 10 | ~$0.10 (1 call ≒ $0.01 想定) | ~$72 |
+| `combined --max-items 50` | 最大 50 | ~$0.50 | ~$360 |
+| `combined --max-items 100` | 最大 100 | ~$1.00 | ~$720 |
+| watch のみ (`watch` type) | 0 (research を呼ばない) | $0 | $0 |
+
+> **試算は LLM call 1 回あたり ~$0.01 (Claude 3.5 Sonnet で 1 件の research レポート生成想定)** という大雑把な目安。実際の cost は agent / 入力サイズ / 出力長で大きく変動する。**自分の最初の 1 週間は billing dashboard を毎日確認する** ことを推奨。
+
+##### 暴走時の止め方
+
+cost が想定外に増えていることに気付いた場合の止め方:
+
+1. **即時停止 (推奨)**: GitHub UI → リポジトリ → `Actions` タブ → 該当 workflow を選択 → 右上の `...` メニューから **`Disable workflow`** を選ぶ。次回 cron 起動が即座に停止する (UI 上で 1 click)
+2. **branch から削除**: `git rm .github/workflows/feedradar-combined.yaml && git commit -m 'chore: stop combined workflow' && git push`。確実に消えるが PR / commit が必要
+3. **secret を失効させる (最終手段)**: `ANTHROPIC_API_KEY` 等の secret を Settings → Secrets から削除する。次回 cron 起動時に agent CLI が認証エラーで失敗するため、副作用として cron 自体は走り続ける (が cost は発生しない)。**他 workflow も同じ secret を使っているなら影響範囲に注意**
+
+##### cost 暴走を予防する設計
+
+`combined` 採用時のチェックリスト:
+
+- [ ] `--max-items` を最小限に設定 (まずは default `10` で運用、必要なら段階的に増やす)
+- [ ] `--filter-tags` を併用して research 対象を絞る (全 detected を一括 research しない)
+- [ ] agent provider の billing alert を設定 (Anthropic / OpenAI / Google それぞれの billing dashboard で月次予算上限を設定)
+- [ ] 最初の 1 週間は毎日 billing dashboard を確認
+- [ ] 新規 source 追加時は `radar source test <id>` で検出件数を確認してから `watch run` を回す (`--backfill` の事故起動を防ぐ)
+
+#### workflow generate のトラブルシュート
+
+| 症状 | 原因 / 対処 |
+|---|---|
+| `Error: cron expression invalid` (workflow generate 時) | `--cron` / `--watch-cron` の値が 5 field POSIX cron でない。例: `"0 0 * * *"` (毎日 0 時 UTC)。`@daily` 等の alias は GitHub Actions が受け付けないため、CLI 側でも拒否 |
+| `output file already exists: ... (use --force to overwrite)` | 同名 file が既存。意図的な再生成なら `--force` を付ける。複数 cadence を共存させたいなら `--output .github/workflows/<type>-<cadence>.yaml` で別名で生成 |
+| `Process completed with exit code 128.` + `non-fast-forward` (Actions ログ) | 同時刻に複数 workflow が `items/` / `state/` を push し合った。内蔵の 3 回 rebase retry が走るが、4 回以上失敗する場合は branch protection / token 失効 / true merge conflict を確認 |
+| `radar research --batch: capped at 10 (dropped: ...)` warning が毎回出る | 検出件数が `--max-items` 上限を超えている。`--filter-tags` で絞る or `--max-items` を増やす or `--backfill` の事故起動を疑う |
+| `Error: ANTHROPIC_API_KEY is not set` (Actions ログ) | Settings → Secrets → Actions で agent 別 secret を登録していない (`--agent <name>` に応じた secret 名は ADR-0014 D5 / 本セクションの「agent 別 secrets 設定例」を参照) |
+| billing dashboard で LLM cost が想定の 10 倍 | `--max-items` を意図せず高く設定した / `--filter-tags` 無しで全件 research している / `combined` workflow を複数 branch で並走させている。「[暴走時の止め方](#暴走時の止め方)」を参照して即座に disable する |
+| `permission denied to push` (Actions ログ) | `permissions: contents: write` が org / repo 設定で抑制されている。リポジトリ Settings → Actions → General → `Workflow permissions` を `Read and write permissions` にする |
+| `Run`radar`not found` (Actions ログ) | `npm install -g @ozzylabs/feedradar` step が失敗している (npm registry 到達性 / 一時的な outage)。re-run か、`npm install -g @ozzylabs/feedradar@<specific-version>` で version pin する |
+| 生成された workflow を手で編集後、`--force` で再生成して編集が消えた | warning + skip の既定挙動で守られていたが `--force` を明示するとその保護が外れる。手編集する場合は `--force` を使わない or 編集内容を git で復元 |
+| `combined` で `--max-items` を YAML から削除しても暴走しない | CLI 側の二重防御 (default `10`) が効く設計 (ADR-0014 D3a)。期待通り |
+
 ### 認証ポリシー
 
-- **`ANTHROPIC_API_KEY` を secret として登録する**。OAuth トークン (`CLAUDE_CODE_OAUTH_TOKEN`) は Anthropic 利用ポリシー上の制約により雛形では使わない（ADR-0004）
+- **`ANTHROPIC_API_KEY` を secret として登録する**。OAuth トークン (`CLAUDE_CODE_OAUTH_TOKEN`) は Anthropic 利用ポリシー上の制約により雛形では使わない（ADR-0004 / ADR-0014 D5）
 - GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため、`watch.yaml` 雛形は `secrets.GITHUB_TOKEN` を `GITHUB_TOKEN` env として forward する
+- `radar workflow generate <type> --agent <name>` で生成する workflow も同じ方針 (OAuth 禁止)。詳細は「[agent 別 secrets 設定例](#agent-別-secrets-設定例)」を参照
 
 ### GitHub Actions 雛形の検証手順
 
@@ -1376,6 +1721,8 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 なお `permissions: contents: write` は新しい commit を push するために必須。Org level で `Workflow permissions` を `Read repository contents permission` に絞っている場合は workflow 単位の設定で override する必要がある。
 
+cron cadence を変えたい / `combined` (watch + 自動 research) を追加したい / agent を切り替えたい場合は **[`radar workflow generate`](#radar-workflow-generate)** を使う。後追い生成 / 複数 workflow の共存 / `--max-items` ハードキャップ付きの自動 research に対応する。
+
 ### Claude Routines 雛形の検証手順
 
 1. `radar init --with-routines` で `claude/routines/watch-daily.md` が生成される
@@ -1386,8 +1733,9 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 ### スコープ外（CLI 側）
 
 - 雛形 file が実 cron で動くかの自動テストは行わない（実機検証はユーザー側責務、ADR-0004）
-- `research` / `review` / `update` を cron で自動実行する雛形は提供しない（人が triage する設計）
+- `update` を cron で自動実行する雛形は提供しない（人が triage する設計）。`research` の自動化は `radar workflow generate combined` で `--max-items` ハードキャップ付きで提供 (ADR-0014)、`review` 単独 workflow は Phase 2 (#191) で予定
 - desktop scheduled tasks（macOS launchd / Linux systemd timer 等）への対応は将来検討
+- `radar workflow list / update / delete` (生成済み workflow の管理 CLI) は Phase 2 (#191) で必要性を再評価 (ADR-0014 D7)
 
 ## セキュリティ
 
