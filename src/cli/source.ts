@@ -79,6 +79,37 @@ function splitCsv(value: string): string[] {
     .filter((s) => s.length > 0);
 }
 
+/**
+ * Parse an `--<option> N` integer argument with a configurable minimum.
+ *
+ * Used for `--pagination-page-size` / `--max-pages` / etc. where Zod will
+ * also validate the resulting Source object, but throwing here means the
+ * user sees a single targeted error referencing the flag name they typed
+ * instead of a deeper schema-path message.
+ *
+ * `min` defaults to 1 because every json-api pagination integer the schema
+ * accepts is `z.number().int().positive()`; the `--pagination-start` flag
+ * passes `min: 0` for offset/page indices that legitimately begin at 0.
+ */
+function parseIntFlag(flag: string, raw: string | undefined, min: number): number {
+  if (raw === undefined) throw new Error(`option ${flag} requires a value`);
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) {
+    throw new Error(`option ${flag} expects an integer >= ${min}, got '${raw}'`);
+  }
+  return n;
+}
+
+/**
+ * Pagination strategies accepted by `--pagination-strategy` on
+ * `radar source add --kind json-api`. Mirrors `SourcePaginationSchema.type`
+ * — kept as a local const so the CLI validator emits a user-friendly enum
+ * list before Zod runs (Zod surfaces the same set, but a leading "did you
+ * mean …?" message at the CLI layer reads better in shell context).
+ */
+const PAGINATION_STRATEGIES = ["page", "offset", "cursor", "link-header", "token", "none"] as const;
+type PaginationStrategy = (typeof PAGINATION_STRATEGIES)[number];
+
 interface AddArgs {
   id?: string;
   kind?: string;
@@ -93,6 +124,24 @@ interface AddArgs {
    * stays in sync with the schema without a parallel allowlist.
    */
   selectors?: Record<string, string>;
+  /**
+   * `--pagination-*` accumulator for `kind: json-api` (#174). The schema's
+   * default selector chain + fallback handling means an `add --kind
+   * json-api` invocation can legitimately omit `jsonSelectors` entirely:
+   * the user supplies pagination via flags here, then YAML-edits the
+   * selectors block if the API needs explicit paths. The CLI deliberately
+   * does NOT expose `--selectors-*` for json-api: jsonSelectors fields are
+   * too numerous to flatten into flags, and YAML editing is the supported
+   * mutation workflow for this kind.
+   */
+  paginationStrategy?: PaginationStrategy;
+  paginationParam?: string;
+  paginationStart?: number;
+  paginationPageSize?: number;
+  paginationPageSizeParam?: string;
+  paginationMaxPages?: number;
+  paginationNextCursorPath?: string;
+  paginationTotalPath?: string;
   help?: boolean;
 }
 
@@ -146,6 +195,53 @@ function parseAddArgs(args: string[]): AddArgs {
       if (value === undefined) throw new Error(`option ${a} requires a value`);
       out.selectors ??= {};
       out.selectors[field] = value;
+      continue;
+    }
+    if (a === "--pagination-strategy") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(PAGINATION_STRATEGIES as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --pagination-strategy expects one of: ${PAGINATION_STRATEGIES.join(" | ")}, got '${value}'`,
+        );
+      }
+      out.paginationStrategy = value as PaginationStrategy;
+      continue;
+    }
+    if (a === "--pagination-param") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.paginationParam = value;
+      continue;
+    }
+    if (a === "--pagination-start") {
+      out.paginationStart = parseIntFlag(a, args[++i], 0);
+      continue;
+    }
+    if (a === "--page-size") {
+      out.paginationPageSize = parseIntFlag(a, args[++i], 1);
+      continue;
+    }
+    if (a === "--page-size-param") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.paginationPageSizeParam = value;
+      continue;
+    }
+    if (a === "--max-pages") {
+      out.paginationMaxPages = parseIntFlag(a, args[++i], 1);
+      continue;
+    }
+    if (a === "--next-cursor-path") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.paginationNextCursorPath = value;
+      continue;
+    }
+    if (a === "--total-path") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.paginationTotalPath = value;
       continue;
     }
     if (a?.startsWith("--")) {
@@ -286,10 +382,26 @@ function printAddHelp(log: (m: string) => void): void {
   log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");
   log("                           via flags; edit sources/<id>.yaml after add. See ADR-0010.");
   log("");
-  log("                           For kind=json-api, edit sources/<id>.yaml after `add` to set");
+  log("  For kind=json-api (ADR-0012 / #174):");
   log(
-    "                           the `pagination:` / `jsonSelectors:` / `http:` blocks (ADR-0012).",
+    "    --pagination-strategy <s>  page | offset | cursor | link-header | token | none (default: page)",
   );
+  log("    --pagination-param <name>  query param name for the page/offset/cursor value");
+  log("    --pagination-start N       initial page/offset value (default: 0)");
+  log("    --page-size N              items per page");
+  log("    --page-size-param <name>   query param name for the page-size value");
+  log("    --max-pages N              hard cap on pages traversed (default: 20)");
+  log(
+    "    --next-cursor-path <jp>    JSONPath-lite to the next-cursor value (cursor/token strategy)",
+  );
+  log(
+    "    --total-path <jp>          JSONPath-lite to the total-count value (backfill early-stop hint)",
+  );
+  log("");
+  log("  Selector fields (`jsonSelectors.*`) for kind=json-api cannot be set via flags;");
+  log("  the schema has a default fallback chain (items / title / link / publishedAt / summary),");
+  log("  so simple APIs work without selectors. Edit sources/<id>.yaml directly when explicit");
+  log("  selectors are needed (nested fields, non-standard envelopes).");
 }
 
 function printListHelp(log: (m: string) => void): void {
@@ -316,9 +428,18 @@ function printTestHelp(log: (m: string) => void): void {
   log("state/ and items/ are not touched (no persistence). Useful for tuning");
   log("keywords when adding a new source.");
   log("");
+  log("For kind=json-api (ADR-0012 / #174), `source test` fetches PAGE 0 ONLY.");
+  log("Pagination is NOT walked even when the recipe declares multiple pages —");
+  log("`--limit N` caps how many matched items are PRINTED, it does not change");
+  log("the page budget. Use `radar watch run --backfill` for full-history ingest.");
+  log("Page 0's `Link` header / `nextCursor` extraction is surfaced via");
+  log("`--show-content` for pagination tuning without state mutation.");
+  log("");
   log("Options:");
   log("  --limit N        Maximum number of matched items to print (default 10)");
-  log("  --show-content   Also print the first 200 characters of each item's body");
+  log("  --show-content   Also print the first 200 chars of each item's body, plus");
+  log("                   (kind=json-api) the selector adoption table and pagination");
+  log("                   preview (would-be next URL / Link header / nextCursor).");
 }
 
 function printSourceHelp(log: (m: string) => void): void {
@@ -421,6 +542,54 @@ export async function addSource(
       return 2;
     }
     candidate.selectors = selectorsResult.data;
+  }
+
+  // For kind=json-api, build the `pagination:` block from --pagination-*
+  // flags. The schema requires `pagination` for this kind; if the user
+  // omitted --pagination-strategy entirely we default to `page` (the most
+  // common shape for AWS What's New / dev.to / Anthropic news). We do NOT
+  // generate a `jsonSelectors:` block — the default fallback chain covers
+  // simple APIs, and recipe authors edit the YAML directly when explicit
+  // selectors are needed (the field count makes flag-based mutation
+  // impractical).
+  if (kindResult.data === "json-api") {
+    const strategy: PaginationStrategy = parsed.paginationStrategy ?? "page";
+    const pagination: Record<string, unknown> = { type: strategy };
+    if (parsed.paginationParam !== undefined) pagination.param = parsed.paginationParam;
+    if (parsed.paginationStart !== undefined) pagination.start = parsed.paginationStart;
+    if (parsed.paginationPageSize !== undefined) {
+      pagination.pageSize = parsed.paginationPageSize;
+    }
+    if (parsed.paginationPageSizeParam !== undefined) {
+      pagination.pageSizeParam = parsed.paginationPageSizeParam;
+    }
+    if (parsed.paginationMaxPages !== undefined) {
+      pagination.maxPages = parsed.paginationMaxPages;
+    }
+    if (parsed.paginationNextCursorPath !== undefined) {
+      pagination.nextCursorPath = parsed.paginationNextCursorPath;
+    }
+    if (parsed.paginationTotalPath !== undefined) {
+      pagination.totalPath = parsed.paginationTotalPath;
+    }
+    candidate.pagination = pagination;
+  } else if (
+    parsed.paginationStrategy !== undefined ||
+    parsed.paginationParam !== undefined ||
+    parsed.paginationStart !== undefined ||
+    parsed.paginationPageSize !== undefined ||
+    parsed.paginationPageSizeParam !== undefined ||
+    parsed.paginationMaxPages !== undefined ||
+    parsed.paginationNextCursorPath !== undefined ||
+    parsed.paginationTotalPath !== undefined
+  ) {
+    // Reject pagination flags on non-json-api kinds early so the user sees
+    // a targeted hint instead of a deep schema refinement error ("pagination
+    // is required when kind is 'json-api'" makes no sense for `kind: rss`).
+    error(
+      `source add: --pagination-* flags are only valid with --kind json-api (got --kind '${kindResult.data}')`,
+    );
+    return 2;
   }
 
   const validated = SourceSchema.safeParse(candidate);
@@ -775,6 +944,41 @@ export async function testSource(
   log("");
   log(`source test: ${parsed.id}`);
   log(`  fetched: ${fetched} / filtered: ${filtered} / matched: ${matched.length}`);
+
+  // Render the adapter diag for `kind: json-api` when --show-content is on.
+  // The diag block is intentionally gated behind --show-content so the
+  // default `source test` output (used by scripts that just want a quick
+  // matched-items dump) stays narrow. Adapters that do not return diag
+  // simply skip this block.
+  if (parsed.showContent) {
+    const diag = result.diag[parsed.id];
+    if (diag) {
+      if (diag.selectorAdoption) {
+        log("");
+        log("  selector adoption:");
+        for (const [field, path] of Object.entries(diag.selectorAdoption)) {
+          if (path === null) {
+            log(`    ${field}: (no candidate matched)`);
+          } else {
+            log(`    ${field} ← ${path} を採用`);
+          }
+        }
+      }
+      if (diag.paginationPreview) {
+        const p = diag.paginationPreview;
+        log("");
+        log("  pagination preview (page 0 only — state not mutated):");
+        log(`    strategy:  ${p.strategy}`);
+        log(`    nextUrl:   ${p.nextUrl ?? "(end of pagination)"}`);
+        if (p.linkHeaderNext !== undefined) {
+          log(`    Link rel=next: ${p.linkHeaderNext ?? "(absent)"}`);
+        }
+        if (p.nextCursor !== undefined) {
+          log(`    nextCursor: ${p.nextCursor ?? "(absent)"}`);
+        }
+      }
+    }
+  }
 
   if (matched.length === 0) {
     log("  (no matched items)");

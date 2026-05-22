@@ -9,7 +9,7 @@ import { ItemSchema } from "../../schemas/index.js";
 import { fetchWithRetry } from "./_fetch.js";
 import { selectAll, selectOne } from "./_jsonpath.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
-import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
+import type { FeedAdapter, FeedAdapterOptions, FeedFetchDiag, FetchLike } from "./types.js";
 
 const USER_AGENT = "feedradar/0.0.0 (+https://github.com/ozzy-labs/feedradar)";
 
@@ -31,6 +31,24 @@ const DEFAULT_ITEMS_PATHS = [
   "$.entries[*]",
   "$[*]",
 ] as const;
+
+/**
+ * Per-field default selector chain consulted when the corresponding
+ * `jsonSelectors.<field>` is omitted (#174). For each item element we walk
+ * the chain in order and use the first path that yields a non-nullish value;
+ * this lets recipes for "simple" APIs (dev.to, generic JSON Feed clones)
+ * skip selectors entirely. Adoption is recorded once per fetch (first item)
+ * and surfaced via `FeedFetchDiag.selectorAdoption` so users can audit which
+ * candidate was picked.
+ */
+const DEFAULT_FIELD_PATHS = {
+  title: ["$.title", "$.name", "$.headline"],
+  link: ["$.url", "$.link", "$.permalink", "$.html_url"],
+  publishedAt: ["$.publishedAt", "$.published_at", "$.date", "$.created_at", "$.pubDate"],
+  summary: ["$.summary", "$.description", "$.excerpt", "$.body"],
+} as const;
+
+type DefaultableField = keyof typeof DEFAULT_FIELD_PATHS;
 
 /**
  * Maximum response body size per page. ADR-0012 §D5a hardcodes this so a
@@ -175,6 +193,35 @@ function resolveItemsList(
   return { matches: [], path: DEFAULT_ITEMS_PATHS[0] };
 }
 
+/**
+ * Resolve a per-item field with optional default-chain fallback.
+ *
+ * `explicit` is the recipe-supplied path. When undefined, we walk
+ * `DEFAULT_FIELD_PATHS[field]` and return the first candidate that yields
+ * a non-nullish value, or `{ value: undefined, path: null }` when every
+ * candidate misses.
+ *
+ * Returning the matched path lets the adapter record adoption once (first
+ * item) and surface it via `diag.selectorAdoption` so `source test` can
+ * print "title ← $.headline を採用".
+ */
+function resolveFieldWithFallback(
+  field: DefaultableField,
+  explicit: string | undefined,
+  element: unknown,
+): { value: unknown; path: string | null } {
+  if (explicit) {
+    return { value: selectOne(explicit, element), path: explicit };
+  }
+  for (const candidate of DEFAULT_FIELD_PATHS[field]) {
+    const value = selectOne(candidate, element);
+    if (value !== undefined && value !== null) {
+      return { value, path: candidate };
+    }
+  }
+  return { value: undefined, path: null };
+}
+
 /** Coerce a JSON value to a trimmed non-empty string, or `undefined`. */
 function coerceString(value: unknown): string | undefined {
   if (value == null) return undefined;
@@ -205,25 +252,51 @@ function coerceIsoDate(value: unknown): string | undefined {
  * 1. `selectors.publisherId` (explicit, most stable)
  * 2. `selectors.link` URL (canonical identifier)
  * 3. `sha1:` hash of title + publishedAt (fallback)
+ *
+ * `adoption` is mutated in place: for each defaultable field, the first call
+ * records the JSONPath candidate that produced a usable value (or `null` if
+ * every candidate missed). Subsequent calls leave it alone so adoption
+ * reflects the very first item — that is what `source test` reports.
  */
 function elementToItem(
   element: unknown,
   source: Source,
   selectors: SourceJsonApiSelectors,
   fetchedAt: string,
+  adoption: Record<DefaultableField, string | null | undefined>,
 ): Item | null {
-  const title = coerceString(selectOne(selectors.title, element)) ?? "";
-  const url = coerceString(selectOne(selectors.link, element));
+  const titleResolved = resolveFieldWithFallback("title", selectors.title, element);
+  if (adoption.title === undefined) {
+    adoption.title = titleResolved.path;
+  }
+  const title = coerceString(titleResolved.value) ?? "";
+
+  const linkResolved = resolveFieldWithFallback("link", selectors.link, element);
+  if (adoption.link === undefined) {
+    adoption.link = linkResolved.path;
+  }
+  const url = coerceString(linkResolved.value);
   if (!url) return null;
+
   const publisherId = selectors.publisherId
     ? coerceString(selectOne(selectors.publisherId, element))
     : undefined;
-  const publishedAt = selectors.publishedAt
-    ? coerceIsoDate(selectOne(selectors.publishedAt, element))
-    : undefined;
-  const summary = selectors.summary
-    ? coerceString(selectOne(selectors.summary, element))
-    : undefined;
+
+  const publishedAtResolved = resolveFieldWithFallback(
+    "publishedAt",
+    selectors.publishedAt,
+    element,
+  );
+  if (adoption.publishedAt === undefined) {
+    adoption.publishedAt = publishedAtResolved.path;
+  }
+  const publishedAt = coerceIsoDate(publishedAtResolved.value);
+
+  const summaryResolved = resolveFieldWithFallback("summary", selectors.summary, element);
+  if (adoption.summary === undefined) {
+    adoption.summary = summaryResolved.path;
+  }
+  const summary = coerceString(summaryResolved.value);
   const body = selectors.body ? coerceString(selectOne(selectors.body, element)) : undefined;
   // `selectors.tags` is recognized by the schema but currently silently passed
   // through into `raw` only. The filter pipeline (`buildHaystack`) does not
@@ -449,22 +522,24 @@ export const jsonApiAdapter: FeedAdapter = {
     if (!source.pagination) {
       throw new Error(`json-api adapter: source '${source.id}' has no pagination config`);
     }
-    if (!source.jsonSelectors) {
-      throw new Error(`json-api adapter: source '${source.id}' has no jsonSelectors config`);
-    }
     const fetchImpl = options.fetch ?? (globalThis.fetch as unknown as FetchLike);
     if (typeof fetchImpl !== "function") {
       throw new Error("json-api adapter: no fetch implementation available (Node 22+ required)");
     }
 
     const pagination = source.pagination;
-    const selectors = source.jsonSelectors;
+    // `jsonSelectors` is optional in the schema (#174). When omitted, every
+    // field falls back to its default chain so trivial APIs (dev.to,
+    // generic JSON Feed clones) work without a selector block at all.
+    const selectors = source.jsonSelectors ?? {};
     const env = options.env ?? (process.env as Record<string, string | undefined>);
     const headers = buildHeaders(source, env);
     const previous = options.state;
     const previousSeen = new Set(previous?.lastSeenIds ?? []);
     const fetchedAt = new Date().toISOString();
     const backfill = options.backfill === true;
+    const dryRun = options.dryRun === true;
+    const warn = options.warn ?? (() => {});
     const maxPages = effectiveMaxPages(pagination, backfill, options.maxPagesOverride);
 
     let currentUrl = initialUrl(source, pagination);
@@ -474,9 +549,24 @@ export const jsonApiAdapter: FeedAdapter = {
     let firstBodyText: string | null = null;
     let firstBody: unknown = null;
     let notModified = false;
+    // `undefined` means "not seen yet"; once we normalize the first item we
+    // overwrite each entry with either the matched path (string) or `null`
+    // (no candidate yielded a value). The diag payload reports the final
+    // state at end-of-fetch.
+    const adoption: Record<DefaultableField, string | null | undefined> = {
+      title: undefined,
+      link: undefined,
+      publishedAt: undefined,
+      summary: undefined,
+    };
+    let itemsPath: string | null = null;
+    let paginationPreview: FeedFetchDiag["paginationPreview"] | undefined;
     // Effective cap may tighten mid-traversal when `totalPath` resolves to a
     // value smaller than the recipe's `maxPages` (backfill early stop).
     let effectiveCap = maxPages;
+    // Dry-run mode short-circuits after page 0: we record the diag preview
+    // (next URL / Link header / nextCursor) but never fetch page 1.
+    if (dryRun) effectiveCap = Math.min(effectiveCap, 1);
 
     while (pageIndex < effectiveCap) {
       const response = await fetchPage(currentUrl, fetchImpl, headers, pagination, pageIndex, {
@@ -500,10 +590,45 @@ export const jsonApiAdapter: FeedAdapter = {
         break;
       }
 
-      const { matches } = resolveItemsList(selectors, response.body);
+      const itemsResult = resolveItemsList(selectors, response.body);
+      if (pageIndex === 0) itemsPath = itemsResult.path;
+      const matches = itemsResult.matches;
       const pageItems = matches
-        .map((m) => elementToItem(m, source, selectors, fetchedAt))
+        .map((m) => elementToItem(m, source, selectors, fetchedAt, adoption))
         .filter((i): i is Item => i !== null);
+
+      // Surface a pagination preview for `source test` on page 0 only. We
+      // compute the *would-be* next URL / cursor / Link header but never
+      // actually fetch it in dry-run mode (#174 state-clean invariant).
+      if (pageIndex === 0) {
+        const linkHeaderNext = pagination.type === "link-header" ? response.linkNext : undefined;
+        let nextCursor: string | null | undefined;
+        if (
+          (pagination.type === "cursor" || pagination.type === "token") &&
+          pagination.nextCursorPath
+        ) {
+          nextCursor = coerceString(selectOne(pagination.nextCursorPath, response.body)) ?? null;
+        }
+        let previewNextUrl: string | null;
+        if (pagination.type === "link-header") {
+          previewNextUrl = response.linkNext;
+        } else {
+          previewNextUrl = computeNextUrl(
+            source,
+            pagination,
+            currentUrl,
+            response.body,
+            pageItems.length,
+            1,
+          );
+        }
+        paginationPreview = {
+          strategy: pagination.type,
+          nextUrl: previewNextUrl,
+          ...(linkHeaderNext !== undefined ? { linkHeaderNext } : {}),
+          ...(nextCursor !== undefined ? { nextCursor } : {}),
+        };
+      }
 
       // Normal-mode early stop: if this page contains an id we have already
       // seen, the older pages will all be older still — stop paginating.
@@ -577,6 +702,20 @@ export const jsonApiAdapter: FeedAdapter = {
       pageIndex++;
     }
 
+    // Warn for default-chain fields where every candidate returned null —
+    // recipe authors typically want to know the API has a non-standard
+    // shape (e.g. `additionalFields.headline` instead of `$.title`). We
+    // skip the warning when the recipe explicitly declared the selector
+    // (the absence is then on the user, not the default chain).
+    for (const field of Object.keys(adoption) as DefaultableField[]) {
+      const explicit = selectors[field];
+      if (!explicit && adoption[field] === null) {
+        warn(
+          `json-api adapter: source '${source.id}' — default selector chain for '${field}' produced no value; consider setting jsonSelectors.${field} explicitly`,
+        );
+      }
+    }
+
     // Build state. Prefer the server-supplied ETag; otherwise hash the page-0
     // body so re-runs without a server ETag still dedup correctly (mirrors the
     // html adapter's content-hash fallback).
@@ -594,6 +733,24 @@ export const jsonApiAdapter: FeedAdapter = {
     // body when no items matched).
     void firstBody;
 
+    // Compose diag payload for `source test --show-content`. The selector
+    // adoption map reports the JSONPath candidate that won the fallback
+    // chain per field (or the recipe-supplied path verbatim, or `null` when
+    // every candidate missed). Pagination preview surfaces the next-URL /
+    // Link / cursor extraction so users can spot misconfigurations without
+    // letting the dry-run actually walk page 1.
+    const selectorAdoption: Record<string, string | null> = {
+      items: itemsPath ?? null,
+      title: adoption.title ?? null,
+      link: adoption.link ?? null,
+      publishedAt: adoption.publishedAt ?? null,
+      summary: adoption.summary ?? null,
+    };
+    const diag: FeedFetchDiag = {
+      selectorAdoption,
+      ...(paginationPreview ? { paginationPreview } : {}),
+    };
+
     if (notModified) {
       return {
         items: [],
@@ -602,6 +759,7 @@ export const jsonApiAdapter: FeedAdapter = {
           lastFetchedAt: fetchedAt,
           lastEtag: nextEtag,
         },
+        diag,
       };
     }
 
@@ -611,6 +769,7 @@ export const jsonApiAdapter: FeedAdapter = {
         lastFetchedAt: fetchedAt,
         lastEtag: nextEtag,
       },
+      diag,
     };
   },
 };
