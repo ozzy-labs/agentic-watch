@@ -6,10 +6,18 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems } from "../core/items.js";
+import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import {
+  buildAgentProgressCallback,
+  buildReporter,
+  ProgressFlagError,
+  parseProgressFlags,
+  pollOutputFileSize,
+} from "./_progress.js";
 import type { Command } from "./index.js";
 
 /**
@@ -38,6 +46,12 @@ export interface UpdateIO {
 export interface UpdateCommandOptions {
   cwd?: string;
   io?: UpdateIO;
+  /**
+   * Test-only override for the {@link ProgressReporter}. When omitted, the
+   * CLI constructs one from `--verbose` / `--quiet` / `RADAR_NO_PROGRESS`
+   * (ADR-0015 D2).
+   */
+  progress?: ProgressReporter;
 }
 
 interface UpdateArgs {
@@ -86,6 +100,11 @@ function printHelp(log: (m: string) => void): void {
     "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
   );
   log("  --template <id>       Template id under templates/ (default: default)");
+  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
+  log(
+    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
+  );
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
   log("");
   log("Generates research/<base>_v<n+1>.md from the supplied predecessor id,");
   log("writing `supersedes: <prev id>` into the new file's frontmatter. The");
@@ -195,9 +214,22 @@ export async function runUpdate(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Two-stage argv parse (see `src/cli/research.ts` for the full rationale).
+  let progressState: ReturnType<typeof parseProgressFlags>;
+  try {
+    progressState = parseProgressFlags(args);
+  } catch (e) {
+    if (e instanceof ProgressFlagError) {
+      error(`update: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const progress = options.progress ?? buildReporter({ level: progressState.level });
+
   let parsed: UpdateArgs;
   try {
-    parsed = parseArgs(args);
+    parsed = parseArgs(progressState.rest);
   } catch (e) {
     error(`update: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -365,6 +397,14 @@ export async function runUpdate(
     }
   }
 
+  // Phase marker: items resolved.
+  progress.phase(
+    linkedItems.length === 1
+      ? `Loaded item: ${linkedItems[0].id}`
+      : `Loaded ${linkedItems.length} items`,
+    linkedItems.map((i) => i.id).join(", "),
+  );
+
   // Load template.
   const templatesDir = join(cwd, "templates");
   let template: ResearchTemplate;
@@ -374,8 +414,16 @@ export async function runUpdate(
     error(`update: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
+  progress.phase(`Loaded template: ${templateId}.md`);
 
   log(`update: invoking ${agent} adapter for research '${prevFm.id}' -> ${base}_v${newVersion}.md`);
+
+  // Phase marker + spinner for the agent run. See `research.ts` for the
+  // shared pattern.
+  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
+  progress.start("Agent running");
+  const adapterStartedAt = Date.now();
+  const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
 
   // Invoke adapter. We do not snapshot the predecessor file: the adapter
   // writes a new file at outputPath; if it fails, no rollback is necessary
@@ -394,11 +442,16 @@ export async function runUpdate(
       items: linkedItems,
       outputPath,
       cwd,
+      onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {
+    polling.stop();
+    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
     error(`update: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
+  polling.stop();
+  progress.succeed("Agent completed (exit 0)", Date.now() - adapterStartedAt);
 
   // Re-read and validate the produced file.
   if (!(await pathExists(outputPath))) {
@@ -473,6 +526,16 @@ export async function runUpdate(
     const rewritten = matter.stringify(parsedDoc.content, corrected, matterOptions);
     await writeFile(outputPath, rewritten, "utf8");
   }
+  // Phase marker emitted after the optional auto-correction so the user sees
+  // "validated" only once the on-disk file is known to satisfy the schema.
+  progress.phase("Frontmatter validated");
+  // `update` deliberately preserves items.yaml status (ADR-0008). We still
+  // surface a status phase marker so the progress stream stays uniform with
+  // research / review — the value just records the no-op transition.
+  progress.phase(
+    `Status: ${linkedItems[0].status} → ${linkedItems[0].status}`,
+    "items.yaml unchanged per ADR-0008",
+  );
 
   log(`update: wrote ${outputPath}`);
   log(`update: supersedes ${prevFm.id} (items.yaml status unchanged per ADR-0008)`);

@@ -6,10 +6,18 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
+import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import type { AgentId, Item } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import {
+  buildAgentProgressCallback,
+  buildReporter,
+  ProgressFlagError,
+  parseProgressFlags,
+  pollOutputFileSize,
+} from "./_progress.js";
 import type { Command } from "./index.js";
 
 /**
@@ -37,6 +45,12 @@ export interface ReviewIO {
 export interface ReviewCommandOptions {
   cwd?: string;
   io?: ReviewIO;
+  /**
+   * Test-only override for the {@link ProgressReporter}. When omitted, the
+   * CLI constructs one from `--verbose` / `--quiet` / `RADAR_NO_PROGRESS`
+   * (ADR-0015 D2).
+   */
+  progress?: ProgressReporter;
 }
 
 interface ReviewArgs {
@@ -85,6 +99,11 @@ function printHelp(log: (m: string) => void): void {
     "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
   );
   log("  --template <id>       Template id under templates/ (default: default)");
+  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
+  log(
+    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
+  );
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
   log("");
   log("Appends a review block to research/<research-id>.md, stamps the");
   log("frontmatter `reviewedAt` / `reviewedBy`, and transitions the linked");
@@ -199,9 +218,24 @@ export async function runReview(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // See `src/cli/research.ts` for the rationale of the two-stage parse:
+  // we strip `--verbose` / `--quiet` first so the command-local parser only
+  // sees the review-specific argv.
+  let progressState: ReturnType<typeof parseProgressFlags>;
+  try {
+    progressState = parseProgressFlags(args);
+  } catch (e) {
+    if (e instanceof ProgressFlagError) {
+      error(`review: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const progress = options.progress ?? buildReporter({ level: progressState.level });
+
   let parsed: ReviewArgs;
   try {
-    parsed = parseArgs(args);
+    parsed = parseArgs(progressState.rest);
   } catch (e) {
     error(`review: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -335,6 +369,16 @@ export async function runReview(
     }
   }
 
+  // Phase marker: linked items resolved. Review operates on a single
+  // research file but multiple items may back it (digest); list them all so
+  // the user can see what's about to be re-touched.
+  progress.phase(
+    linkedItems.length === 1
+      ? `Loaded item: ${linkedItems[0].id}`
+      : `Loaded ${linkedItems.length} items`,
+    linkedItems.map((i) => i.id).join(", "),
+  );
+
   // Load template.
   const templatesDir = join(cwd, "templates");
   let template: ResearchTemplate;
@@ -344,6 +388,7 @@ export async function runReview(
     error(`review: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
+  progress.phase(`Loaded template: ${templateId}.md`);
 
   // Snapshot for atomic rollback.
   const itemsDir = join(cwd, "items");
@@ -356,6 +401,13 @@ export async function runReview(
 
   log(`review: invoking ${agent} adapter for research '${preFm.id}'`);
 
+  // Phase marker + spinner for the agent run. See `research.ts` for the
+  // rationale of pairing `phase("Spawning …")` with `start("Agent running")`.
+  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
+  progress.start("Agent running");
+  const adapterStartedAt = Date.now();
+  const polling = pollOutputFileSize({ path: researchPath, reporter: progress });
+
   // Invoke adapter.
   const adapter = getAgentAdapter(agent);
   try {
@@ -367,8 +419,11 @@ export async function runReview(
       researchFrontmatter: preFm,
       researchBody,
       cwd,
+      onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {
+    polling.stop();
+    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
     error(`review: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     // The agent may have partially written to researchPath before failing.
     // Restore the snapshot so the workspace stays consistent.
@@ -385,6 +440,12 @@ export async function runReview(
     }
     return 1;
   }
+
+  // Adapter returned 0 — stop the spinner and surface the duration. The
+  // file-size poll is stopped in both the success and error branches so the
+  // unref'd timer never lingers into the next CLI invocation under test.
+  polling.stop();
+  progress.succeed("Agent completed (exit 0)", Date.now() - adapterStartedAt);
 
   // Re-read and validate the modified research file.
   let postBody: string;
@@ -448,6 +509,7 @@ export async function runReview(
     await restoreSnapshot(snapshot);
     return 1;
   }
+  progress.phase("Frontmatter validated");
 
   // Now transition item status. If this fails (filesystem error, permissions,
   // etc.), restore both the research file and the items snapshot so the
@@ -473,6 +535,10 @@ export async function runReview(
 
   log(`review: stamped ${researchPath} reviewedAt=${postFm.reviewedAt} reviewedBy=${agent}`);
   for (const item of updatedItems) {
+    // Phase marker per item so the digest case (multiple itemIds) is still
+    // explicit about which yaml files moved. Uses the same `Status: a → b`
+    // shape as `research.ts` per ADR-0015 D4.
+    progress.phase("Status: researched → reviewed", `items/${item.sourceId}/${item.id}.yaml`);
     log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
   }
   return 0;
