@@ -235,13 +235,14 @@ gets the same TLS interception as any other HTTPS host.
 ## Fetch timeout / retry tuning
 
 Slow corporate proxies sometimes need longer timeouts. `radar`'s `fetch()`
-adapters (`rss` / `html` / `github-releases` / `npm-registry`) accept two env
-vars to override the defaults:
+adapters (`rss` / `html` / `html-js` / `github-releases` / `npm-registry` /
+`json-api` / `json-feed`) accept these env vars to override the defaults:
 
 | Env var | Default | Purpose |
 |---|---|---|
 | `RADAR_FETCH_TIMEOUT_MS` | `30000` | Per-attempt timeout in milliseconds. |
 | `RADAR_FETCH_RETRIES`    | `2`     | Number of retries after the initial failure (`0` fails immediately). |
+| `RADAR_FETCH_HOST_ALLOWLIST` | _(empty)_ | Comma-separated host literals (e.g. `127.0.0.1,example.test`) that bypass the SSRF blocklist. Testing-only override; private IPs / non-HTTP schemes are otherwise rejected. |
 
 ```bash
 # Looser timeouts for slow proxies
