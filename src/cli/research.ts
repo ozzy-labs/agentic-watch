@@ -22,10 +22,18 @@ const matterOptions = {
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
+import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ItemStatusSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import {
+  buildAgentProgressCallback,
+  buildReporter,
+  ProgressFlagError,
+  parseProgressFlags,
+  pollOutputFileSize,
+} from "./_progress.js";
 import type { Command } from "./index.js";
 
 /**
@@ -49,6 +57,13 @@ export interface ResearchIO {
 export interface ResearchCommandOptions {
   cwd?: string;
   io?: ResearchIO;
+  /**
+   * Test-only override for the {@link ProgressReporter}. When omitted, the
+   * CLI constructs one from `--verbose` / `--quiet` / `RADAR_NO_PROGRESS`
+   * and the TTY auto-detection table (ADR-0015 D2). Tests pin a no-op or a
+   * capturing reporter so assertions are deterministic.
+   */
+  progress?: ProgressReporter;
 }
 
 interface ResearchArgs {
@@ -143,6 +158,11 @@ function printHelp(log: (m: string) => void): void {
   log("                        detection cannot blow the cap from inside a workflow.");
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each item's matchedKeywords (case-insensitive). Default: all.");
+  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
+  log(
+    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
+  );
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
   log("");
   log("Output:");
   log("  single-item:  research/<YYYYMMDD>_<slug>_v1.md (ADR-0003)");
@@ -284,8 +304,10 @@ async function processResearchInvocation(params: {
   log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
+  progress: ProgressReporter;
 }): Promise<number> {
-  const { cwd, items, digest, agent, templateId, template, now, log, warn, error } = params;
+  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
+    params;
 
   for (const item of items) {
     if (item.injectionFlags.length > 0) {
@@ -315,9 +337,27 @@ async function processResearchInvocation(params: {
   const itemDescription = digest
     ? `${items.length} items (${items.map((i) => i.id).join(", ")})`
     : `item '${items[0].id}'`;
+  // Phase marker: items resolved (ADR-0015 D4 "Loaded <noun>"). One marker
+  // per invocation regardless of digest cardinality so the progress stream
+  // stays uniform between single / digest / batch modes.
+  progress.phase(
+    digest ? `Loaded ${items.length} items` : `Loaded item: ${items[0].id}`,
+    items.map((i) => i.id).join(", "),
+  );
+  // Phase marker: template resolved. Echoes the actual template id so a
+  // user running `--template deep-dive` sees the value flow through.
+  progress.phase(`Loaded template: ${templateId}.md`);
   log(`research: invoking ${agent} adapter for ${itemDescription} -> ${filename}`);
 
   const adapter = getAgentAdapter(agent);
+  // Phase marker + spinner: agent spawn. We pair `phase("Spawning …")` with
+  // `start("Agent running…")` so the marker is printed once for scrollback
+  // and the spinner row carries the live `[mm:ss]` heartbeat + metrics.
+  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
+  progress.start("Agent running");
+  const adapterStartedAt = Date.now();
+  const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
+  let adapterExitCode = 0;
   try {
     await adapter.research({
       agent,
@@ -326,10 +366,19 @@ async function processResearchInvocation(params: {
       items,
       outputPath,
       cwd,
+      onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {
+    adapterExitCode = 1;
+    polling.stop();
+    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
     error(`research: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
+  } finally {
+    polling.stop();
+  }
+  if (adapterExitCode === 0) {
+    progress.succeed(`Agent completed (exit ${adapterExitCode})`, Date.now() - adapterStartedAt);
   }
 
   if (!(await pathExists(outputPath))) {
@@ -362,6 +411,10 @@ async function processResearchInvocation(params: {
     }
     return 1;
   }
+  // Phase marker: schema check passed. Emitted before the status transition
+  // so the user sees the validation outcome separately from the items.yaml
+  // write that follows.
+  progress.phase("Frontmatter validated");
   const reviewedDrift = fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
   const supersedesDrift = fmResult.data.supersedes !== null;
   if (reviewedDrift || supersedesDrift) {
@@ -403,6 +456,10 @@ async function processResearchInvocation(params: {
   log(`research: wrote ${outputPath}`);
   for (const item of updated) {
     if (item.status === "researched") {
+      // Phase marker: status transition. We emit one phase per item rather
+      // than collapsing them so the digest case stays explicit about what
+      // moved. The arrow uses U+2192 (→) per ADR-0015 D4 examples.
+      progress.phase(`Status: detected → researched`, `items/${item.sourceId}/${item.id}.yaml`);
       log(`research: items/${item.sourceId}/${item.id}.yaml status -> researched`);
     }
   }
@@ -441,6 +498,7 @@ async function runResearchBatch(
   log: (m: string) => void,
   warn: (m: string) => void,
   error: (m: string) => void,
+  progress: ProgressReporter,
 ): Promise<number> {
   if (parsed.itemIds.length > 0) {
     error(
@@ -535,6 +593,7 @@ async function runResearchBatch(
       log,
       warn,
       error,
+      progress,
     });
     if (exitCode !== 0) {
       error(`research: --batch halted on item '${item.id}' (exit ${exitCode})`);
@@ -554,9 +613,28 @@ export async function runResearch(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip the global --verbose / --quiet flags BEFORE the command-specific
+  // parser sees argv. This keeps `parseArgs` ignorant of progress concerns
+  // (and means a future `radar review --verbose` works the same way without
+  // duplicating flag plumbing per command).
+  let progressState: ReturnType<typeof parseProgressFlags>;
+  try {
+    progressState = parseProgressFlags(args);
+  } catch (e) {
+    if (e instanceof ProgressFlagError) {
+      error(`research: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  // Tests inject a reporter directly; production constructs one from the
+  // flag state. Either way the per-invocation state stays local — there is
+  // no shared global reporter, so concurrent CLI invocations are isolated.
+  const progress = options.progress ?? buildReporter({ level: progressState.level });
+
   let parsed: ResearchArgs;
   try {
-    parsed = parseArgs(args);
+    parsed = parseArgs(progressState.rest);
   } catch (e) {
     error(`research: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -566,7 +644,7 @@ export async function runResearch(
     return 0;
   }
   if (parsed.batch) {
-    return runResearchBatch(parsed, cwd, log, warn, error);
+    return runResearchBatch(parsed, cwd, log, warn, error, progress);
   }
   if (parsed.status !== undefined) {
     error("research: --status requires --batch");
@@ -648,6 +726,7 @@ export async function runResearch(
     log,
     warn,
     error,
+    progress,
   });
 }
 
