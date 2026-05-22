@@ -51,7 +51,7 @@ export interface ProgressMetrics {
 
 3 層構造で動作する:
 
-1. **Phase markers** — 構造化された節目 (Loaded item / Spawning / Agent process started / Agent completed / Frontmatter validated / Status transition)。常に 1 行で出る (TTY / non-TTY 共通)
+1. **Phase markers** — 構造化された節目 (Loaded item / Spawning / Agent completed / Frontmatter validated / Status transition)。常に 1 行で出る (TTY / non-TTY 共通)
 2. **Heartbeat spinner** — TTY 時のみ。1 秒間隔で `[mm:ss]` の経過時間と spinner frame を同一行に上書き表示
 3. **副次メトリクス** — `stdout bytes`、`output file size`、`page x/N` 等。phase markers の括弧書きまたは spinner 行に併記
 
@@ -87,7 +87,6 @@ phase markers は以下の動詞・形を統一する。新規 phase を追加�
 | --- | --- | --- |
 | `Loaded <noun>` | 入力 (item / config / template 等) を読み込み完了 | `Loaded 12 items from queue.jsonl` |
 | `Spawning <agent>` | 子プロセスを spawn する直前 | `Spawning claude-code (cwd: /tmp/feedradar-research-…)` |
-| `Agent process started (PID <N>)` | spawn 直後 | `Agent process started (PID 12345)` |
 | `Agent running… [mm:ss]` | heartbeat tick（spinner 行に併記、TTY のみ上書き） | `⠋ Agent running… [01:23]  stdout: 4.2 KB` |
 | `Agent completed (<duration>, exit <code>)` | 子プロセス終了 | `Agent completed (1m23s, exit 0)` |
 | `<status>` 遷移 | item / pipeline の状態変化 | `Status: detected → researched` |
@@ -96,6 +95,8 @@ phase markers は以下の動詞・形を統一する。新規 phase を追加�
 | `Chromium launching` / `Page navigated to <url>` / `Selector matched` | html-js Playwright phase | (Phase 2) |
 
 phase markers は **副作用を伴わない**（exit code / control flow に影響しない）。デバッグ用の追加情報は phase markers の後ろに括弧書きで添える。
+
+PID 等の補助情報は副次メトリクスに統合する（将来 Phase 3 で adapter インターフェース拡張時に再評価）。
 
 ### D5. 段階的展開計画
 
