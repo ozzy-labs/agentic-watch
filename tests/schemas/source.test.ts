@@ -121,6 +121,107 @@ describe("schemas/source - kind: html-js (ADR-0010)", () => {
   });
 });
 
+describe("schemas/source - kind: json-api (ADR-0012)", () => {
+  const baseJsonApi = {
+    id: "aws-whats-new",
+    kind: "json-api" as const,
+    url: "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new",
+    pagination: {
+      type: "page" as const,
+      param: "page",
+      start: 0,
+      pageSize: 100,
+      pageSizeParam: "size",
+      maxPages: 200,
+    },
+    jsonSelectors: {
+      items: "$.items[*]",
+      title: "$.title",
+      link: "$.url",
+    },
+  };
+
+  it("accepts a minimal json-api source with pagination + jsonSelectors", () => {
+    const result = SourceSchema.parse(baseJsonApi);
+    expect(result.kind).toBe("json-api");
+    expect(result.pagination?.type).toBe("page");
+    expect(result.jsonSelectors?.title).toBe("$.title");
+  });
+
+  it("requires `jsonSelectors` when kind is json-api", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      jsonSelectors: undefined,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path[0] === "jsonSelectors");
+      expect(issue).toBeDefined();
+    }
+  });
+
+  it("requires `pagination` when kind is json-api", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      pagination: undefined,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path[0] === "pagination");
+      expect(issue).toBeDefined();
+    }
+  });
+
+  it("applies default for pagination.maxPages when omitted", () => {
+    const result = SourceSchema.parse({
+      ...baseJsonApi,
+      pagination: { type: "none" },
+    });
+    expect(result.pagination?.maxPages).toBe(20);
+  });
+
+  // biome-ignore-start lint/suspicious/noTemplateCurlyInString: `${VAR}` is
+  // an intentional literal placeholder per ADR-0012 §D5c — recipe YAML stores
+  // the placeholder text and the adapter does the interpolation at runtime.
+  it("accepts http.headers with ${VAR} placeholders", () => {
+    const result = SourceSchema.parse({
+      ...baseJsonApi,
+      http: {
+        method: "GET",
+        headers: { Authorization: "Bearer ${GITHUB_TOKEN}" },
+      },
+    });
+    expect(result.http?.headers.Authorization).toBe("Bearer ${GITHUB_TOKEN}");
+  });
+  // biome-ignore-end lint/suspicious/noTemplateCurlyInString: see preceding comment
+
+  it("rejects http.method other than GET (Phase 1 limit)", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      http: { method: "POST" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts all 6 pagination types", () => {
+    for (const type of ["page", "offset", "cursor", "link-header", "token", "none"] as const) {
+      const result = SourceSchema.safeParse({
+        ...baseJsonApi,
+        pagination: { type, maxPages: 5 },
+      });
+      expect(result.success, `pagination.type=${type} should parse`).toBe(true);
+    }
+  });
+
+  it("rejects unknown pagination.type values", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      pagination: { type: "unknown" },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("schemas/source - SourceJsOptionsSchema (ADR-0010)", () => {
   it("applies defaults for waitUntil and timeout", () => {
     const result = SourceJsOptionsSchema.parse({});

@@ -2,6 +2,7 @@ import type { Source } from "../../schemas/index.js";
 import { githubReleasesAdapter } from "./github-releases.js";
 import { htmlAdapter } from "./html.js";
 import { htmlJsAdapter } from "./html-js.js";
+import { jsonApiAdapter } from "./json-api.js";
 import { npmRegistryAdapter } from "./npm-registry.js";
 import { rssAdapter } from "./rss.js";
 import type { FeedAdapter } from "./types.js";
@@ -12,6 +13,7 @@ const adapters = new Map<Source["kind"], FeedAdapter>([
   [htmlJsAdapter.kind, htmlJsAdapter],
   [githubReleasesAdapter.kind, githubReleasesAdapter],
   [npmRegistryAdapter.kind, npmRegistryAdapter],
+  [jsonApiAdapter.kind, jsonApiAdapter],
 ]);
 
 export function getFeedAdapter(kind: Source["kind"]): FeedAdapter {

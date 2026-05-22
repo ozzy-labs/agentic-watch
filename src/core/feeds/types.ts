@@ -38,6 +38,30 @@ export interface FeedAdapterOptions {
   fetch?: FetchLike;
   /** Previous state for this source (`state/<id>.yaml`). */
   state?: SourceState;
+  /**
+   * Backfill hint (ADR-0012 §D4). When true, adapters that support page
+   * traversal walk all available history pages until `pagination.maxPages`
+   * (or `maxPagesOverride`) is exhausted, emitting items rather than only
+   * the most-recent page. The watcher / CLI propagates this from
+   * `radar watch run --backfill`.
+   *
+   * Adapters that do not support backfill (rss / html / html-js — feed
+   * formats with no pagination contract) simply ignore the flag.
+   */
+  backfill?: boolean;
+  /**
+   * Optional override for the per-source `pagination.maxPages` cap. Used by
+   * `--max-pages N` to widen / narrow the backfill traversal without editing
+   * the source YAML. Adapters that do not paginate ignore this field.
+   */
+  maxPagesOverride?: number;
+  /**
+   * Environment lookup for `${VAR}` interpolation inside `http.headers`
+   * (json-api adapter, ADR-0012 §D5c). Defaults to `process.env`; tests
+   * inject a controlled record so credential-shaped values never escape into
+   * test output / fixtures.
+   */
+  env?: Record<string, string | undefined>;
 }
 
 export interface FeedAdapter {
