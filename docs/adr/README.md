@@ -33,6 +33,7 @@ FeedRadar プロジェクト**内部の**設計判断を記録する。OzzyLabs 
 | [0010](./0010-html-js-adapter-and-distribution.md) | html-js Adapter and Playwright Distribution | Accepted |
 | [0011](./0011-digest-research-output.md) | Digest Research Output | Proposed |
 | [0012](./0012-json-api-adapter-and-recipe-strategy.md) | JSON API Adapter and Recipe Bundling Strategy | Proposed |
+| [0014](./0014-workflow-generate-and-auto-research-safety.md) | Workflow Generate (後追い生成) と自動 research セーフティ方針 | Proposed |
 | [0015](./0015-progress-reporting-ux.md) | Progress Reporting UX | Proposed |
 
 ## 新規 ADR の追加
