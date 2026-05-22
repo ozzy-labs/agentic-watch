@@ -25,7 +25,7 @@ AWS What's New の公式 RSS (`https://aws.amazon.com/about-aws/whats-new/recent
 同様のページング JSON API は AWS だけでなく広く存在する。観測した範囲:
 
 - `dev.to` `https://dev.to/api/articles?page=N`
-- Anthropic news `https://www.anthropic.com/api/news?page=N`
+- Anthropic news（endpoint TBD — 公式 RSS / JSON API が見つかり次第追加。`https://www.anthropic.com/api/news` は 2026-05 時点で 404）
 - OpenAI changelog API
 - Cloudflare changelog API
 - Vercel changelog API
