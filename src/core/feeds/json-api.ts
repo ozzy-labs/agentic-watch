@@ -113,6 +113,15 @@ function buildHeaders(
  * Compute the next URL for `type: link-header` pagination by parsing
  * `Link: <url>; rel="next", <...>; rel="prev"`. Returns `null` when no
  * `rel="next"` is present (= end of pagination).
+ *
+ * NOTE on SSRF: a malicious or compromised upstream could emit a `Link`
+ * header pointing at `http://127.0.0.1:…` / cloud-metadata endpoints. The
+ * host-allowlist defense specified in ADR-0012 §D5b lives in the shared
+ * fetch wrapper (`src/core/feeds/_fetch.ts`), which sees every request URL
+ * regardless of the adapter that produced it; layering the check here would
+ * leave the same gap for `cursor` / `token` pagination and direct
+ * `source.url`. Tracking that wrapper-level enforcement as cross-cutting
+ * work outside this PR's scope.
  */
 function parseLinkHeader(value: string | null): string | null {
   if (!value) return null;
