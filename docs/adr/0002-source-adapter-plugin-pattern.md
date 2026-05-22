@@ -43,7 +43,7 @@ export interface FeedAdapter {
 }
 ```
 
-- `Source["kind"]` は `"rss" | "html" | "html-js" | "github-releases" | "npm-registry"`（[schemas/source.ts](../../src/schemas/source.ts)）。`"html-js"` は [ADR-0010](./0010-html-js-adapter-and-distribution.md) で追加
+- `Source["kind"]` は `"rss" | "html" | "html-js" | "github-releases" | "npm-registry" | "json-api" | "json-feed"`（[schemas/source.ts](../../src/schemas/source.ts)）。`"html-js"` は [ADR-0010](./0010-html-js-adapter-and-distribution.md) で追加、`"json-api"` / `"json-feed"` は [ADR-0012](./0012-json-api-adapter-and-recipe-strategy.md) で追加
 - `core/watcher.ts` は kind から adapter を解決し、interface 経由でのみ fetch を呼ぶ
 - 各 adapter は前回 state（`lastEtag` / `lastSeenIds` 等）を `options.state` から受け取り、新規分の `items` と次回 state への `state` patch を返す。304 / unchanged 時は `notModified: true` で短絡する
 
