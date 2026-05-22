@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectProxyUrl,
+  maskProxyUrl,
   mergeNodeOptions,
   noProxyToPlaywrightBypass,
 } from "../../src/core/proxy.js";
@@ -165,4 +166,45 @@ describe("core/proxy :: noProxyToPlaywrightBypass", () => {
       expect(noProxyToPlaywrightBypass(c.input)).toBe(c.expected);
     });
   }
+});
+
+describe("core/proxy :: maskProxyUrl", () => {
+  it("masks both username and password when both are present", () => {
+    // The doctor command prints the masked form to stdout; the user must
+    // never see their corporate credentials in terminal scrollback.
+    expect(maskProxyUrl("http://user:pass@proxy.corp.example:8080")).toBe(
+      "http://***:***@proxy.corp.example:8080/",
+    );
+  });
+
+  it("masks the username slot even when no password is present", () => {
+    // Some proxies encode service-account tokens in the userinfo slot
+    // without a separate password — those are still sensitive.
+    expect(maskProxyUrl("http://service-token@proxy.corp.example:8080")).toBe(
+      "http://***@proxy.corp.example:8080/",
+    );
+  });
+
+  it("preserves scheme, host, port, path, and query verbatim", () => {
+    // The user needs to verify the proxy address matches what they set;
+    // everything except the credentials must round-trip.
+    const masked = maskProxyUrl("https://u:p@proxy.example:3128/path?token=visible#frag");
+    expect(masked).toMatch(/^https:\/\/\*\*\*:\*\*\*@proxy\.example:3128\/path\?token=visible/);
+  });
+
+  it("leaves credential-less URLs untouched", () => {
+    expect(maskProxyUrl("http://proxy.corp.example:8080")).toBe("http://proxy.corp.example:8080/");
+  });
+
+  it("redacts entirely when the URL fails to parse (fail-safe)", () => {
+    // We must not return the raw string when we couldn't classify the
+    // pieces; better to over-redact than risk leaking malformed creds.
+    expect(maskProxyUrl("not a url")).toBe("***");
+  });
+
+  it("supports socks5 schemes too (ALL_PROXY edge case)", () => {
+    expect(maskProxyUrl("socks5://user:pass@socks.example:1080")).toBe(
+      "socks5://***:***@socks.example:1080",
+    );
+  });
 });
