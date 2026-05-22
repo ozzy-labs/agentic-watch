@@ -52,7 +52,8 @@ radar research --digest <id1> <id2> ...  # bundle multiple items into one digest
 radar dismiss <item-id>       # move an item to dismissed (no LLM)
 radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)
-radar doctor                  # check workspace / agent CLI / Playwright health
+radar doctor                  # check workspace / agent CLI / Playwright / proxy / TLS health
+                              #   --no-proxy-check skips the live proxy round-trip (offline-friendly)
 radar --help                  # help
 ```
 

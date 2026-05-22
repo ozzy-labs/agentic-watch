@@ -7,6 +7,7 @@ import {
   type ProbeOptions,
   probePlaywright,
 } from "../core/playwright-check.js";
+import { detectProxyUrl, maskProxyUrl } from "../core/proxy.js";
 import { loadSources } from "../core/watcher.js";
 import type { Command } from "./index.js";
 
@@ -41,6 +42,26 @@ export interface DoctorCommandOptions {
    * what is actually installed on the host machine).
    */
   whichImpl?: (binary: string, env: NodeJS.ProcessEnv) => Promise<string | undefined>;
+  /**
+   * Skip the live proxy healthcheck (default: run the check when a proxy is
+   * detected). Off-line developer machines and CI jobs that intentionally
+   * isolate the network want a deterministic doctor run without paying for
+   * a network round-trip that is guaranteed to fail.
+   */
+  noProxyCheck?: boolean;
+  /**
+   * Test seam: override `fetch` used by the proxy healthcheck so the test can
+   * drive the 200 / 407 / TLS / ECONNREFUSED branches deterministically
+   * without hitting api.github.com.
+   */
+  fetchImpl?: typeof fetch;
+  /**
+   * Test seam: override the wall-clock used to measure the healthcheck
+   * latency. Returns an elapsed-milliseconds reading; we don't accept a raw
+   * clock function because vitest's `vi.useFakeTimers()` interferes with
+   * `performance.now()` in surprising ways.
+   */
+  nowImpl?: () => number;
 }
 
 /**
@@ -90,6 +111,41 @@ const AGENT_BINARIES: ReadonlyArray<{ agent: string; binary: string }> = [
  * back to `radar init` rather than a cryptic ENOENT later.
  */
 const WORKSPACE_DIRS = ["sources", "items", "state", "research", "templates"] as const;
+
+/**
+ * Public probe URL for the proxy healthcheck. api.github.com is reachable
+ * from virtually every corporate proxy allowlist (since `gh` / `git` / npm
+ * all depend on it), so a failure here is a strong signal that the proxy
+ * config itself is broken rather than just missing this particular host.
+ *
+ * The check is informational only; doctor never escalates a failed
+ * healthcheck to `error` because (a) the user might be running doctor
+ * specifically because the network is down, and (b) a 407 from the proxy is
+ * still a meaningful "proxy reachable, auth missing" state we want to
+ * surface as a hint rather than block on.
+ */
+const PROXY_HEALTHCHECK_URL = "https://api.github.com/zen";
+
+/**
+ * Total upper bound on the healthcheck round-trip. Short enough that
+ * `radar doctor` stays responsive on a broken proxy, long enough that a
+ * slow corporate proxy still gets a chance to respond.
+ */
+const PROXY_HEALTHCHECK_TIMEOUT_MS = 5000;
+
+/**
+ * Node error codes that signal a TLS-intercepting proxy (e.g. Zscaler,
+ * Netskope) replaced the leaf cert with its own CA. The fix is always
+ * `NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem`, so we hint at that variable
+ * in the doctor output.
+ */
+const TLS_INTERCEPT_CODES = new Set([
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "CERT_HAS_EXPIRED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -255,6 +311,108 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     }
   }
 
+  // 5. Proxy + TLS environment. Surfaces three signals so users can debug
+  //    "fetch works on my laptop but not behind the corp proxy" style issues:
+  //
+  //    - `proxy:env`       — which env var is providing the proxy URL (and
+  //                          confirms credentials are masked in our output).
+  //    - `proxy:active`    — whether `NODE_USE_ENV_PROXY` is engaged (the
+  //                          self-respawn path sets it; an external invoker
+  //                          that bypassed our entry-point won't).
+  //    - `tls:ca`          — `NODE_EXTRA_CA_CERTS` status. TLS-intercepting
+  //                          proxies require a custom CA bundle, and the
+  //                          symptom (UNABLE_TO_VERIFY_LEAF_SIGNATURE) is
+  //                          opaque enough to justify a dedicated check.
+  //    - `proxy:healthcheck` — a real HTTPS round-trip via the configured
+  //                          proxy. Skipped when no proxy is detected (no
+  //                          point) or when `--no-proxy-check` is set.
+  const proxyDetection = detectProxyUrl(env);
+  if (proxyDetection) {
+    const masked = maskProxyUrl(proxyDetection.url);
+    if (proxyDetection.allProxyOnly) {
+      // ALL_PROXY alone won't engage `--use-env-proxy`; downgrade to warn so
+      // the user notices and sets HTTPS_PROXY / HTTP_PROXY explicitly.
+      checks.push({
+        id: "proxy:env",
+        status: "warn",
+        message: `proxy: detected via $${proxyDetection.source}=${masked} (Node --use-env-proxy ignores ALL_PROXY; set HTTPS_PROXY or HTTP_PROXY instead)`,
+      });
+    } else {
+      checks.push({
+        id: "proxy:env",
+        status: "ok",
+        message: `proxy: detected via $${proxyDetection.source}=${masked}`,
+      });
+    }
+  } else {
+    checks.push({
+      id: "proxy:env",
+      status: "ok",
+      message: "proxy: no proxy env var set (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY)",
+    });
+  }
+
+  if (env.NODE_USE_ENV_PROXY === "1") {
+    checks.push({
+      id: "proxy:active",
+      status: "ok",
+      message: "proxy: NODE_USE_ENV_PROXY active (auto-applied by radar)",
+    });
+  } else if (proxyDetection && !proxyDetection.allProxyOnly) {
+    // Proxy is set but the respawn sentinel is missing — usually means the
+    // user invoked radar via a path that bypasses bin/index.js (e.g. a script
+    // that imports the modules directly). Warn rather than error because
+    // fetch may still work via other paths (e.g. user set `--use-env-proxy`
+    // in NODE_OPTIONS themselves).
+    checks.push({
+      id: "proxy:active",
+      status: "warn",
+      message:
+        "proxy: NODE_USE_ENV_PROXY not set; if fetch ignores HTTPS_PROXY, re-run radar via the bin (not direct import)",
+    });
+  } else {
+    checks.push({
+      id: "proxy:active",
+      status: "ok",
+      message: "proxy: NODE_USE_ENV_PROXY not required (no proxy detected)",
+    });
+  }
+
+  const caBundle = env.NODE_EXTRA_CA_CERTS;
+  if (caBundle && caBundle.length > 0) {
+    checks.push({
+      id: "tls:ca",
+      status: "ok",
+      message: `tls: NODE_EXTRA_CA_CERTS=${caBundle}`,
+    });
+  } else {
+    checks.push({
+      id: "tls:ca",
+      status: "ok",
+      message: "tls: NODE_EXTRA_CA_CERTS not set (TLS-intercepting proxies may fail)",
+    });
+  }
+
+  if (options.noProxyCheck) {
+    checks.push({
+      id: "proxy:healthcheck",
+      status: "ok",
+      message: "proxy healthcheck: skipped (--no-proxy-check)",
+    });
+  } else if (!proxyDetection) {
+    checks.push({
+      id: "proxy:healthcheck",
+      status: "ok",
+      message: "proxy healthcheck: skipped (no proxy detected)",
+    });
+  } else {
+    const result = await runProxyHealthcheck({
+      fetchImpl: options.fetchImpl,
+      nowImpl: options.nowImpl,
+    });
+    checks.push(result);
+  }
+
   const summary = checks.reduce(
     (acc, c) => {
       acc[c.status]++;
@@ -265,8 +423,154 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
   return { checks, summary };
 }
 
+interface ProxyHealthcheckOptions {
+  fetchImpl?: typeof fetch;
+  nowImpl?: () => number;
+}
+
+/**
+ * Single live HTTPS request through whatever proxy `fetch` picks up. We
+ * deliberately do **not** thread a custom `dispatcher` through fetch here —
+ * the goal is to mirror exactly what the rest of radar (and any of the
+ * spawned agent CLIs) will experience. If the user's proxy is broken,
+ * doctor's report should match.
+ *
+ * Branches:
+ *   - 2xx response          → ok (records status code + latency)
+ *   - 407 Proxy Auth Req    → warn (credentials missing/wrong; not radar's fault)
+ *   - other 4xx/5xx         → warn (proxy reachable but endpoint rejected)
+ *   - TLS-intercept errors  → error (hint NODE_EXTRA_CA_CERTS)
+ *   - ECONNREFUSED / ENOTFOUND / abort timeout → error (proxy unreachable)
+ */
+async function runProxyHealthcheck(opts: ProxyHealthcheckOptions): Promise<DoctorCheck> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const nowImpl = opts.nowImpl ?? (() => performance.now());
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROXY_HEALTHCHECK_TIMEOUT_MS);
+  const start = nowImpl();
+
+  try {
+    const res = await fetchImpl(PROXY_HEALTHCHECK_URL, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    const elapsed = Math.round(nowImpl() - start);
+    if (res.status === 407) {
+      // 407 from the proxy itself; auth missing or wrong. We don't escalate to
+      // error because radar can't tell the user's intended credential strategy.
+      return {
+        id: "proxy:healthcheck",
+        status: "warn",
+        message: `proxy healthcheck: 407 Proxy Authentication Required from ${PROXY_HEALTHCHECK_URL} (check userinfo in $HTTPS_PROXY)`,
+      };
+    }
+    if (res.status >= 200 && res.status < 300) {
+      return {
+        id: "proxy:healthcheck",
+        status: "ok",
+        message: `proxy healthcheck: ok (${res.status} ${res.statusText || "OK"} from api.github.com in ${elapsed}ms)`,
+      };
+    }
+    return {
+      id: "proxy:healthcheck",
+      status: "warn",
+      message:
+        `proxy healthcheck: ${res.status} ${res.statusText || ""} from api.github.com in ${elapsed}ms`.trimEnd(),
+    };
+  } catch (err) {
+    const elapsed = Math.round(nowImpl() - start);
+    return classifyProxyError(err, elapsed);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Map a thrown fetch error onto a DoctorCheck with an actionable hint. We
+ * inspect (a) the abort flag (timeout we control), (b) `error.code` /
+ * `error.cause.code` (Node's network error pathway), and (c) the message
+ * text as a last-resort heuristic. Unknown errors fall through to a generic
+ * "healthcheck failed" line.
+ */
+function classifyProxyError(err: unknown, elapsedMs: number): DoctorCheck {
+  if (err instanceof Error && err.name === "AbortError") {
+    return {
+      id: "proxy:healthcheck",
+      status: "error",
+      message: `proxy healthcheck: timeout after ${elapsedMs}ms (proxy may be unreachable; verify $HTTPS_PROXY host:port)`,
+    };
+  }
+
+  // Node's fetch wraps the underlying network error inside `cause`. We unwrap
+  // up to two levels so undici-style nested errors (TLS errors typically sit
+  // at `cause.cause`) are still classified.
+  const codes = collectErrorCodes(err);
+
+  for (const code of codes) {
+    if (TLS_INTERCEPT_CODES.has(code)) {
+      return {
+        id: "proxy:healthcheck",
+        status: "error",
+        message: `proxy healthcheck: TLS error (${code}). Set NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem to trust your proxy's intercepting CA.`,
+      };
+    }
+    if (code === "ECONNREFUSED") {
+      return {
+        id: "proxy:healthcheck",
+        status: "error",
+        message: `proxy healthcheck: connection refused. Verify the proxy host:port in $HTTPS_PROXY is reachable.`,
+      };
+    }
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+      return {
+        id: "proxy:healthcheck",
+        status: "error",
+        message: `proxy healthcheck: DNS lookup failed (${code}). The proxy host in $HTTPS_PROXY can't be resolved.`,
+      };
+    }
+    if (code === "ECONNRESET" || code === "ETIMEDOUT") {
+      return {
+        id: "proxy:healthcheck",
+        status: "error",
+        message: `proxy healthcheck: connection ${code === "ETIMEDOUT" ? "timed out" : "reset"} (${code}).`,
+      };
+    }
+  }
+
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    id: "proxy:healthcheck",
+    status: "error",
+    message: `proxy healthcheck: failed — ${message}`,
+  };
+}
+
+/**
+ * Walk an Error chain (`err.cause` → `err.cause.cause`) and collect any
+ * `code` properties along the way. Node's fetch error structure varies by
+ * release; treating it as an opaque chain avoids brittle version-pinning.
+ */
+function collectErrorCodes(err: unknown): string[] {
+  const codes: string[] = [];
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (current && typeof current === "object" && "code" in current) {
+      const code = (current as { code?: unknown }).code;
+      if (typeof code === "string") codes.push(code);
+    }
+    if (current && typeof current === "object" && "cause" in current) {
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+  }
+  return codes;
+}
+
 interface DoctorArgs {
   help?: boolean;
+  noProxyCheck?: boolean;
 }
 
 function parseDoctorArgs(args: string[]): DoctorArgs {
@@ -274,6 +578,10 @@ function parseDoctorArgs(args: string[]): DoctorArgs {
   for (const arg of args) {
     if (arg === "-h" || arg === "--help") {
       out.help = true;
+      continue;
+    }
+    if (arg === "--no-proxy-check") {
+      out.noProxyCheck = true;
       continue;
     }
     if (arg.startsWith("--")) {
@@ -285,7 +593,7 @@ function parseDoctorArgs(args: string[]): DoctorArgs {
 }
 
 function printDoctorHelp(log: (m: string) => void): void {
-  log("Usage: radar doctor");
+  log("Usage: radar doctor [--no-proxy-check]");
   log("");
   log("Diagnose the workspace and report dependency / configuration health.");
   log("");
@@ -294,6 +602,13 @@ function printDoctorHelp(log: (m: string) => void): void {
   log("  - radar.config.yaml schema validity");
   log("  - Agent CLI availability (claude / codex / gemini / copilot)");
   log("  - Playwright + Chromium install (only if html-js sources configured)");
+  log("  - Proxy env vars (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY) with credential masking");
+  log("  - NODE_USE_ENV_PROXY status (engaged when radar self-respawned for proxy)");
+  log("  - NODE_EXTRA_CA_CERTS status (required for TLS-intercepting proxies)");
+  log("  - Live proxy healthcheck (HTTPS request to api.github.com)");
+  log("");
+  log("Options:");
+  log("  --no-proxy-check  Skip the live proxy healthcheck (offline-friendly)");
   log("");
   log("Exit codes:");
   log("  0  all ok (warnings may appear, but no errors)");
@@ -326,7 +641,13 @@ export async function runDoctor(
     return 0;
   }
 
-  const report = await runDoctorChecks(options);
+  // CLI flag wins over the option seam. Tests typically pass `noProxyCheck`
+  // through `options`; users pass `--no-proxy-check`. OR semantics mean either
+  // path can opt out without the other interfering.
+  const report = await runDoctorChecks({
+    ...options,
+    noProxyCheck: options.noProxyCheck ?? parsed.noProxyCheck,
+  });
   for (const check of report.checks) {
     const tag =
       check.status === "ok" ? "[ok]   " : check.status === "warn" ? "[warn]  " : "[error]";

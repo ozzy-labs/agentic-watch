@@ -783,22 +783,30 @@ agent が最新情報を取得しても material な変更が無いと判断し�
 
 ### `radar doctor`
 
-ワークスペース / 依存ツールの health check を実行する。`html-js` source を使う前の事前確認や、`watch run` / `research` が想定どおり動かないときの切り分け用。
+ワークスペース / 依存ツールの health check を実行する。`html-js` source を使う前の事前確認、`watch run` / `research` が想定どおり動かないときの切り分け、企業プロキシ環境での疎通確認に使う。
 
-実行内容（[#114](https://github.com/ozzy-labs/feedradar/issues/114)）:
+実行内容（[#114](https://github.com/ozzy-labs/feedradar/issues/114) / [#163](https://github.com/ozzy-labs/feedradar/issues/163)）:
 
-1. `radar.config.yaml` / `sources/*.yaml` の妥当性確認（schema 違反を列挙）
-2. agent CLI (`claude` / `codex` / `gemini` / `copilot`) の install 確認 (`which` 相当)
-3. **`html-js` source が登録されている場合のみ**:
+1. workspace ディレクトリ (`sources/` `items/` `state/` `research/` `templates/`) の存在確認
+2. `radar.config.yaml` / `sources/*.yaml` の妥当性確認（schema 違反を列挙）
+3. agent CLI (`claude` / `codex` / `gemini` / `copilot`) の install 確認 (`which` 相当)
+4. **`html-js` source が登録されている場合のみ**:
    - `import("playwright")` を試行 → 失敗なら `npm i -g playwright` を案内
    - Chromium binary の存在確認 (`playwright` の `chromium.executablePath()`) → 失敗なら `npx playwright install chromium` を案内
-4. workspace ディレクトリ (`sources/` `items/` `state/` `research/` `templates/`) の存在確認
+5. プロキシ環境変数 (`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`) の検出。`http://user:pass@host:port` 形式の URL は **`http://***:***@host:port` にマスクされて出力される**（認証情報がスクロールバック / CI ログに漏れない）
+6. `NODE_USE_ENV_PROXY` の有効化状態（radar の self-respawn 経由で `--use-env-proxy` が有効化されているか）
+7. `NODE_EXTRA_CA_CERTS` の設定状態（TLS-intercepting proxy 環境で必須）
+8. **proxy が検出された場合のみ** `api.github.com` への HTTPS round-trip を実行し、`200 OK` / `407 Proxy Authentication Required` / TLS エラー / `ECONNREFUSED` / DNS エラー / タイムアウトを分類して表示。TLS エラー (`UNABLE_TO_VERIFY_LEAF_SIGNATURE` / `SELF_SIGNED_CERT_IN_CHAIN` 等) を検知した場合は `NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem` を案内する
 
-出力フォーマットは各チェックを `ok` / `warn` / `error` の 3 段階で列挙し、最後に集計サマリ。warn は exit code に影響しない、error が 1 件でもあれば exit code `1`。
+オプション:
+
+| フラグ | 用途 |
+|---|---|
+| `--no-proxy-check` | live healthcheck をスキップ（オフライン環境 / CI のネットワーク隔離ジョブ向け）。proxy:env / proxy:active / tls:ca の静的チェックは引き続き実行される |
+
+出力フォーマットは各チェックを `ok` / `warn` / `error` の 3 段階で列挙し、最後に集計サマリ。warn は exit code に影響しない、error が 1 件でもあれば exit code `1`。proxy healthcheck の失敗は **`error` だが、proxy が検出されていない・`--no-proxy-check` 指定時はスキップ扱い**（`ok`）で exit code には影響しない。
 
 CI で自動 install したい場合は環境変数 `RADAR_AUTO_INSTALL_CHROMIUM=1` を `radar watch run` 側でセットすると Chromium 不在時に `npx playwright install chromium` を spawn する（`radar doctor` 自体は read-only で install を行わない）。Playwright npm package 自体の install (`npm i -g playwright`) は radar が代行しない（global npm install の権限問題を避けるため、ユーザー側で実行を強制する設計）。
-
-> このサブコマンドの実装は #114 で進行中（2026-05-17 時点）。実装が確定したら本ドキュメントの記述と差異があれば別 follow-up PR で同期する。
 
 ## radar.config.yaml
 

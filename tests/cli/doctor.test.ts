@@ -258,6 +258,243 @@ describe("cli/doctor", () => {
     });
   });
 
+  describe("proxy / TLS environment checks", () => {
+    // Common helper: every proxy test wants the workspace scaffolded (so the
+    // workspace warnings don't drown out our proxy assertions) and the
+    // healthcheck disabled by default (the proxy:env / tls:ca branches don't
+    // need a live request).
+    async function runWithEnv(env: NodeJS.ProcessEnv, opts: { noProxyCheck?: boolean } = {}) {
+      await scaffold(workdir);
+      return runDoctorChecks({
+        cwd: workdir,
+        env,
+        whichImpl: whichReturning({}),
+        noProxyCheck: opts.noProxyCheck ?? true,
+      });
+    }
+
+    it("reports no proxy env var set when none is configured", async () => {
+      const report = await runWithEnv({});
+      const env = report.checks.find((c) => c.id === "proxy:env");
+      expect(env?.status).toBe("ok");
+      expect(env?.message).toContain("no proxy env var set");
+    });
+
+    it("masks credentials in the detected proxy URL (acceptance #2)", async () => {
+      const report = await runWithEnv({
+        HTTPS_PROXY: "http://corpuser:s3cret@proxy.corp.example:8080",
+      });
+      const env = report.checks.find((c) => c.id === "proxy:env");
+      expect(env?.status).toBe("ok");
+      // Credentials must NOT leak into doctor output.
+      expect(env?.message).not.toContain("corpuser");
+      expect(env?.message).not.toContain("s3cret");
+      // Masked placeholders must appear in their place.
+      expect(env?.message).toContain("***:***");
+      expect(env?.message).toContain("proxy.corp.example:8080");
+      // The source env var name must be surfaced so the user can locate the
+      // value in their shell config.
+      expect(env?.message).toContain("$HTTPS_PROXY");
+    });
+
+    it("warns when only ALL_PROXY is set (Node ignores it for fetch)", async () => {
+      const report = await runWithEnv({ ALL_PROXY: "socks5://socks.example:1080" });
+      const env = report.checks.find((c) => c.id === "proxy:env");
+      expect(env?.status).toBe("warn");
+      expect(env?.message).toContain("ALL_PROXY");
+    });
+
+    it("reports NODE_USE_ENV_PROXY=1 as active (radar self-respawn engaged)", async () => {
+      const report = await runWithEnv({
+        HTTPS_PROXY: "http://proxy.example:8080",
+        NODE_USE_ENV_PROXY: "1",
+      });
+      const active = report.checks.find((c) => c.id === "proxy:active");
+      expect(active?.status).toBe("ok");
+      expect(active?.message).toContain("NODE_USE_ENV_PROXY active");
+    });
+
+    it("warns when proxy is set but NODE_USE_ENV_PROXY is not", async () => {
+      const report = await runWithEnv({ HTTPS_PROXY: "http://proxy.example:8080" });
+      const active = report.checks.find((c) => c.id === "proxy:active");
+      expect(active?.status).toBe("warn");
+      expect(active?.message).toContain("NODE_USE_ENV_PROXY not set");
+    });
+
+    it("reports NODE_USE_ENV_PROXY not required when no proxy is set", async () => {
+      const report = await runWithEnv({});
+      const active = report.checks.find((c) => c.id === "proxy:active");
+      expect(active?.status).toBe("ok");
+      expect(active?.message).toContain("not required");
+    });
+
+    it("surfaces NODE_EXTRA_CA_CERTS when set (TLS-intercept proxy support)", async () => {
+      const report = await runWithEnv({ NODE_EXTRA_CA_CERTS: "/etc/ssl/corp-ca.pem" });
+      const tls = report.checks.find((c) => c.id === "tls:ca");
+      expect(tls?.status).toBe("ok");
+      expect(tls?.message).toContain("/etc/ssl/corp-ca.pem");
+    });
+
+    it("notes when NODE_EXTRA_CA_CERTS is not set (still ok, but mentions risk)", async () => {
+      const report = await runWithEnv({});
+      const tls = report.checks.find((c) => c.id === "tls:ca");
+      expect(tls?.status).toBe("ok");
+      expect(tls?.message).toContain("not set");
+      expect(tls?.message).toContain("TLS-intercepting");
+    });
+  });
+
+  describe("proxy healthcheck", () => {
+    async function setupWithProxy() {
+      await scaffold(workdir);
+    }
+
+    it("skips the healthcheck with --no-proxy-check (acceptance #3)", async () => {
+      await setupWithProxy();
+      const fetchSpy = vi.fn();
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        noProxyCheck: true,
+        fetchImpl: fetchSpy as never,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("ok");
+      expect(hc?.message).toContain("skipped");
+      expect(hc?.message).toContain("--no-proxy-check");
+      // Most importantly: no network call attempted.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("skips the healthcheck when no proxy is detected (no point)", async () => {
+      await setupWithProxy();
+      const fetchSpy = vi.fn();
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: {},
+        whichImpl: whichReturning({}),
+        fetchImpl: fetchSpy as never,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("ok");
+      expect(hc?.message).toContain("skipped (no proxy");
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("reports ok on 200 with status code + latency", async () => {
+      await setupWithProxy();
+      // Fake fetch returns a synthetic Response-shaped object. We use a
+      // hand-rolled object instead of `new Response()` so the test stays
+      // compatible with Node's slightly stricter Response constructor when
+      // the URL parser rejects custom schemes.
+      const fetchImpl = (async () => ({
+        status: 200,
+        statusText: "OK",
+      })) as unknown as typeof fetch;
+      // Deterministic clock so the latency assertion is stable.
+      let t = 1000;
+      const nowImpl = () => {
+        const v = t;
+        t += 234;
+        return v;
+      };
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        fetchImpl,
+        nowImpl,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("ok");
+      expect(hc?.message).toContain("200");
+      expect(hc?.message).toContain("api.github.com");
+      expect(hc?.message).toContain("234ms");
+    });
+
+    it("warns on 407 Proxy Authentication Required", async () => {
+      await setupWithProxy();
+      const fetchImpl = (async () => ({
+        status: 407,
+        statusText: "Proxy Authentication Required",
+      })) as unknown as typeof fetch;
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        fetchImpl,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("warn");
+      expect(hc?.message).toContain("407");
+      // Hint must point users to the credential slot in their env var.
+      expect(hc?.message).toContain("$HTTPS_PROXY");
+    });
+
+    it("reports error and hints NODE_EXTRA_CA_CERTS on TLS-intercept errors", async () => {
+      await setupWithProxy();
+      // Simulate the undici-style nested error structure: outer Error with
+      // a `cause` whose `code` is a TLS intercept code.
+      const tlsError = Object.assign(new Error("fetch failed"), {
+        cause: Object.assign(new Error("certificate"), {
+          code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        }),
+      });
+      const fetchImpl = (async () => {
+        throw tlsError;
+      }) as unknown as typeof fetch;
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        fetchImpl,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("error");
+      expect(hc?.message).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      expect(hc?.message).toContain("NODE_EXTRA_CA_CERTS");
+    });
+
+    it("reports error on ECONNREFUSED with a reachable-host hint", async () => {
+      await setupWithProxy();
+      const refused = Object.assign(new Error("fetch failed"), {
+        cause: Object.assign(new Error("connect"), { code: "ECONNREFUSED" }),
+      });
+      const fetchImpl = (async () => {
+        throw refused;
+      }) as unknown as typeof fetch;
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        fetchImpl,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("error");
+      expect(hc?.message).toContain("connection refused");
+      expect(hc?.message).toContain("$HTTPS_PROXY");
+    });
+
+    it("reports error on timeout (AbortError) with the elapsed time", async () => {
+      await setupWithProxy();
+      const fetchImpl = (async () => {
+        const e = new Error("aborted");
+        e.name = "AbortError";
+        throw e;
+      }) as unknown as typeof fetch;
+      const report = await runDoctorChecks({
+        cwd: workdir,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        fetchImpl,
+      });
+      const hc = report.checks.find((c) => c.id === "proxy:healthcheck");
+      expect(hc?.status).toBe("error");
+      expect(hc?.message).toContain("timeout");
+    });
+  });
+
   describe("CLI surface", () => {
     it("prints status lines and a summary, exits 0 when no errors", async () => {
       await scaffold(workdir);
@@ -268,6 +505,10 @@ describe("cli/doctor", () => {
         env: {},
         whichImpl: whichReturning({ claude: "/usr/local/bin/claude" }),
         probeOptions: { importPlaywright: async () => ({ chromium: {} }) },
+        // Deterministic doctor run for the CLI surface test: no env → no
+        // proxy → no healthcheck attempted, but pin the flag explicitly so a
+        // future env-leak doesn't accidentally trigger a real network call.
+        noProxyCheck: true,
       });
       // No errors -> exit 0 (warnings about missing codex / gemini /
       // copilot are non-blocking by design).
@@ -290,6 +531,7 @@ describe("cli/doctor", () => {
         io,
         env: {},
         whichImpl: whichReturning({}),
+        noProxyCheck: true,
       });
       expect(code).toBe(1);
       expect(captured.log.some((m) => m.startsWith("[error]"))).toBe(true);
@@ -308,6 +550,24 @@ describe("cli/doctor", () => {
       const code = await runDoctor(["--bogus"], { cwd: workdir, io });
       expect(code).toBe(2);
       expect(captured.error.some((m) => m.includes("unknown option"))).toBe(true);
+    });
+
+    it("accepts --no-proxy-check and skips the live healthcheck", async () => {
+      await scaffold(workdir);
+      const { io, captured } = captureIo();
+      const fetchSpy = vi.fn();
+      const code = await runDoctor(["--no-proxy-check"], {
+        cwd: workdir,
+        io,
+        env: { HTTPS_PROXY: "http://proxy.example:8080" },
+        whichImpl: whichReturning({}),
+        probeOptions: { importPlaywright: async () => ({ chromium: {} }) },
+        fetchImpl: fetchSpy as never,
+      });
+      expect(code).toBe(0);
+      // Hint line for the user that the check was intentionally skipped.
+      expect(captured.log.some((m) => m.includes("skipped (--no-proxy-check)"))).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

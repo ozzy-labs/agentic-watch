@@ -110,3 +110,52 @@ export function noProxyToPlaywrightBypass(noProxy: string | undefined): string |
   if (entries.length === 0) return undefined;
   return entries.join(";");
 }
+
+/**
+ * Redact basic-auth credentials from a proxy URL before printing.
+ *
+ * Proxy URLs like `http://user:pass@proxy:8080` are routinely set in env vars
+ * (`HTTPS_PROXY`, `HTTP_PROXY`) at corporate networks. `radar doctor` prints
+ * the detected URL so users can confirm radar is honoring the right env var,
+ * but the credentials must never reach stdout — terminal scrollback, CI
+ * artifact logs, and shared screenshots are all common leak vectors.
+ *
+ * Strategy:
+ * - Userinfo is replaced with `***:***` when **both** username and password
+ *   are present. When only a username is set, it is still replaced (treating
+ *   it as a credential because some proxies encode tokens in the userinfo
+ *   slot without a separate password).
+ * - All other URL components (scheme / host / port / path / query) are
+ *   preserved verbatim so the user can still verify the proxy address.
+ * - Invalid URLs that can't be parsed are returned as `***` rather than the
+ *   original string — better to over-redact than risk leaking malformed
+ *   credentials we couldn't classify.
+ */
+export function maskProxyUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    // We can't tell where the credentials are if parsing failed; treat the
+    // whole string as sensitive. The doctor still tells the user *which*
+    // env var the URL came from, so total redaction is acceptable here.
+    return "***";
+  }
+
+  if (parsed.password) {
+    // Both halves present (or password-only — unusual but spec-valid). Mask
+    // both with `***` so neither leaks into terminal output. We intentionally
+    // don't keep the username "for debugging" because admins often use the
+    // username slot for tokens or service-account names that are themselves
+    // sensitive.
+    parsed.username = "***";
+    parsed.password = "***";
+  } else if (parsed.username) {
+    // Userinfo with no password: some proxies encode service-account tokens
+    // or PATs in the username slot. Replace just the username; keep the URL
+    // shape (no spurious `:` separator) so the output matches the user's env
+    // var format.
+    parsed.username = "***";
+  }
+  return parsed.toString();
+}
