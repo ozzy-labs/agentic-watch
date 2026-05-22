@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import type { Item, Source } from "../../schemas/index.js";
 import { ItemSchema } from "../../schemas/index.js";
+import { fetchWithRetry } from "./_fetch.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
 import type { FeedAdapter, FeedAdapterOptions, FetchLike } from "./types.js";
 
@@ -219,7 +220,7 @@ async function fetchFeed(
   if (options.etag) headers["if-none-match"] = options.etag;
   if (options.lastModified) headers["if-modified-since"] = options.lastModified;
 
-  const response = await fetchImpl(url, { headers, signal: options.signal });
+  const response = await fetchWithRetry(fetchImpl, url, { headers, signal: options.signal });
   const etag = response.headers.get("etag");
   const lastModified = response.headers.get("last-modified");
   if (response.status === 304) {

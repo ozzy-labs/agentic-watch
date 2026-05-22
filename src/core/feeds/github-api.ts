@@ -1,3 +1,4 @@
+import { fetchWithRetry } from "./_fetch.js";
 import type { FetchLike } from "./types.js";
 
 const USER_AGENT = "feedradar/0.0.0 (+https://github.com/ozzy-labs/feedradar)";
@@ -142,7 +143,7 @@ export async function fetchReleases(
   if (options.etag) headers["if-none-match"] = options.etag;
 
   const url = buildReleasesUrl(owner, repo);
-  const response = await fetchImpl(url, { headers, signal: options.signal });
+  const response = await fetchWithRetry(fetchImpl, url, { headers, signal: options.signal });
 
   const rateLimit: RateLimitInfo = {
     remaining: parseIntHeader(response.headers.get("x-ratelimit-remaining")),
