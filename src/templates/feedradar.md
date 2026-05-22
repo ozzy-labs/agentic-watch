@@ -112,7 +112,9 @@ slash で直接呼ぶなら:
 
 ```bash
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
+radar source add <id> --recipe <name> [--keywords ... --tags ... --name ...]  # バンドル recipe で 1 行追加 (ADR-0012)
 radar source list
+radar source recipes                                  # バンドル recipe を一覧表示
 radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
 radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]]

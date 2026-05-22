@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import {
   addSource,
   listSources,
+  recipesSubcommand,
   removeSource,
   runSource,
   testSource,
@@ -1105,6 +1106,336 @@ describe("cli/source", () => {
       const list2Box = captureIo();
       expect(await listSources([], { cwd: workdir, io: list2Box.io })).toBe(0);
       expect(list2Box.captured.log.some((m) => m.includes("no sources defined"))).toBe(true);
+    });
+  });
+
+  describe("recipes (#181)", () => {
+    let recipesDir: string;
+    beforeEach(async () => {
+      // Each test gets its own recipes/ tmpdir so writes in one case do
+      // not leak into another. We inject the path through SourceCommandOptions
+      // rather than monkey-patching the resolver.
+      recipesDir = await mkdtemp(join(tmpdir(), "feedradar-cli-recipes-"));
+    });
+
+    it("`recipes` prints a friendly empty message when no recipes are bundled", async () => {
+      const { io, captured } = captureIo();
+      const code = await recipesSubcommand([], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("no recipes bundled"))).toBe(true);
+    });
+
+    it("`recipes` lists valid bundled recipes with name / kind / description", async () => {
+      await writeFile(
+        join(recipesDir, "aws-whats-new.yaml"),
+        `kind: json-api
+url: https://aws.amazon.com/api/dirs/items/search
+description: AWS What's New feed (full-history backfill)
+pagination:
+  type: page
+  pageSize: 100
+  maxPages: 200
+`,
+        "utf8",
+      );
+      await writeFile(
+        join(recipesDir, "devto.yaml"),
+        `kind: json-api
+url: https://dev.to/api/articles
+description: dev.to articles
+pagination:
+  type: page
+  pageSize: 30
+  maxPages: 20
+`,
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await recipesSubcommand([], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      // Header + 2 entries + apply-hint footer.
+      expect(captured.log.some((m) => m.includes("NAME") && m.includes("KIND"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("aws-whats-new"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("devto"))).toBe(true);
+      // Description text is surfaced verbatim.
+      expect(captured.log.some((m) => m.includes("AWS What's New feed"))).toBe(true);
+      // Sorted: aws-whats-new comes before devto.
+      const awsLine = captured.log.findIndex((m) => m.includes("aws-whats-new"));
+      const devtoLine = captured.log.findIndex((m) => m.includes("devto"));
+      expect(awsLine).toBeLessThan(devtoLine);
+    });
+
+    it("`recipes` separates malformed recipes from the valid set", async () => {
+      await writeFile(
+        join(recipesDir, "good.yaml"),
+        "kind: rss\nurl: https://good.example.com/feed.xml\n",
+        "utf8",
+      );
+      // Invalid: missing `url`.
+      await writeFile(join(recipesDir, "bad.yaml"), "kind: rss\n", "utf8");
+
+      const { io, captured } = captureIo();
+      const code = await recipesSubcommand([], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("good"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("Recipes with errors:"))).toBe(true);
+      expect(
+        captured.log.some((m) => m.includes("bad") && m.includes("schema validation failed")),
+      ).toBe(true);
+    });
+
+    it("`recipes --help` prints usage", async () => {
+      const { io, captured } = captureIo();
+      const code = await recipesSubcommand(["--help"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("Usage:"))).toBe(true);
+    });
+
+    it("`recipes` rejects unknown options", async () => {
+      const { io, captured } = captureIo();
+      const code = await recipesSubcommand(["--nope"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("unknown option"))).toBe(true);
+    });
+
+    it("`add --recipe <name>` writes sources/<id>.yaml from a bundled recipe", async () => {
+      await writeFile(
+        join(recipesDir, "devto.yaml"),
+        `kind: json-api
+url: https://dev.to/api/articles
+description: dev.to articles
+name: Dev.to
+tags:
+  - blog
+filters:
+  keywords:
+    - rust
+pagination:
+  type: page
+  pageSize: 30
+  maxPages: 20
+`,
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await addSource(["devto-rust", "--recipe", "devto"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      const written = parseYaml(
+        await readFile(join(workdir, "sources", "devto-rust.yaml"), "utf8"),
+      );
+      expect(written).toMatchObject({
+        id: "devto-rust",
+        kind: "json-api",
+        url: "https://dev.to/api/articles",
+        name: "Dev.to",
+        tags: ["blog"],
+        filters: { keywords: ["rust"] },
+        pagination: { type: "page", pageSize: 30, maxPages: 20 },
+      });
+      // Recipe description must not leak into the generated source YAML.
+      expect((written as { description?: unknown }).description).toBeUndefined();
+      expect(
+        captured.log.some(
+          (m) => m.includes("created sources/devto-rust.yaml") && m.includes("from recipe"),
+        ),
+      ).toBe(true);
+    });
+
+    it("`add --recipe` honours --keywords / --tags / --name overrides", async () => {
+      await writeFile(
+        join(recipesDir, "devto.yaml"),
+        `kind: json-api
+url: https://dev.to/api/articles
+filters:
+  keywords:
+    - default-kw
+tags:
+  - default-tag
+pagination:
+  type: page
+`,
+        "utf8",
+      );
+
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "custom",
+          "--recipe",
+          "devto",
+          "--keywords",
+          "Rust,tokio",
+          "--exclude-keywords",
+          "draft",
+          "--tags",
+          "rust,lang",
+          "--name",
+          "Custom Display",
+        ],
+        { cwd: workdir, io, recipesRoot: recipesDir },
+      );
+      expect(code).toBe(0);
+      const written = parseYaml(await readFile(join(workdir, "sources", "custom.yaml"), "utf8"));
+      expect(written).toMatchObject({
+        name: "Custom Display",
+        tags: ["rust", "lang"],
+        filters: {
+          keywords: ["Rust", "tokio"],
+          excludeKeywords: ["draft"],
+        },
+      });
+    });
+
+    it("`add --recipe` fails with exit 1 when the recipe does not exist", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(["foo", "--recipe", "ghost"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("'ghost' not found"))).toBe(true);
+    });
+
+    it("`add --recipe` fails when the bundled recipe has invalid YAML", async () => {
+      await writeFile(join(recipesDir, "broken.yaml"), "kind: rss\nurl: '", "utf8");
+      const { io, captured } = captureIo();
+      const code = await addSource(["foo", "--recipe", "broken"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("invalid YAML in recipe 'broken'"))).toBe(true);
+    });
+
+    it("`add --recipe` fails when the bundled recipe fails Zod validation", async () => {
+      // `kind: bogus` is not in the enum.
+      await writeFile(
+        join(recipesDir, "bogus.yaml"),
+        "kind: bogus\nurl: https://x.example/feed\n",
+        "utf8",
+      );
+      const { io, captured } = captureIo();
+      const code = await addSource(["foo", "--recipe", "bogus"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(1);
+      expect(
+        captured.error.some((m) => m.includes("recipe 'bogus' failed schema validation")),
+      ).toBe(true);
+    });
+
+    it("`add --recipe` rejects --kind / --url passthrough flags", async () => {
+      await writeFile(
+        join(recipesDir, "rss.yaml"),
+        "kind: rss\nurl: https://example.com/feed.xml\n",
+        "utf8",
+      );
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["x", "--recipe", "rss", "--kind", "html", "--url", "https://other.example/"],
+        { cwd: workdir, io, recipesRoot: recipesDir },
+      );
+      expect(code).toBe(2);
+      expect(
+        captured.error.some(
+          (m) =>
+            m.includes("--kind") && m.includes("--url") && m.includes("not allowed with --recipe"),
+        ),
+      ).toBe(true);
+    });
+
+    it("`add --recipe` refuses to overwrite an existing sources/<id>.yaml", async () => {
+      await writeFile(
+        join(recipesDir, "rss.yaml"),
+        "kind: rss\nurl: https://example.com/feed.xml\n",
+        "utf8",
+      );
+      // Pre-populate the source file to trigger the no-overwrite guard.
+      await writeFile(
+        join(workdir, "sources", "dup.yaml"),
+        "kind: rss\nurl: https://other.example/\n",
+        "utf8",
+      );
+      const { io, captured } = captureIo();
+      const code = await addSource(["dup", "--recipe", "rss"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("'dup' already exists"))).toBe(true);
+    });
+
+    it("`add --recipe` rejects unsafe recipe names", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(["x", "--recipe", "../escape"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("invalid recipe name"))).toBe(true);
+    });
+
+    it("dispatcher routes `recipes` subcommand", async () => {
+      const { io, captured } = captureIo();
+      const code = await runSource(["recipes"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.some((m) => m.includes("no recipes bundled"))).toBe(true);
+    });
+
+    it("`add --recipe` warns when filters.keywords is empty after merge", async () => {
+      // Recipe has no keywords and the user supplies none — the firehose
+      // guard should fire.
+      await writeFile(
+        join(recipesDir, "empty-kw.yaml"),
+        "kind: rss\nurl: https://example.com/feed.xml\n",
+        "utf8",
+      );
+      const { io, captured } = captureIo();
+      const code = await addSource(["bare", "--recipe", "empty-kw"], {
+        cwd: workdir,
+        io,
+        recipesRoot: recipesDir,
+      });
+      expect(code).toBe(0);
+      expect(
+        captured.warn.some((m) => m.includes("has no keywords") && m.includes("filtered out")),
+      ).toBe(true);
     });
   });
 
