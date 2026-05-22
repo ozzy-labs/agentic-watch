@@ -15,6 +15,7 @@
 - **バンドル recipe**: `radar source recipes` で同梱済み YAML recipe (例: AWS What's New / dev.to) を一覧、`radar source add <id> --recipe <name>` で 1 行で source 化 ([ADR-0012 §D3](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md))。
 - **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
+- **定期実行 workflow 後追い生成**: `radar workflow generate watch` / `combined` で GitHub Actions YAML を CLI から後追い生成。`combined` は watch + 自動 research を `--max-items` ハードキャップ付きで実行し、暴走 feed による LLM cost 爆発を設計レベルで遮断 ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
 ## インストール
@@ -72,6 +73,8 @@ radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要
 radar review <research-id>    # レポートを別エージェントで相互レビュー
 radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
 radar doctor                  # workspace / agent CLI / Playwright の health check
+radar workflow generate watch     # GitHub Actions watch workflow を後追い生成 (ADR-0014)
+radar workflow generate combined  # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
 radar --help                  # ヘルプ
 ```
 

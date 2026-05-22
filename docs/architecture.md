@@ -40,7 +40,7 @@
 │    └─ injection-detector: ADR-0009 M1c regex pre-filter   │
 │  agents/         : 4 CLI アダプタ + _boundary wrap helper │
 │  schemas/        : Zod スキーマ (Source / Item / State / Research / Config) │
-│  cli/            : init / source / watch / research / dismiss / review / update │
+│  cli/            : init / source / watch / research / dismiss / review / update / workflow │
 │  skills/         : engine SKILL bundle (research/review/update) │
 │  claude-skills/  : Claude Code slash-command 雛形         │
 │  gemini-commands/: Gemini CLI TOML slash-command 雛形     │
@@ -64,7 +64,7 @@ bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-comma
 | `core/injection-detector` | `src/core/injection-detector.ts` | ADR-0009 M1c の regex pre-filter + research frontmatter / log への audit 出力 |
 | `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装、`_boundary.ts` で untrusted コンテンツ wrap helper を提供（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c）。skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md) |
 | `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` `Config` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md))。`Config` は `radar.config.yaml` 用 |
-| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update) |
+| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update / workflow)。`workflow.ts` + `workflow/generate-watch.ts` / `workflow/generate-combined.ts` は GitHub Actions workflow YAML の後追い生成 ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。watch / combined の 2 type を実装 (`research` / `review` 単独 type は Phase 2 / #191)。`research` の `--batch` モード ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a) は CLI の `--max-items` ハードキャップを workflow YAML literal と二重防御で固定する |
 
 ## データフロー
 
@@ -179,22 +179,26 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 
 ## Schedule（定期実行）
 
-`radar` 本体は **scheduler を内蔵しない**（[ADR-0004](./adr/0004-schedule-strategy.md)）。`init` の opt-in フラグで、ユーザーが選んだクラウド scheduler 向けの **接続点（雛形）** だけを workspace に書き出す。
+`radar` 本体は **scheduler を内蔵しない**（[ADR-0004](./adr/0004-schedule-strategy.md) / [ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md)）。`init` の opt-in フラグで、ユーザーが選んだクラウド scheduler 向けの **接続点（雛形）** だけを workspace に書き出す。後追いの workflow 追加 / 複数 cadence 共存 / watch + 自動 research の連鎖は `radar workflow generate <type>` で対応する。
 
-| フラグ | 生成先 | 想定 scheduler |
+| コマンド | 生成先 | 想定 scheduler |
 |---|---|---|
 | `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
-| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions |
+| `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (初回 bootstrap) |
+| `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch を **後追い生成** (ADR-0014 D1 / D6) |
+| `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | GitHub Actions watch + 自動 research の連鎖 (ハードキャップ + rebase リトライ内蔵、ADR-0014 D2 / D3 / D4) |
 
 両 scheduler は実行ごとに **fresh clone** を行うため、`sources/` / `items/` / `state/` は **git にコミット済み**である必要がある。生成された雛形は `items/` / `state/` の commit + push 手順を含んでいる（fresh clone でも前回の `lastSeenIds` を引き継げるようにするため）。
 
-雛形は **`watch run` のみを自動化**する。`research` / `review` / `update` は人が triage する設計（ADR-0004）。
+雛形のうち `watch` 系 (`init --with-actions` / `workflow generate watch`) は **`watch run` のみを自動化**、`combined` は **watch + 自動 research の連鎖** を `--max-items` ハードキャップ + `--filter-tags` allow-list で安全に自動化する（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a 二重防御）。`update` は人が triage する設計（ADR-0004）。
 
 ### 認証ポリシー
 
-CI 自動化では **`ANTHROPIC_API_KEY` 等の API キー**を使う。OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）は Anthropic の利用ポリシー上 "ordinary individual use" の範囲外のため雛形では使わない（ADR-0004）。
+CI 自動化では **`ANTHROPIC_API_KEY` 等の API キー**を使う。OAuth トークン（`CLAUDE_CODE_OAUTH_TOKEN`）は Anthropic の利用ポリシー上 "ordinary individual use" の範囲外のため雛形では使わない（ADR-0004 / ADR-0014 D5）。
 
 GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため、`watch.yaml` 雛形は `secrets.GITHUB_TOKEN` を `GITHUB_TOKEN` env として forward する。
+
+`radar workflow generate <type> --agent <name>` の場合も同方針で、`claude-code` → `ANTHROPIC_API_KEY` / `codex-cli` → `OPENAI_API_KEY` / `gemini-cli` → `GEMINI_API_KEY` / `copilot` → `secrets.GITHUB_TOKEN` を自動利用する (ADR-0014 D5)。
 
 ### 既存ファイル保護
 
@@ -237,6 +241,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 - [0010 html-js Adapter and Playwright Distribution](./adr/0010-html-js-adapter-and-distribution.md)
 - [0011 Digest Research Output](./adr/0011-digest-research-output.md)
 - [0012 JSON API Adapter and Recipe Bundling Strategy](./adr/0012-json-api-adapter-and-recipe-strategy.md)
+- [0014 Workflow Generate and Auto-Research Safety](./adr/0014-workflow-generate-and-auto-research-safety.md)
 
 ## 関連 Design Docs
 

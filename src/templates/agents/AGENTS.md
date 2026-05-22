@@ -78,10 +78,17 @@ radar watch run --source aws-whats-new --backfill --max-pages 200
 # 検出済み item に対する操作
 radar research <item-id> --agent <agent>     # 調査レポートを生成 (status: detected -> researched)
 radar research --digest <item-id> <item-id> ... [--agent <agent>]  # 複数 item を 1 digest にまとめる (ADR-0011)
+radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (ADR-0014 D3a、--max-items 既定 10)
 radar review <research-id> --agent <agent>   # 既存レポートをレビュー (status: researched -> reviewed)
 radar update <research-id> --agent <agent>   # v+1 を生成 (item status は変えない)
 radar dismiss <item-id>                       # LLM 不要、item を dismissed に
+
+# GitHub Actions workflow の後追い生成 (ADR-0014)
+radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]
+radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]
 ```
+
+> **自動 research のコスト管理 (重要)**: `radar workflow generate combined` は watch → 自動 research を連鎖する workflow を生成し、`--max-items N` (既定 10) のハードキャップを YAML literal + CLI default の **二重防御**で焼き込む (ADR-0014 D3a)。`--max-items 100` のように大きい値を渡す前に必ず agent provider の billing alert を設定すること。暴走に気付いたら GitHub UI から workflow を `Disable workflow` で即停止する。詳細は `docs/user-guide.md` の「[`radar workflow generate`](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#radar-workflow-generate)」を参照。
 
 `<agent>` の値: `claude-code` / `codex-cli` / `gemini-cli` / `copilot`
 
