@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed（2026-05-23）— 親 epic [#194](https://github.com/ozzy-labs/feedradar/issues/194) の起点 ADR。実装は sub-issue (#196 / #197 / #198 / #199 / #200) に分割。
+Accepted（2026-05-23、Phase 1/2 実装完了 2026-05-23）— 親 epic [#194](https://github.com/ozzy-labs/feedradar/issues/194) の起点 ADR。Phase 1/2 sub-issue (#196 ProgressReporter 抽象 / #197 research/review/update 統合 / #198 watch run / html-js / source test 統合) は merge 済み。D4 (PID phase marker) は #222 で実装に合わせて trim 済み。Phase 3 (hung 検出 / SIGINT graceful / token meter) は #199 で追跡中。
 
 ## Context
 

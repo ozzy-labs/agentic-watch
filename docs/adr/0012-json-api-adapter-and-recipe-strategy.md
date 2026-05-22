@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed（2026-05-22）— 親 epic [#172](https://github.com/ozzy-labs/feedradar/issues/172) の起点 ADR。実装は sub-issue (#173 / #174 / #176 / #177 / #178 / #181 / 他) に分割。本 ADR は **採用方針の確定**のみを行う。
+Accepted（2026-05-22、実装完了 2026-05-23）— 親 epic [#172](https://github.com/ozzy-labs/feedradar/issues/172) の起点 ADR。sub-issue (#173 / #174 / #176 / #177 / #178 / #181 / 他) は全て merge 済み (json-api / json-feed adapter / default selector chain / recipe CLI / bundled recipes / linkBase #204 / SSRF blocklist #206)。
 
 ## Context
 

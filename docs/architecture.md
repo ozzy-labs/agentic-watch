@@ -12,9 +12,12 @@
 │  state/*.yaml         ← 既読 ID / etag                   │
 │  items/*.yaml         ← 検出記事                         │
 │  research/*.md        ← 調査結果（Markdown + frontmatter）│
-│  templates/*.md       ← Markdown テンプレ（ユーザー編集可）│
+│  templates/default.md ← 単体 research レポートのテンプレ（編集可、--no-templates でスキップ）│
+│  templates/digest.md  ← digest research レポートのテンプレ（編集可、ADR-0011） │
 │  AGENTS.md            ← Codex / Gemini / Copilot が auto-read する │
 │                          agent-agnostic instructions (--no-agents-md でスキップ) │
+│  CLAUDE.md            ← Claude Code 用 (@AGENTS.md を import、--no-claude-md でスキップ) │
+│  FEEDRADAR.md         ← 人間向け workspace ガイド (--no-feedradar-md でスキップ) │
 │  .agents/skills/...   ← 4 CLI 共通 engine SKILL (SSoT, dual-mode)│
 │  .claude/skills/...   ← Claude Code slash-command 雛形    │
 │                          (薄い wrapper、--no-claude-skills でスキップ) │
@@ -40,15 +43,16 @@
 │    └─ injection-detector: ADR-0009 M1c regex pre-filter   │
 │  agents/         : 4 CLI アダプタ + _boundary wrap helper │
 │  schemas/        : Zod スキーマ (Source / Item / State / Research / Config) │
-│  cli/            : init / source / watch / research / dismiss / review / update / workflow │
+│  cli/            : init / source / watch / research / dismiss / review / update / doctor / workflow │
 │  skills/         : engine SKILL bundle (research/review/update) │
 │  claude-skills/  : Claude Code slash-command 雛形         │
 │  gemini-commands/: Gemini CLI TOML slash-command 雛形     │
-│  templates/      : workspace 既定 (agents/claude/routines/workflows) │
+│  templates/      : workspace 既定 (default.md / digest.md / agents/AGENTS.md / claude/CLAUDE.md / feedradar.md / routines / workflows) │
+│  recipes/        : 公式 JSON API recipe バンドル (ADR-0012) │
 └────────────────────────────────────────────────────────────┘
 ```
 
-bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-commands/` / `templates/`) は `init` コマンドがユーザー workspace に配布する load-bearing アセット ([ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md))。`scripts/copy-skills.mjs` が build 時に `dist/` 配下にコピーする。
+bundled-asset 5 ディレクトリ (`skills/` / `claude-skills/` / `gemini-commands/` / `templates/` / `recipes/`) は `init` / `source recipes` コマンドがユーザー workspace / runtime に配布・参照する load-bearing アセット ([ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md) / [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md))。`scripts/copy-skills.mjs` が build 時に `dist/` 配下にコピーする。
 
 ## モジュール責務
 
@@ -64,7 +68,7 @@ bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-comma
 | `core/injection-detector` | `src/core/injection-detector.ts` | ADR-0009 M1c の regex pre-filter + research frontmatter / log への audit 出力 |
 | `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装、`_boundary.ts` で untrusted コンテンツ wrap helper を提供（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c）。skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md) |
 | `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` `Config` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md))。`Config` は `radar.config.yaml` 用 |
-| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update / workflow)。`workflow.ts` + `workflow/generate-watch.ts` / `workflow/generate-combined.ts` は GitHub Actions workflow YAML の後追い生成 ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。watch / combined の 2 type を実装 (`research` / `review` 単独 type は Phase 2 / #191)。`research` の `--batch` モード ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a) は CLI の `--max-items` ハードキャップを workflow YAML literal と二重防御で固定する |
+| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update / doctor / workflow)。`doctor.ts` は workspace / agent CLI / Playwright + Chromium / proxy / TLS の health check ([#114](https://github.com/ozzy-labs/feedradar/issues/114) / [#163](https://github.com/ozzy-labs/feedradar/issues/163))。`workflow.ts` + `workflow/generate-watch.ts` / `workflow/generate-combined.ts` は GitHub Actions workflow YAML の後追い生成 ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。watch / combined の 2 type を実装 (`research` / `review` 単独 type は Phase 2 / #191)。`research` の `--batch` モード ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a) は CLI の `--max-items` ハードキャップを workflow YAML literal と二重防御で固定する。`_progress.ts` は `--verbose` / `--quiet` フラグの共通パーサ ([ADR-0015](./adr/0015-progress-reporting-ux.md)) |
 
 ## データフロー
 
@@ -242,6 +246,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 - [0011 Digest Research Output](./adr/0011-digest-research-output.md)
 - [0012 JSON API Adapter and Recipe Bundling Strategy](./adr/0012-json-api-adapter-and-recipe-strategy.md)
 - [0014 Workflow Generate and Auto-Research Safety](./adr/0014-workflow-generate-and-auto-research-safety.md)
+- [0015 Progress Reporting UX](./adr/0015-progress-reporting-ux.md)
 
 ## 関連 Design Docs
 
