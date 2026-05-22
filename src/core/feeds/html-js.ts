@@ -54,6 +54,15 @@ import type { FeedAdapter, FeedAdapterOptions } from "./types.js";
  */
 const DEFAULT_TIMEOUT_MS = 30_000;
 /**
+ * Default delay before the adapter emits a `Still waiting for "<sel>"…`
+ * reminder during `waitForSelector` (#198). Chosen at ~33% of the default
+ * 30s timeout so the user gets a heads-up well before the actual timeout
+ * fires; the reminder is purely informational and never causes the wait
+ * itself to abort. Override via `HtmlJsAdapterOptions.stillWaitingMs` in
+ * tests.
+ */
+const DEFAULT_STILL_WAITING_MS = 10_000;
+/**
  * Default Playwright `page.goto()` waitUntil mode. `networkidle` is the
  * safest default for SPA / CSR pages where item data arrives via XHR after
  * the document has loaded.
@@ -129,6 +138,14 @@ export interface HtmlJsAdapterOptions extends FeedAdapterOptions {
    * deterministically testable without polluting the real process env.
    */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Test seam (#198): override the `Still waiting…` reminder threshold in
+   * milliseconds. Production hardcodes 10s (a third of the default 30s
+   * timeout) so the prediction triggers well before the actual selector
+   * timeout. Tests shrink it so the reminder fires deterministically without
+   * blocking the suite on real time.
+   */
+  stillWaitingMs?: number;
 }
 
 /**
@@ -167,6 +184,12 @@ export const htmlJsAdapter: FeedAdapter = {
     const playwright = options.playwright ?? (await loadPlaywright());
     const previous = options.state;
     const fetchedAt = new Date().toISOString();
+    // Progress reporter is optional — callers that did not opt in see the
+    // pre-#198 no-op behavior. Marker names follow ADR-0015 D4
+    // ("Chromium launching" / "Page navigated to <url>" etc.) verbatim so
+    // the user-guide stays accurate without per-call docstrings.
+    const progress = options.onProgress;
+    const stillWaitingMs = options.stillWaitingMs ?? DEFAULT_STILL_WAITING_MS;
 
     // Probe proxy env BEFORE launch. Playwright's `BrowserType.launch()` does
     // not honor `HTTPS_PROXY` / `HTTP_PROXY` automatically (unlike Node's
@@ -193,6 +216,7 @@ export const htmlJsAdapter: FeedAdapter = {
 
     // Hardening: headless is forced true. Even if a future Playwright default
     // changes, the adapter pins it explicitly here.
+    progress?.phase("Launching Chromium…");
     const browser = await playwright.chromium.launch({
       headless: true,
       ...(proxyOption ? { proxy: proxyOption } : {}),
@@ -209,8 +233,35 @@ export const htmlJsAdapter: FeedAdapter = {
       try {
         const page = await context.newPage();
         try {
+          progress?.phase(`Navigating to ${source.url}…`);
           await page.goto(source.url, { waitUntil, timeout });
-          await page.waitForSelector(waitFor, { timeout });
+          progress?.phase(`Waiting for selector "${waitFor}" (timeout: ${timeout}ms)…`);
+          // Long-running selector waits warrant a `Still waiting…` reminder
+          // so the user knows the adapter is alive (not hung). The timer is
+          // set up only when a progress reporter is wired so we do not keep
+          // an idle interval running in the no-progress fast path. `unref()`
+          // (when supported) lets the event loop exit if the underlying
+          // wait resolves quickly — we still clear the timer below in
+          // `finally`.
+          let stillWaitingTimer: NodeJS.Timeout | undefined;
+          if (progress && stillWaitingMs > 0) {
+            const startedAt = Date.now();
+            stillWaitingTimer = setTimeout(() => {
+              const elapsed = Date.now() - startedAt;
+              const mm = String(Math.floor(elapsed / 60_000)).padStart(2, "0");
+              const ss = String(Math.floor((elapsed % 60_000) / 1000)).padStart(2, "0");
+              progress.phase(`Still waiting for "${waitFor}"… [${mm}:${ss}]`);
+            }, stillWaitingMs);
+            if (typeof (stillWaitingTimer as { unref?: () => void }).unref === "function") {
+              (stillWaitingTimer as { unref: () => void }).unref();
+            }
+          }
+          try {
+            await page.waitForSelector(waitFor, { timeout });
+          } finally {
+            if (stillWaitingTimer) clearTimeout(stillWaitingTimer);
+          }
+          progress?.phase("Capturing page content…");
           html = await page.content();
         } finally {
           // `finally` guarantees page close even on goto / waitFor timeout —
@@ -221,6 +272,7 @@ export const htmlJsAdapter: FeedAdapter = {
         await context.close();
       }
     } finally {
+      progress?.phase("Closing browser…");
       await browser.close();
     }
 

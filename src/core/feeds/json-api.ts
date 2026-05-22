@@ -570,6 +570,7 @@ export const jsonApiAdapter: FeedAdapter = {
     const backfill = options.backfill === true;
     const dryRun = options.dryRun === true;
     const warn = options.warn ?? (() => {});
+    const onPage = options.onPage;
     const maxPages = effectiveMaxPages(pagination, backfill, options.maxPagesOverride);
 
     let currentUrl = initialUrl(source, pagination);
@@ -674,6 +675,43 @@ export const jsonApiAdapter: FeedAdapter = {
 
       items.push(...pageItems);
 
+      // Backfill-mode early stop via `totalPath`: if the recipe declared a
+      // total-count selector, narrow the page budget so we exit after the
+      // implied last page rather than walking the full `maxPages` cap. We
+      // only consult `totalPath` on page 0 because the value is unlikely to
+      // change mid-traversal and re-evaluating per page would cost an extra
+      // JSONPath walk for negligible benefit.
+      //
+      // Applied BEFORE the `onPage` callback below so the user-visible
+      // `Page N/M` denominator already reflects the narrowed cap on the
+      // very first page event (otherwise the spinner ratio would jump
+      // from `1/20` to `1/2` between page 0 and page 1, which reads as a
+      // bug).
+      if (backfill && pagination.totalPath && pageIndex === 0) {
+        const totalRaw = selectOne(pagination.totalPath, response.body);
+        const total = typeof totalRaw === "number" ? totalRaw : Number(coerceString(totalRaw));
+        if (Number.isFinite(total) && total > 0 && pagination.pageSize) {
+          const computedMax = Math.max(1, Math.ceil(total / pagination.pageSize));
+          if (computedMax < effectiveCap) {
+            effectiveCap = computedMax;
+          }
+        }
+      }
+
+      // Surface per-page progress to the CLI spinner / non-TTY log (#198).
+      // The callback is invoked before any early-exit checks below so the
+      // user always sees a final `Page N/N` event for the page that decided
+      // termination. `effectiveCap` is the denominator the loop will respect
+      // (recipe `maxPages`, narrowed by `totalPath` on page 0 in backfill
+      // mode above), so the user-visible ratio shrinks as the budget tightens.
+      if (onPage) {
+        onPage({
+          pageIndex,
+          pageTotal: effectiveCap,
+          items: pageItems.length,
+        });
+      }
+
       // Stop when the page yielded zero items — protects against runaway
       // pagination on broken recipes / empty trailing pages.
       if (matches.length === 0) break;
@@ -693,23 +731,6 @@ export const jsonApiAdapter: FeedAdapter = {
         matches.length < pagination.pageSize
       ) {
         break;
-      }
-
-      // Backfill-mode early stop via `totalPath`: if the recipe declared a
-      // total-count selector, narrow the page budget so we exit after the
-      // implied last page rather than walking the full `maxPages` cap. We
-      // only consult `totalPath` on page 0 because the value is unlikely to
-      // change mid-traversal and re-evaluating per page would cost an extra
-      // JSONPath walk for negligible benefit.
-      if (backfill && pagination.totalPath && pageIndex === 0) {
-        const totalRaw = selectOne(pagination.totalPath, response.body);
-        const total = typeof totalRaw === "number" ? totalRaw : Number(coerceString(totalRaw));
-        if (Number.isFinite(total) && total > 0 && pagination.pageSize) {
-          const computedMax = Math.max(1, Math.ceil(total / pagination.pageSize));
-          if (computedMax < effectiveCap) {
-            effectiveCap = computedMax;
-          }
-        }
       }
 
       // Compute next URL.

@@ -1115,3 +1115,89 @@ describe("core/feeds/json-api — error handling", () => {
     expect(result.diag?.selectorAdoption?.link).toBe("$.url");
   });
 });
+
+describe("core/feeds/json-api — onPage progress callback (#198)", () => {
+  it("fires onPage once per page with 0-based index, items count, and cap denominator", async () => {
+    // Three pages with shrinking item counts so the last page (under
+    // pageSize=2) also exercises the trailing-partial-page early stop.
+    // We assert the callback fires exactly once per fetched page; the
+    // partial-page break should still emit the final event before exit.
+    const source = makeSource({
+      pagination: { type: "page", param: "page", start: 0, pageSize: 2, maxPages: 5 },
+    });
+    const { fetch } = mockFetch([
+      { status: 200, body: pageBody(0, 2) },
+      { status: 200, body: pageBody(2, 2) },
+      { status: 200, body: pageBody(4, 1) },
+    ]);
+    const events: Array<{ pageIndex: number; pageTotal: number; items: number }> = [];
+    const result = await jsonApiAdapter.fetch(source, {
+      fetch,
+      backfill: true,
+      onPage: (info) => events.push(info),
+    });
+    expect(result.items).toHaveLength(5);
+    expect(events).toEqual([
+      { pageIndex: 0, pageTotal: 5, items: 2 },
+      { pageIndex: 1, pageTotal: 5, items: 2 },
+      // The trailing partial page still emits its event before the
+      // page-size early-stop short-circuits the loop.
+      { pageIndex: 2, pageTotal: 5, items: 1 },
+    ]);
+  });
+
+  it("does not fire onPage on 304 (notModified short-circuit)", async () => {
+    // 304 on page 0 sets notModified and breaks before the items list is
+    // resolved — there is no page-0 event to surface metrics for.
+    const source = makeSource({
+      pagination: { type: "page", param: "page", start: 0, pageSize: 2, maxPages: 5 },
+    });
+    const { fetch } = mockFetch([{ status: 304 }]);
+    const events: Array<{ pageIndex: number; pageTotal: number; items: number }> = [];
+    const result = await jsonApiAdapter.fetch(source, {
+      fetch,
+      state: { sourceId: source.id, lastEtag: '"prev"', lastSeenIds: [] },
+      onPage: (info) => events.push(info),
+    });
+    expect(result.notModified).toBe(true);
+    expect(events).toEqual([]);
+  });
+
+  it("uses the totalPath-narrowed cap as the pageTotal denominator", async () => {
+    // The recipe declares maxPages=20, but totalPath ($.total=3) with
+    // pageSize=2 implies ceil(3/2)=2 pages, so the denominator should be
+    // 2 — that is what the user wants the spinner ratio to reflect.
+    const source = makeSource({
+      pagination: {
+        type: "page",
+        param: "page",
+        start: 0,
+        pageSize: 2,
+        maxPages: 20,
+        totalPath: "$.total",
+      },
+    });
+    const body = (idsStart: number, count: number) =>
+      JSON.stringify({
+        total: 3,
+        items: Array.from({ length: count }, (_, i) => ({
+          id: `t-${idsStart + i}`,
+          title: `T ${idsStart + i}`,
+          url: `https://x.example/${idsStart + i}`,
+        })),
+      });
+    const { fetch } = mockFetch([
+      { status: 200, body: body(0, 2) },
+      { status: 200, body: body(2, 1) },
+    ]);
+    const events: Array<{ pageIndex: number; pageTotal: number; items: number }> = [];
+    await jsonApiAdapter.fetch(source, {
+      fetch,
+      backfill: true,
+      onPage: (info) => events.push(info),
+    });
+    // totalPath narrows the cap to 2 — both events should report 2 as the
+    // denominator so the user sees a meaningful Page 1/2, Page 2/2.
+    expect(events.map((e) => e.pageTotal)).toEqual([2, 2]);
+  });
+});

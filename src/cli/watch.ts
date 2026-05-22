@@ -1,4 +1,5 @@
 import type { installChromium, ProbeOptions } from "../core/playwright-check.js";
+import { createProgressReporter, type ProgressLevel } from "../core/progress.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
 import type { Command } from "./index.js";
 
@@ -46,6 +47,15 @@ interface WatchRunArgs {
    * Ignored without `--backfill`.
    */
   maxPages?: number;
+  /**
+   * Progress verbosity level (#198 / ADR-0015 D2). Mutually exclusive:
+   * `--verbose` enables stdout pass-through, `--quiet` suppresses the
+   * progress reporter entirely (only the legacy 1-line per source log
+   * remains). Unspecified leaves the level at `normal` so the reporter
+   * picks behaviour from TTY auto-detection + `RADAR_NO_PROGRESS`.
+   */
+  verbose?: boolean;
+  quiet?: boolean;
   help?: boolean;
 }
 
@@ -79,6 +89,14 @@ function parseRunArgs(args: string[]): WatchRunArgs {
       out.maxPages = n;
       continue;
     }
+    if (a === "--verbose" || a === "-v") {
+      out.verbose = true;
+      continue;
+    }
+    if (a === "--quiet" || a === "-q") {
+      out.quiet = true;
+      continue;
+    }
     if (a?.startsWith("--")) {
       throw new Error(`unknown option: ${a}`);
     }
@@ -93,6 +111,13 @@ function parseRunArgs(args: string[]): WatchRunArgs {
   }
   if (out.maxPages !== undefined && !out.backfill) {
     throw new Error("--max-pages requires --backfill");
+  }
+  // `--verbose` enables agent stdout pass-through; `--quiet` suppresses
+  // every progress line. Allowing both would force an arbitrary winner —
+  // reject up front so the user picks one explicitly. Mirrors the
+  // research / review / update CLI (#197) which adopted the same rule.
+  if (out.verbose && out.quiet) {
+    throw new Error("--verbose and --quiet are mutually exclusive");
   }
   return out;
 }
@@ -111,6 +136,9 @@ function printWatchHelp(log: (m: string) => void): void {
   log("                    Supported fully by kind: json-api / github-releases / npm-registry.");
   log("                    Other kinds (rss / html / html-js) only return their current page.");
   log("  --max-pages N     Override pagination.maxPages cap (requires --backfill).");
+  log("  -v, --verbose     Enable progress-reporter raw() pass-through (adapter stdout).");
+  log("  -q, --quiet       Suppress the per-source progress reporter (legacy 1-line log");
+  log("                    remains). RADAR_NO_PROGRESS=1 has the same effect.");
 }
 
 /**
@@ -138,6 +166,14 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
     return 0;
   }
 
+  // Construct the progress reporter once and let the watcher's heuristic
+  // decide whether to actually use it. Quiet wins over verbose (parser
+  // already rejected the conflict above, but the type signature still
+  // needs a single value); `createProgressReporter` itself honours
+  // `RADAR_NO_PROGRESS=1` as a higher-priority escape hatch.
+  const level: ProgressLevel = parsed.quiet ? "quiet" : parsed.verbose ? "verbose" : "normal";
+  const progress = createProgressReporter({ level });
+
   let result: WatchRunResult;
   try {
     result = await watchRun({
@@ -153,6 +189,7 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
       env: options.env,
       playwrightProbeOptions: options.playwrightProbeOptions,
       installChromiumImpl: options.installChromiumImpl,
+      progress,
     });
   } catch (e) {
     error(`watch run: ${e instanceof Error ? e.message : String(e)}`);
