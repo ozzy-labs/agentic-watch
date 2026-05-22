@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { Item, Source, SourceState } from "../schemas/index.js";
 import { SourceSchema } from "../schemas/index.js";
-import type { FeedAdapter, FetchLike } from "./feeds/index.js";
+import type { FeedAdapter, FeedFetchDiag, FetchLike } from "./feeds/index.js";
 import { getFeedAdapter } from "./feeds/index.js";
 import { filterItems } from "./filter.js";
 import { detectInjection } from "./injection-detector.js";
@@ -145,6 +145,17 @@ export interface WatchRunResult {
    * shape stable across `dryRun` / non-`dryRun` callers.
    */
   stats: Record<string, { fetched: number; filtered: number }>;
+  /**
+   * Per-source diagnostic payload returned by adapters that produce one
+   * (currently only `kind: json-api` — see `FeedFetchDiag`). Populated for
+   * every source whose fetch returned a `diag` field; missing entries are
+   * legal and indicate the adapter does not surface diagnostics.
+   *
+   * Consumers (`radar source test --show-content`) render this alongside
+   * the matched-items preview so users can audit which default selector
+   * chain candidate was adopted and how pagination would advance.
+   */
+  diag: Record<string, FeedFetchDiag>;
 }
 
 function defaultPaths(opts: WorkspacePaths): Required<WorkspacePaths> {
@@ -231,10 +242,16 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     } else {
       log("watch run: no sources defined (use `radar source add ...`)");
     }
-    return { detected: {}, states: {}, errors: [], stats: {} };
+    return { detected: {}, states: {}, errors: [], stats: {}, diag: {} };
   }
 
-  const result: WatchRunResult = { detected: {}, states: {}, errors: [], stats: {} };
+  const result: WatchRunResult = {
+    detected: {},
+    states: {},
+    errors: [],
+    stats: {},
+    diag: {},
+  };
 
   // Lazy Playwright probe cache. We only run the probe when the first
   // `html-js` source comes up so RSS / GitHub / npm-only workspaces never pay
@@ -316,10 +333,21 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
         backfill: options.backfill,
         maxPagesOverride: options.maxPagesOverride,
         env: options.env,
+        // In dry-run mode (`radar source test`), paginating adapters fetch
+        // only page 0 so the preview never walks past the recipe's first
+        // window. Non-paginating adapters ignore the flag.
+        dryRun: options.dryRun,
+        // Surface adapter-level non-fatal hints (default-selector misses on
+        // json-api, etc.) through the same warn sink we use for
+        // schema-mismatch / playwright-skip messages.
+        warn: (m) => warn(`watch run: ${m}`),
       });
       fetched = fetchResult.items;
       nextStatePatch = fetchResult.state;
       notModified = fetchResult.notModified ?? false;
+      if (fetchResult.diag) {
+        result.diag[source.id] = fetchResult.diag;
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       error(`watch run: '${source.id}' fetch failed: ${message}`);

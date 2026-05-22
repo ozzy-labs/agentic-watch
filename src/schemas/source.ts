@@ -177,15 +177,20 @@ export type SourcePagination = z.infer<typeof SourcePaginationSchema>;
  *
  * Every selector is a JSONPath-lite expression (`src/core/feeds/_jsonpath.ts`).
  *
- * - `items` extracts the per-item list from the response. When omitted the
- *   adapter falls back to a default selector chain
- *   (`$.items[*] || $.data[*] || $.results[*] || $.posts[*] || $.entries[*] || $[*]`).
- * - `title` is required to derive a slug-friendly `Item.id`.
- * - `link` is required because `Item.url` is the only field every downstream
- *   consumer (research / review / dedup) depends on.
- * - `publisherId` is preferred for stable id derivation; the adapter falls
- *   back to `link` URL when omitted.
- * - `summary` / `publishedAt` / `body` / `tags` are optional.
+ * Every field is optional. When omitted the adapter falls back to a default
+ * selector chain per field (#174 / ADR-0012 §D2 defaults). For "simple"
+ * page-based APIs (dev.to, JSON Feed-shaped) the recipe can therefore omit
+ * `jsonSelectors` entirely (or use just `{}`) and rely on:
+ *
+ *   items       — `$.items[*] || $.data[*] || $.results[*] || $.posts[*] || $.entries[*] || $[*]`
+ *   title       — `$.title || $.name || $.headline`
+ *   link        — `$.url || $.link || $.permalink || $.html_url`
+ *   publishedAt — `$.publishedAt || $.published_at || $.date || $.created_at || $.pubDate`
+ *   summary     — `$.summary || $.description || $.excerpt || $.body`
+ *
+ * - `publisherId` has no fallback chain (stable id derivation falls through
+ *   to `link` URL by default; see `derive-id.ts`).
+ * - `body` / `tags` have no fallback chain (rarely needed for normalization).
  *
  * Note that selectors are evaluated against each item element (already
  * dereferenced via `items`), so paths inside this schema commonly use `$` as
@@ -193,8 +198,8 @@ export type SourcePagination = z.infer<typeof SourcePaginationSchema>;
  */
 export const SourceJsonApiSelectorsSchema = z.object({
   items: z.string().min(1).optional(),
-  title: z.string().min(1),
-  link: z.string().min(1),
+  title: z.string().min(1).optional(),
+  link: z.string().min(1).optional(),
   publisherId: z.string().min(1).optional(),
   summary: z.string().min(1).optional(),
   publishedAt: z.string().min(1).optional(),
@@ -276,13 +281,10 @@ export const SourceSchema = z
       });
     }
     if (value.kind === "json-api") {
-      if (value.jsonSelectors === undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["jsonSelectors"],
-          message: "jsonSelectors is required when kind is 'json-api'",
-        });
-      }
+      // `jsonSelectors` is now optional — when omitted the adapter relies on
+      // its default selector chain (ADR-0012 §D2 / #174). Most "simple"
+      // page-based APIs work with just `pagination` set; complex shapes
+      // (AWS What's New, nested fields) still need explicit selectors.
       if (value.pagination === undefined) {
         ctx.addIssue({
           code: "custom",

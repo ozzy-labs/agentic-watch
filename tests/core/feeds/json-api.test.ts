@@ -440,6 +440,266 @@ describe("core/feeds/json-api — selectors fallback chain", () => {
     expect(result.items).toHaveLength(2);
     expect(result.items[0]?.title).toBe("X");
   });
+
+  it("falls back to $.name for title when $.title is absent (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", link: "$.url" }, // no title
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [{ name: "Named Entry", url: "https://x.example/n" }],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items[0]?.title).toBe("Named Entry");
+    expect(result.diag?.selectorAdoption?.title).toBe("$.name");
+  });
+
+  it("falls back to $.headline for title at the end of the chain (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", link: "$.url" },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [{ headline: "Headline Only", url: "https://x.example/h" }],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items[0]?.title).toBe("Headline Only");
+    expect(result.diag?.selectorAdoption?.title).toBe("$.headline");
+  });
+
+  it("falls back through $.link / $.permalink / $.html_url for link (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", title: "$.title" },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            { title: "uses link", link: "https://x.example/l" },
+            { title: "uses permalink", permalink: "https://x.example/p" },
+            { title: "uses html_url", html_url: "https://x.example/h" },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items).toHaveLength(3);
+    // Adoption records the path that won on the *first* item only.
+    expect(result.diag?.selectorAdoption?.link).toBe("$.link");
+  });
+
+  it("falls back through publishedAt candidates ($.published_at, $.date, …) (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", title: "$.title", link: "$.url" },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            {
+              title: "T",
+              url: "https://x.example/t",
+              published_at: "2026-05-12T09:00:00Z",
+            },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items[0]?.publishedAt).toBe("2026-05-12T09:00:00.000Z");
+    expect(result.diag?.selectorAdoption?.publishedAt).toBe("$.published_at");
+  });
+
+  it("falls back through summary candidates ($.description, $.excerpt) (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", title: "$.title", link: "$.url" },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            {
+              title: "T",
+              url: "https://x.example/t",
+              description: "Short blurb",
+            },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items[0]?.summary).toBe("Short blurb");
+    expect(result.diag?.selectorAdoption?.summary).toBe("$.description");
+  });
+
+  it("emits a warning when every default chain candidate misses (#174)", async () => {
+    // Nested-only field — the default $.title / $.name / $.headline all
+    // miss because the data lives under `additionalFields.headline`. The
+    // adapter should warn the user that a default-chain field returned
+    // null so they know to add an explicit selector.
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { items: "$.items[*]", link: "$.url" }, // no title selector
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            {
+              url: "https://x.example/n",
+              additionalFields: { headline: "Buried Title" },
+            },
+          ],
+        }),
+      },
+    ]);
+    const warnings: string[] = [];
+    const result = await jsonApiAdapter.fetch(source, {
+      fetch,
+      warn: (m) => warnings.push(m),
+    });
+    expect(result.diag?.selectorAdoption?.title).toBeNull();
+    expect(warnings.some((w) => w.includes("title") && w.includes("aws-whats-new"))).toBe(true);
+  });
+
+  it("does not warn for an explicitly-declared selector that returns null (#174)", async () => {
+    // When the recipe explicitly declares a selector, missing values are
+    // the user's responsibility — no warning. Otherwise every test recipe
+    // with `summary: $.summary` against bodies missing `summary` would
+    // emit a warning, which is too noisy.
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: {
+        items: "$.items[*]",
+        title: "$.title",
+        link: "$.url",
+        summary: "$.body.text", // explicit, will miss
+      },
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [{ title: "T", url: "https://x.example/t" }],
+        }),
+      },
+    ]);
+    const warnings: string[] = [];
+    await jsonApiAdapter.fetch(source, { fetch, warn: (m) => warnings.push(m) });
+    expect(warnings.some((w) => w.includes("summary"))).toBe(false);
+  });
+
+  it("records 'items' adoption path in diag (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "none", maxPages: 20 },
+      jsonSelectors: { title: "$.title", link: "$.url" }, // no items declared
+    });
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          results: [{ title: "Adopted", url: "https://x.example/a" }],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.diag?.selectorAdoption?.items).toBe("$.results[*]");
+  });
+});
+
+describe("core/feeds/json-api — dry-run / pagination preview (#174)", () => {
+  it("fetches only page 0 in dry-run mode even with multi-page recipe", async () => {
+    const source = makeSource(); // type: page, pageSize: 2, maxPages: 20
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: pageBody(1, 2) },
+      // No further responses queued — adapter must not request them.
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch, dryRun: true });
+    expect(calls).toHaveLength(1);
+    expect(result.items).toHaveLength(2);
+    expect(result.diag?.paginationPreview?.strategy).toBe("page");
+    // The would-be next URL is computed but not fetched.
+    expect(result.diag?.paginationPreview?.nextUrl).toContain("page=1");
+  });
+
+  it("surfaces Link header rel=next in diag without fetching it (#174)", async () => {
+    const source = makeSource({
+      pagination: { type: "link-header", maxPages: 20 },
+    });
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: pageBody(1, 1),
+        headers: {
+          Link: '<https://example.com/api?page=2>; rel="next"',
+        },
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch, dryRun: true });
+    expect(calls).toHaveLength(1);
+    expect(result.diag?.paginationPreview?.linkHeaderNext).toBe("https://example.com/api?page=2");
+    expect(result.diag?.paginationPreview?.nextUrl).toBe("https://example.com/api?page=2");
+  });
+
+  it("surfaces nextCursor in diag for cursor pagination (#174)", async () => {
+    const source = makeSource({
+      pagination: {
+        type: "cursor",
+        param: "after",
+        nextCursorPath: "$.nextCursor",
+        maxPages: 20,
+      },
+    });
+    const { fetch, calls } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [{ title: "T", url: "https://x.example/t" }],
+          nextCursor: "abc123",
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch, dryRun: true });
+    expect(calls).toHaveLength(1);
+    expect(result.diag?.paginationPreview?.nextCursor).toBe("abc123");
+    expect(result.diag?.paginationPreview?.nextUrl).toContain("after=abc123");
+  });
+
+  it("reports nextUrl: null when pagination ends at page 0 (#174)", async () => {
+    // pageSize=10, page-0 returns 1 item → end-of-pagination heuristic
+    // means there is no meaningful next page. The preview should reflect
+    // that with `nextUrl: null` so `source test` shows "(end of pagination)"
+    // instead of a misleading URL.
+    const source = makeSource({
+      pagination: {
+        type: "page",
+        param: "page",
+        start: 0,
+        pageSize: 10,
+        maxPages: 20,
+      },
+    });
+    const { fetch } = mockFetch([{ status: 200, body: pageBody(1, 0) }]);
+    const result = await jsonApiAdapter.fetch(source, { fetch, dryRun: true });
+    expect(result.diag?.paginationPreview?.nextUrl).toBeNull();
+  });
 });
 
 describe("core/feeds/json-api — header interpolation", () => {
@@ -719,10 +979,28 @@ describe("core/feeds/json-api — error handling", () => {
     await expect(jsonApiAdapter.fetch(broken, { fetch })).rejects.toThrow(/no pagination/);
   });
 
-  it("rejects sources missing jsonSelectors", async () => {
-    const broken = makeSource();
-    delete (broken as { jsonSelectors?: unknown }).jsonSelectors;
-    const { fetch } = mockFetch([]);
-    await expect(jsonApiAdapter.fetch(broken, { fetch })).rejects.toThrow(/no jsonSelectors/);
+  it("falls back to default selector chain when jsonSelectors is omitted (#174)", async () => {
+    // Schema-level: `jsonSelectors` is now optional for `kind: json-api`
+    // (#174). The adapter resolves every field via its default fallback
+    // chain — simple APIs (dev.to, generic JSON Feed clones) work without
+    // a selectors block at all.
+    const source = makeSource({ pagination: { type: "none", maxPages: 20 } });
+    delete (source as { jsonSelectors?: unknown }).jsonSelectors;
+    const { fetch } = mockFetch([
+      {
+        status: 200,
+        body: JSON.stringify({
+          items: [
+            { title: "Default Chain Works", url: "https://x.example/a" },
+            { title: "Two", url: "https://x.example/b" },
+          ],
+        }),
+      },
+    ]);
+    const result = await jsonApiAdapter.fetch(source, { fetch });
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]?.title).toBe("Default Chain Works");
+    expect(result.diag?.selectorAdoption?.title).toBe("$.title");
+    expect(result.diag?.selectorAdoption?.link).toBe("$.url");
   });
 });

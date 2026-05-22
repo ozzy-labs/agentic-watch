@@ -188,6 +188,240 @@ describe("cli/source", () => {
       });
     });
 
+    it("creates a json-api source with default pagination strategy (#174)", async () => {
+      // No --pagination-* flags → adapter defaults to `type: page` per
+      // the most common shape (dev.to / AWS What's New). `jsonSelectors`
+      // is intentionally omitted from the generated YAML — the default
+      // fallback chain covers simple APIs, and recipe authors edit the
+      // YAML directly when explicit selectors are required.
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        [
+          "devto",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://dev.to/api/articles?per_page=10",
+          "--keywords",
+          "rust",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "devto.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        id: "devto",
+        kind: "json-api",
+        url: "https://dev.to/api/articles?per_page=10",
+        pagination: { type: "page", maxPages: 20 },
+      });
+      // No jsonSelectors block is generated — relies on default chain.
+      expect((parsed as { jsonSelectors?: unknown }).jsonSelectors).toBeUndefined();
+      expect(captured.log.some((m) => m.includes("created sources/devto.yaml"))).toBe(true);
+    });
+
+    it("creates a json-api source with explicit pagination flags (#174)", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "aws",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://aws.amazon.com/api/dirs/items/search",
+          "--keywords",
+          "lambda",
+          "--pagination-strategy",
+          "page",
+          "--pagination-param",
+          "page",
+          "--pagination-start",
+          "0",
+          "--page-size",
+          "100",
+          "--page-size-param",
+          "size",
+          "--max-pages",
+          "200",
+          "--total-path",
+          "$.totalHits",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "aws.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        id: "aws",
+        kind: "json-api",
+        pagination: {
+          type: "page",
+          param: "page",
+          start: 0,
+          pageSize: 100,
+          pageSizeParam: "size",
+          maxPages: 200,
+          totalPath: "$.totalHits",
+        },
+      });
+    });
+
+    it("creates a json-api source with cursor pagination (#174)", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "anthropic",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://www.anthropic.com/api/news",
+          "--keywords",
+          "Claude",
+          "--pagination-strategy",
+          "cursor",
+          "--pagination-param",
+          "after",
+          "--next-cursor-path",
+          "$.pageInfo.endCursor",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "anthropic.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        pagination: {
+          type: "cursor",
+          param: "after",
+          nextCursorPath: "$.pageInfo.endCursor",
+        },
+      });
+    });
+
+    it("rejects an invalid --pagination-strategy value (#174)", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        [
+          "bad",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://x.example/api",
+          "--pagination-strategy",
+          "graphql",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(
+        captured.error.some((m) => m.includes("--pagination-strategy") && m.includes("graphql")),
+      ).toBe(true);
+      // The enum list should appear in the error so users can self-correct.
+      expect(captured.error.some((m) => m.includes("link-header"))).toBe(true);
+    });
+
+    it("rejects a non-integer --page-size value (#174)", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["bad", "--kind", "json-api", "--url", "https://x.example/api", "--page-size", "abc"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--page-size"))).toBe(true);
+    });
+
+    it("rejects --page-size 0 (must be positive) (#174)", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["bad", "--kind", "json-api", "--url", "https://x.example/api", "--page-size", "0"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--page-size"))).toBe(true);
+    });
+
+    it("rejects negative --max-pages (#174)", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["bad", "--kind", "json-api", "--url", "https://x.example/api", "--max-pages", "-1"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--max-pages"))).toBe(true);
+    });
+
+    it("accepts --pagination-start 0 (legal initial offset) (#174)", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "off",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://x.example/api",
+          "--pagination-strategy",
+          "offset",
+          "--pagination-start",
+          "0",
+          "--page-size",
+          "50",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "off.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        pagination: { type: "offset", start: 0, pageSize: 50 },
+      });
+    });
+
+    it("rejects --pagination-* on a non-json-api kind (#174)", async () => {
+      const { io, captured } = captureIo();
+      const code = await addSource(
+        ["bad", "--kind", "rss", "--url", "https://x.example/feed.xml", "--page-size", "10"],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(2);
+      expect(
+        captured.error.some(
+          (m) => m.includes("--pagination-*") && m.includes("only valid with --kind json-api"),
+        ),
+      ).toBe(true);
+    });
+
+    it("combines json-api with existing --keywords / --tags flags (#174)", async () => {
+      const { io } = captureIo();
+      const code = await addSource(
+        [
+          "combo",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://x.example/api",
+          "--keywords",
+          "rust,wasm",
+          "--exclude-keywords",
+          "draft",
+          "--tags",
+          "blog,news",
+          "--name",
+          "Combo Feed",
+          "--page-size",
+          "20",
+        ],
+        { cwd: workdir, io },
+      );
+      expect(code).toBe(0);
+      const parsed = parseYaml(await readFile(join(workdir, "sources", "combo.yaml"), "utf8"));
+      expect(parsed).toMatchObject({
+        name: "Combo Feed",
+        tags: ["blog", "news"],
+        filters: {
+          keywords: ["rust", "wasm"],
+          excludeKeywords: ["draft"],
+        },
+        pagination: { type: "page", pageSize: 20 },
+      });
+    });
+
     it("rejects an html-js source without selectors", async () => {
       const { io, captured } = captureIo();
       const code = await addSource(
@@ -725,6 +959,91 @@ describe("cli/source", () => {
       const out = captured.log.join("\n");
       // RSS description should surface as the content preview.
       expect(out).toContain("Anthropic announced new agents features");
+    });
+
+    it("renders selector adoption + pagination preview for json-api (#174)", async () => {
+      // Use a json-api source with no explicit `jsonSelectors.title` so the
+      // adapter falls through the default chain and adopts `$.headline`.
+      // The pagination preview should report `nextUrl` for page 1 without
+      // actually requesting it (dry-run page-0-only contract).
+      await addSource(
+        [
+          "headlines",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://example.com/api/headlines",
+          "--keywords",
+          "rust",
+          "--page-size",
+          "2",
+        ],
+        { cwd: workdir, io: captureIo().io },
+      );
+      const body = JSON.stringify({
+        items: [
+          {
+            headline: "Rust 2.0 released",
+            url: "https://example.com/r2",
+            description: "Rust 2 lands.",
+          },
+        ],
+      });
+      const { io, captured } = captureIo();
+      const code = await testSource(["headlines", "--show-content"], {
+        cwd: workdir,
+        io,
+        fetch: fetchReturning(body, 200, {}) as never,
+      });
+      expect(code).toBe(0);
+      const out = captured.log.join("\n");
+      expect(out).toContain("selector adoption:");
+      // The default chain adoption renders in Japanese ("採用") per #174 UX.
+      expect(out).toMatch(/title ← \$\.headline を採用/);
+      expect(out).toMatch(/link ← \$\.url を採用/);
+      expect(out).toContain("pagination preview");
+      expect(out).toContain("strategy:  page");
+      expect(out).toMatch(/nextUrl:\s+https/);
+    });
+
+    it("does not fetch page 1 for json-api source test (#174)", async () => {
+      // Even though the recipe declares maxPages=20, dry-run must only
+      // fetch page 0. We assert this by ensuring our fetch stub is called
+      // exactly once.
+      await addSource(
+        [
+          "single-page",
+          "--kind",
+          "json-api",
+          "--url",
+          "https://example.com/api/items",
+          "--keywords",
+          "anything",
+          "--page-size",
+          "1",
+        ],
+        { cwd: workdir, io: captureIo().io },
+      );
+      const body = JSON.stringify({
+        items: [{ title: "anything goes", url: "https://example.com/x" }],
+      });
+      let callCount = 0;
+      const fetchImpl: FetchLike = async () => {
+        callCount++;
+        return {
+          status: 200,
+          headers: { get: () => null },
+          text: async () => body,
+        };
+      };
+      const { io } = captureIo();
+      const code = await testSource(["single-page"], {
+        cwd: workdir,
+        io,
+        fetch: fetchImpl,
+      });
+      expect(code).toBe(0);
+      expect(callCount).toBe(1);
     });
 
     it("exits 1 for an unknown source id (no YAML on disk)", async () => {

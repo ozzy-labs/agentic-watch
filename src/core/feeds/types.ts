@@ -16,6 +16,41 @@ export type FetchLike = (
   text(): Promise<string>;
 }>;
 
+/**
+ * Per-fetch diagnostic information surfaced by an adapter for tooling
+ * (`radar source test --show-content`), never persisted to state/items.
+ *
+ * Currently used by `kind: json-api` to expose which fallback selector
+ * matched per field (so users can audit the default-chain decision) and how
+ * pagination would advance (`Link` header / `nextCursor` extraction) without
+ * the dry-run actually walking past page 0.
+ */
+export interface FeedFetchDiag {
+  /**
+   * For each output field (`items`, `title`, `link`, `publishedAt`,
+   * `summary`), the JSONPath expression the adapter ended up using. The
+   * value is either the path from the recipe (when explicit) or a default
+   * chain candidate (when fallback). `null` means "all candidates returned
+   * undefined" — useful for debugging totally-unmapped fields.
+   */
+  selectorAdoption?: Record<string, string | null>;
+  /**
+   * Pagination preview surfaced from page 0 only. Lets `source test` show
+   * whether the recipe's `pagination` block would advance correctly without
+   * actually fetching page 1 (which would mutate state on real runs).
+   */
+  paginationPreview?: {
+    /** The pagination strategy declared by the recipe. */
+    strategy: string;
+    /** Computed next-page URL (or null when traversal would end here). */
+    nextUrl: string | null;
+    /** `Link: <...>; rel="next"` parse result, when strategy is `link-header`. */
+    linkHeaderNext?: string | null;
+    /** Cursor / token value extracted from `nextCursorPath`, when applicable. */
+    nextCursor?: string | null;
+  };
+}
+
 /** Result of a single adapter fetch — the items plus the next state to persist. */
 export interface FeedFetchResult {
   items: Item[];
@@ -31,6 +66,13 @@ export interface FeedFetchResult {
    * while still bumping `lastFetchedAt`.
    */
   notModified?: boolean;
+  /**
+   * Optional diagnostic payload. Adapters fill this in when they have useful
+   * tooling info (json-api's selector adoption + pagination preview); other
+   * adapters leave it undefined. The watcher propagates it to
+   * `WatchRunResult.diag[sourceId]` so `source test` can render it.
+   */
+  diag?: FeedFetchDiag;
 }
 
 export interface FeedAdapterOptions {
@@ -62,6 +104,22 @@ export interface FeedAdapterOptions {
    * test output / fixtures.
    */
   env?: Record<string, string | undefined>;
+  /**
+   * Dry-run hint (#174). When true, paginating adapters fetch only page 0
+   * (preserving the `radar source test` "no state mutation" contract for
+   * `kind: json-api` where pagination would otherwise walk multiple pages).
+   * Adapters that do not paginate ignore the flag. Tooling can inspect the
+   * computed next-page URL via `FeedFetchResult.diag.paginationPreview`
+   * without an extra round-trip.
+   */
+  dryRun?: boolean;
+  /**
+   * Diagnostic warning sink (#174). Adapters call this for non-fatal
+   * surprises like "all default selector candidates resolved to null". The
+   * watcher / CLI route it to `console.warn` so users notice. Defaults to
+   * a no-op when unset.
+   */
+  warn?: (message: string) => void;
 }
 
 export interface FeedAdapter {

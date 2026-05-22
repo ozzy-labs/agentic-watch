@@ -148,15 +148,31 @@ describe("schemas/source - kind: json-api (ADR-0012)", () => {
     expect(result.jsonSelectors?.title).toBe("$.title");
   });
 
-  it("requires `jsonSelectors` when kind is json-api", () => {
+  it("accepts a json-api source without jsonSelectors (default chain, #174)", () => {
+    // `jsonSelectors` is optional now — the adapter resolves every field via
+    // its default fallback chain (`$.title || $.name || $.headline`, etc.).
     const result = SourceSchema.safeParse({
       ...baseJsonApi,
       jsonSelectors: undefined,
     });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issue = result.error.issues.find((i) => i.path[0] === "jsonSelectors");
-      expect(issue).toBeDefined();
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.jsonSelectors).toBeUndefined();
+    }
+  });
+
+  it("accepts a json-api source where jsonSelectors omits title/link individually (#174)", () => {
+    // Each field of jsonSelectors is independently optional — recipes can
+    // declare just `items` (e.g. for a non-default envelope shape) and let
+    // title/link fall through to the default chain.
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      jsonSelectors: { items: "$.results[*]" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.jsonSelectors?.items).toBe("$.results[*]");
+      expect(result.data.jsonSelectors?.title).toBeUndefined();
     }
   });
 
