@@ -2,6 +2,12 @@ import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { FetchLike } from "../core/feeds/types.js";
+import {
+  listRecipes,
+  loadRecipe,
+  mergeRecipeWithOverrides,
+  type RecipeListEntry,
+} from "../core/recipes.js";
 import { loadSourceState } from "../core/state.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
 import type { Source } from "../schemas/source.js";
@@ -36,6 +42,13 @@ export interface SourceCommandOptions {
    * uniformly to every dispatcher branch.
    */
   fetch?: FetchLike;
+  /**
+   * Test seam: override the directory used to resolve bundled recipes.
+   * `source recipes` and `source add --recipe` both honour this; the real
+   * CLI leaves it unset so the loader falls back to the compiled
+   * `dist/recipes/` (or the source-tree `recipes/`).
+   */
+  recipesRoot?: string;
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -119,6 +132,14 @@ interface AddArgs {
   keywords?: string[];
   excludeKeywords?: string[];
   /**
+   * `--recipe <name>` selects a bundled recipe from `recipes/<name>.yaml`
+   * (ADR-0012 §D3, strategy A). When set, `--kind` / `--url` are
+   * supplied by the recipe and become forbidden; `--keywords` /
+   * `--exclude-keywords` / `--name` / `--tags` may still be passed to
+   * override the recipe defaults at apply time.
+   */
+  recipe?: string;
+  /**
    * `--selector-<field> <css>` accumulator. We collect raw key/value pairs
    * here and let the SourceSelectorsSchema reject unknown fields, so the CLI
    * stays in sync with the schema without a parallel allowlist.
@@ -165,6 +186,12 @@ function parseAddArgs(args: string[]): AddArgs {
     }
     if (a === "--url") {
       out.url = args[++i];
+      continue;
+    }
+    if (a === "--recipe") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.recipe = value;
       continue;
     }
     if (a === "--name") {
@@ -363,12 +390,17 @@ function parseRemoveArgs(args: string[]): RemoveArgs {
 
 function printAddHelp(log: (m: string) => void): void {
   log("Usage: radar source add <id> --kind <kind> --url <url> [options]");
+  log("       radar source add <id> --recipe <name> [overrides]");
   log("");
   log("Options:");
   log(
     "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed | json-api",
   );
   log("  --url <url>              fetch target URL");
+  log("  --recipe <name>          apply a bundled recipe (see `radar source recipes`).");
+  log("                           Mutually exclusive with --kind / --url / --selector-* /");
+  log("                           --pagination-*; --name / --tags / --keywords /");
+  log("                           --exclude-keywords still override the recipe defaults.");
   log("  --name <name>            display name (defaults to <id>)");
   log("  --tags <a,b>             comma-separated tags");
   log("  --keywords <a,b>         comma-separated include keywords");
@@ -442,12 +474,26 @@ function printTestHelp(log: (m: string) => void): void {
   log("                   preview (would-be next URL / Link header / nextCursor).");
 }
 
+function printRecipesHelp(log: (m: string) => void): void {
+  log("Usage: radar source recipes");
+  log("");
+  log("List bundled recipes (recipes/*.yaml in the radar package — ADR-0012 §D3).");
+  log("Each recipe can be applied via:");
+  log("  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
+  log("");
+  log("Bundled recipes ship with the radar npm package; user-authored recipes are");
+  log("not yet supported. To add a new bundled recipe, contribute a YAML to the");
+  log("radar repo's recipes/ directory.");
+}
+
 function printSourceHelp(log: (m: string) => void): void {
-  log("Usage: radar source <add|list|remove|test> [...]");
+  log("Usage: radar source <add|list|recipes|remove|test> [...]");
   log("");
   log("Subcommands:");
   log("  add <id> --kind <kind> --url <url> [...]");
+  log("  add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
   log("  list [--enabled-only]");
+  log("  recipes");
   log("  remove <id>");
   log("  test <id> [--limit N] [--show-content]");
 }
@@ -489,6 +535,18 @@ export async function addSource(
     error(`source add: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
     return 2;
   }
+
+  // `--recipe <name>` short-circuits the flag-based composition: the
+  // recipe supplies kind / url / pagination / selectors / etc., and only
+  // a narrow whitelist of CLI flags is allowed to override
+  // (`--name` / `--tags` / `--keywords` / `--exclude-keywords`).
+  // Everything else (incl. `--kind` / `--url` / `--selector-*` /
+  // `--pagination-*`) is rejected so the user gets an immediate, targeted
+  // error instead of silently-ignored flags. ADR-0012 §D3.
+  if (parsed.recipe !== undefined) {
+    return addSourceFromRecipe(parsed, cwd, options, log, warn, error);
+  }
+
   if (!parsed.kind) {
     error("source add: --kind is required");
     return 2;
@@ -623,6 +681,124 @@ export async function addSource(
   if (validated.data.filters.keywords.length === 0) {
     warn(
       `source add: warning — '${validated.data.id}' has no keywords; all fetched items will be filtered out. Edit sources/${validated.data.id}.yaml or re-add with --keywords to start ingesting.`,
+    );
+  }
+
+  return 0;
+}
+
+/**
+ * Apply a bundled recipe (`--recipe <name>`) to produce a new
+ * `sources/<id>.yaml` (ADR-0012 §D3, strategy A).
+ *
+ * Validation discipline:
+ *
+ * - The recipe supplies `kind` / `url` / structural fields. Re-passing
+ *   them as CLI flags is rejected to prevent the "recipe says one thing,
+ *   flag says another, who wins?" footgun. Only the explicit override
+ *   whitelist (`--name` / `--tags` / `--keywords` /
+ *   `--exclude-keywords`) is honoured.
+ * - `--selector-*` / `--pagination-*` are also rejected on the recipe
+ *   path — these belong to the recipe author. Users who want to deviate
+ *   structurally edit `sources/<id>.yaml` after generation, same as for
+ *   any other source.
+ */
+async function addSourceFromRecipe(
+  parsed: AddArgs,
+  cwd: string,
+  options: SourceCommandOptions,
+  log: (m: string) => void,
+  warn: (m: string) => void,
+  error: (m: string) => void,
+): Promise<number> {
+  const recipeName = parsed.recipe;
+  // Defensive — should be guaranteed by the caller, but `parsed.recipe`
+  // is typed as `string | undefined` so a quick narrow here keeps the
+  // rest of the function tidy.
+  if (recipeName === undefined) {
+    error("source add: --recipe is required (internal dispatch error)");
+    return 2;
+  }
+
+  // Reject flags that the recipe owns. Surfacing each forbidden flag
+  // individually beats a generic "incompatible flags" message because
+  // the user sees exactly what to remove.
+  const forbidden: string[] = [];
+  if (parsed.kind !== undefined) forbidden.push("--kind");
+  if (parsed.url !== undefined) forbidden.push("--url");
+  if (parsed.selectors !== undefined) forbidden.push("--selector-<field>");
+  if (
+    parsed.paginationStrategy !== undefined ||
+    parsed.paginationParam !== undefined ||
+    parsed.paginationStart !== undefined ||
+    parsed.paginationPageSize !== undefined ||
+    parsed.paginationPageSizeParam !== undefined ||
+    parsed.paginationMaxPages !== undefined ||
+    parsed.paginationNextCursorPath !== undefined ||
+    parsed.paginationTotalPath !== undefined
+  ) {
+    forbidden.push("--pagination-*");
+  }
+  if (forbidden.length > 0) {
+    error(
+      `source add: --recipe '${recipeName}' supplies kind / url / structural fields; the following flags are not allowed with --recipe: ${forbidden.join(", ")}`,
+    );
+    return 2;
+  }
+
+  let loaded: Awaited<ReturnType<typeof loadRecipe>>;
+  try {
+    loaded = await loadRecipe(recipeName, { recipesRoot: options.recipesRoot });
+  } catch (e) {
+    error(`source add: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  const candidate = mergeRecipeWithOverrides(loaded.recipe, {
+    // `parsed.id` is asserted non-undefined by the caller before this
+    // function is reached, but TypeScript cannot see that across the
+    // dispatch boundary. The non-null assertion mirrors what the
+    // flag-based path expects from the same guard.
+    // biome-ignore lint/style/noNonNullAssertion: caller-enforced invariant
+    id: parsed.id!,
+    name: parsed.name,
+    tags: parsed.tags,
+    keywords: parsed.keywords,
+    excludeKeywords: parsed.excludeKeywords,
+  });
+
+  const validated = SourceSchema.safeParse(candidate);
+  if (!validated.success) {
+    // A Zod failure on a recipe-derived candidate means the recipe
+    // itself is malformed (or, more rarely, an override produced an
+    // illegal combination). Surface every issue verbatim so recipe
+    // authors and end users can both diagnose.
+    const issues = validated.error.issues.map(
+      (i) => `${i.path.join(".") || "<root>"}: ${i.message}`,
+    );
+    error(`source add: recipe '${recipeName}' produced an invalid source`);
+    for (const issue of issues) {
+      error(`  - ${issue}`);
+    }
+    return 2;
+  }
+
+  const file = sourceFile(cwd, validated.data.id);
+  if (await pathExists(file)) {
+    error(`source add: '${validated.data.id}' already exists (sources/${validated.data.id}.yaml)`);
+    return 1;
+  }
+
+  await writeFile(file, stringifyYaml(validated.data), "utf8");
+  log(`source add: created sources/${validated.data.id}.yaml from recipe '${recipeName}'`);
+
+  // Same firehose-guard hint as the flag-based path: an empty
+  // include-keyword list silently drops every fetched item, which
+  // surprises users when they thought the recipe came with sensible
+  // defaults.
+  if (validated.data.filters.keywords.length === 0) {
+    warn(
+      `source add: warning — '${validated.data.id}' has no keywords; all fetched items will be filtered out. Re-add with --keywords or edit sources/${validated.data.id}.yaml to start ingesting.`,
     );
   }
 
@@ -1015,11 +1191,95 @@ export async function testSource(
 }
 
 /**
+ * Implementation of `source recipes` — list bundled recipes.
+ *
+ * Prints a fixed-width table (NAME / KIND / DESCRIPTION) for each
+ * `recipes/<name>.yaml` that loads cleanly. Recipes that fail to parse
+ * are appended after the valid set with their error so the user can fix
+ * (or report) the recipe without losing the rest of the listing.
+ *
+ * When the bundle is empty or absent (the bootstrap state before #178
+ * ships the actual recipe content), a friendly "no recipes" message is
+ * printed and exit code 0 is returned — the CLI is functional even when
+ * the recipe library is empty.
+ */
+export async function recipesSubcommand(
+  args: string[],
+  options: SourceCommandOptions = {},
+): Promise<number> {
+  const log = options.io?.log ?? ((m: string) => console.log(m));
+  const error = options.io?.error ?? ((m: string) => console.error(m));
+
+  // The only flag accepted today is `-h` / `--help`. Keep the parser
+  // tiny rather than introducing a typed args struct for a single
+  // option — easier to extend if/when filters land.
+  for (const a of args) {
+    if (a === "-h" || a === "--help") {
+      printRecipesHelp(log);
+      return 0;
+    }
+    if (a.startsWith("--")) {
+      error(`source recipes: unknown option: ${a}`);
+      return 2;
+    }
+    error(`source recipes: unexpected positional argument: ${a}`);
+    return 2;
+  }
+
+  let entries: RecipeListEntry[];
+  try {
+    entries = await listRecipes({ recipesRoot: options.recipesRoot });
+  } catch (e) {
+    error(`source recipes: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  if (entries.length === 0) {
+    log("source recipes: no recipes bundled (recipes/ is empty or absent)");
+    return 0;
+  }
+
+  const valid = entries.filter((e) => e.recipe !== null);
+  const invalid = entries.filter((e) => e.recipe === null);
+
+  if (valid.length > 0) {
+    const nameWidth = Math.max(4, ...valid.map((e) => e.name.length));
+    const kindWidth = Math.max(4, ...valid.map((e) => (e.recipe ? e.recipe.kind.length : 0)));
+
+    log(`${pad("NAME", nameWidth)}  ${pad("KIND", kindWidth)}  DESCRIPTION`);
+    for (const e of valid) {
+      if (!e.recipe) continue;
+      const desc = e.recipe.description ?? "";
+      log(`${pad(e.name, nameWidth)}  ${pad(e.recipe.kind, kindWidth)}  ${desc}`);
+    }
+  } else {
+    log("source recipes: no valid recipes found (all bundled entries failed to load)");
+  }
+
+  if (invalid.length > 0) {
+    log("");
+    log("Recipes with errors:");
+    for (const e of invalid) {
+      log(`  ${e.name}: ${e.error ?? "(unknown error)"}`);
+    }
+  }
+
+  log("");
+  log("Apply a recipe with:");
+  log("  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
+
+  // Returning 0 even when individual recipes have errors keeps the
+  // listing useful in CI: a single malformed recipe should not break
+  // the discovery command for the rest of the bundle.
+  return 0;
+}
+
+/**
  * Top-level dispatcher for `radar source <subcommand>`.
  *
  * Sub-commands are kept as named functions (addSource/listSources/removeSource/
- * testSource) so tests can call them directly with injected IO sinks without
- * spawning the full CLI.
+ * testSource/recipesSubcommand) so tests can call them directly with injected
+ * IO sinks without spawning the full CLI.
  */
 export async function runSource(
   args: string[],
@@ -1038,6 +1298,8 @@ export async function runSource(
       return addSource(rest, options);
     case "list":
       return listSources(rest, options);
+    case "recipes":
+      return recipesSubcommand(rest, options);
     case "remove":
       return removeSource(rest, options);
     case "test":
@@ -1051,6 +1313,6 @@ export async function runSource(
 
 export const sourceCommand: Command = {
   name: "source",
-  summary: "Manage feed sources (add | list | remove | test)",
+  summary: "Manage feed sources (add | list | recipes | remove | test)",
   run: (args) => runSource(args),
 };

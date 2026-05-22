@@ -812,6 +812,79 @@ selector に書ける JSONPath は `src/core/feeds/_jsonpath.ts` の **lite 版*
 
 詳細な設計判断は [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) を参照。
 
+### `radar source recipes`
+
+バンドルされている recipe（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3 採用案 A — リポ同梱）を一覧表示する。recipe は `recipes/*.yaml` として `radar` npm パッケージに同梱されており、`radar source add <id> --recipe <name>` で 1 行で source 化できる。
+
+```bash
+radar source recipes
+# NAME            KIND      DESCRIPTION
+# aws-whats-new   json-api  AWS What's New feed (full-history backfill)
+# devto           json-api  dev.to articles (page-based pagination)
+# ...
+```
+
+recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張子なし）であり、`--recipe <name>` で指定する識別子になる。YAML 側に内部 `name:` フィールドを持たせている場合、それは生成される `Source.name`（表示名）にマップされる別レイヤー。
+
+バンドル recipe が 1 件もない（または `recipes/` ディレクトリ自体が無い）場合は `no recipes bundled` を返して exit 0 する。malformed な recipe があると `Recipes with errors:` ブロックで個別に報告するが、それ以外の有効 recipe は通常通り一覧表示される（fail-soft）。
+
+#### 自分で recipe を追加するには
+
+現時点では「バンドル recipe（リポ同梱）」のみがサポートされており、user-local の recipe ディレクトリは未対応。新しい公式 recipe を追加したい場合は [ozzy-labs/feedradar](https://github.com/ozzy-labs/feedradar) リポの `recipes/*.yaml` に PR を送る。recipe 1 件あたり ~30 行 YAML で済むため、対応 site を増やすコストは低い（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D1）。
+
+recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とする。主要フィールド:
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `kind` | enum | `rss` / `html` / `html-js` / `github-releases` / `npm-registry` / `json-feed` / `json-api` |
+| `url` | string | fetch 対象（必須） |
+| `name` | string? | 表示名（recipe → Source.name） |
+| `description` | string? | `radar source recipes` で表示される 1 行説明（生成 YAML には**書き出さない**） |
+| `tags` | string[]? | 既定 tag セット |
+| `filters` | object? | recipe author 提案のキーワード / matchMode / matchFields / caseSensitive |
+| `pagination` / `jsonSelectors` / `http` | object? | `kind: json-api` 用 |
+| `selectors` / `js` | object? | `kind: html` / `html-js` 用 |
+| `trustLevel` | `"trusted"` / `"untrusted"` | 既定 `"untrusted"` |
+
+`id` は recipe には書かない（ユーザーが apply 時に与える）。
+
+#### CI smoke test との関係
+
+バンドル recipe は site の breaking change で壊れる可能性があるため、`recipes-smoke` ジョブ（#178 で実装予定）で外部 fetch 検証を行う。main CI は flaky な外部 API に依存させず、smoke job 単独で fail させる設計（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3）。
+
+### `radar source add <id> --recipe <name> [overrides]`
+
+`radar source add` の **recipe モード**。バンドル recipe を 1 行で source 化する:
+
+```bash
+# AWS What's New を `aws-watch` という id で追加し、キーワードだけ上書き
+radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Quick"
+
+# 直後に過去全件を取り込む
+radar watch run --source aws-watch --backfill --max-pages 200
+```
+
+`--recipe` を指定すると、`--kind` / `--url` / `--selector-*` / `--pagination-*` は **明示的に拒否される**（recipe author が責任を持つ structural フィールドだから）。上書き可能な flag は以下のみ:
+
+| flag | 役割 |
+|---|---|
+| `--name <display>` | recipe の `name` を上書き |
+| `--tags <a,b>` | recipe の `tags` を replace（merge ではない） |
+| `--keywords <a,b>` | recipe の `filters.keywords` を replace |
+| `--exclude-keywords <a,b>` | recipe の `filters.excludeKeywords` を replace |
+
+その他 (`matchMode` / `matchFields` / `caseSensitive` / `selectors` / `pagination` / `jsonSelectors`) は recipe 側の値が必ず使われる。これらを変えたい場合は `sources/<id>.yaml` を生成後に直接編集する（既存の flag-based `source add` と同じ運用）。
+
+失敗時の挙動:
+
+| 状況 | exit | メッセージ |
+|---|---|---|
+| recipe 名が存在しない | 1 | `recipe 'X' not found (available: ...)` で候補一覧 |
+| recipe の YAML が malformed | 1 | `invalid YAML in recipe 'X': <yaml error>` |
+| recipe が schema 違反 | 1 | `recipe 'X' failed schema validation: <issue list>` |
+| `--kind` / `--url` / `--selector-*` / `--pagination-*` を併用 | 2 | `the following flags are not allowed with --recipe: ...` |
+| `sources/<id>.yaml` が既存 | 1 | `'<id>' already exists` (上書きしない) |
+
 ### `radar source list [-v|--verbose] [--enabled-only]`
 
 `sources/*.yaml` を一覧表示。

@@ -1,0 +1,4 @@
+# Bundled recipes live here. Actual recipe YAMLs (e.g. aws-whats-new.yaml,
+# devto.yaml, anthropic-news.yaml) arrive in #178. This placeholder keeps the
+# directory present in git so `radar source recipes` resolves an empty list
+# instead of warning that the bundle is missing.

@@ -50,6 +50,8 @@ radar init --force                  # 既存ファイルを上書き
 # 監視対象の管理
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
 radar source list
+radar source recipes                                   # バンドル recipe を一覧表示 (ADR-0012)
+radar source add <id> --recipe <name> [--keywords ... --tags ... --name ...]  # recipe ベースで 1 行追加
 radar source test <id> [--limit N] [--show-content]   # state/items を書き換えず取得 + フィルタを試す
 radar source remove <id>
 
@@ -58,6 +60,9 @@ radar source add aws-whats-new --kind json-api \
   --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0" \
   --keywords "Bedrock,Claude" \
   --pagination-strategy page --page-size 100 --max-pages 200
+
+# 同じことを bundled recipe で 1 行で
+radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Claude"
 
 # JSON Feed (1.0 / 1.1) は URL のみで動く zero-config
 radar source add example-microblog --kind json-feed \
