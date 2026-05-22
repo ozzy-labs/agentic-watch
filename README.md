@@ -80,7 +80,7 @@ radar workflow generate combined  # watch + auto-research with --max-items hard 
 radar --help                  # help
 ```
 
-All 8 subcommands are implemented. See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
+All 9 subcommands are implemented (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow`). See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
 
 ## Development
 
@@ -102,7 +102,7 @@ node dist/index.js --help        # equivalent
 ```text
 src/
   index.ts              CLI entry point (#!/usr/bin/env node)
-  cli/                  init / source / watch / research / dismiss / review / update
+  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow
   core/
     watcher.ts          source → adapter → items
     filter.ts           keyword / excludeKeyword
@@ -126,7 +126,7 @@ src/
 - [docs/user-guide.md](./docs/user-guide.md) — install / quickstart / command reference
 - [docs/user-guide/proxy-setup.md](./docs/user-guide/proxy-setup.md) — corporate proxy / TLS interception / NTLM bridge / WSL2 setup
 - [docs/release.md](./docs/release.md) — release procedure (manual initial publish + Trusted Publisher registration + subsequent OIDC automation)
-- [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling)
+- [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting)
 
 ## Conventions
 

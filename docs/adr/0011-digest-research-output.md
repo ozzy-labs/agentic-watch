@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed（2026-05-18）— Epic [#131](https://github.com/ozzy-labs/feedradar/issues/131) の foundation。後続実装 PR (#139-142) はすべて本 ADR の決定に従う。
+Accepted（2026-05-18、実装完了 2026-05-22）— Epic [#131](https://github.com/ozzy-labs/feedradar/issues/131) の foundation。後続実装 PR (#139-142) はすべて本 ADR の決定に従って merge 済み (digest CLI / digest template / 出力形式 / supersedes チェーン / 複数 item status 遷移)。
 
 本 ADR は [ADR-0003](./0003-output-format-and-versioning.md)（Output Format and Versioning）を**拡張**する。単体 item 向けの命名規約・supersedes チェーン・status 遷移ルールはそのまま継承し、digest（複数 item を 1 レポートに束ねる出力モード）に固有の差分のみを本 ADR で確定させる。
 

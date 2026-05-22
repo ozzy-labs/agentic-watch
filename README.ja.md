@@ -73,13 +73,14 @@ radar research --digest <id1> <id2> ...  # 複数 item を 1 つの digest レ�
 radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
 radar review <research-id>    # レポートを別エージェントで相互レビュー
 radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
-radar doctor                  # workspace / agent CLI / Playwright の health check
+radar doctor                  # workspace / agent CLI / Playwright / proxy / TLS の health check
+                              #   --no-proxy-check で live proxy round-trip をスキップ (offline 環境向け)
 radar workflow generate watch     # GitHub Actions watch workflow を後追い生成 (ADR-0014)
 radar workflow generate combined  # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
 radar --help                  # ヘルプ
 ```
 
-全 8 サブコマンドが実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
+全 9 サブコマンド (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow`) が実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
 
 ## 開発
 
@@ -101,7 +102,7 @@ node dist/index.js --help        # 等価
 ```text
 src/
   index.ts              CLI entry point (#!/usr/bin/env node)
-  cli/                  init / source / watch / research / dismiss / review / update
+  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow
   core/
     watcher.ts          source → adapter → items
     filter.ts           keyword / excludeKeyword
@@ -125,7 +126,7 @@ src/
 - [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様
 - [docs/user-guide/proxy-setup.ja.md](./docs/user-guide/proxy-setup.ja.md) — 企業プロキシ / TLS 中継 / NTLM ブリッジ / WSL2 環境のセットアップ
 - [docs/release.md](./docs/release.md) — リリース手順（初回手動 publish + Trusted Publisher 登録 + 以降の OIDC 自動化）
-- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling）
+- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting）
 
 ## 規約
 

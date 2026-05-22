@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed（2026-05-23）— 親 epic [#186](https://github.com/ozzy-labs/feedradar/issues/186) の起点 ADR。`radar workflow generate` サブコマンドの設計判断と、自動 research の暴走防止セーフティを記録する。実装は sub-issue (#188 / #189 / #190 / 他) に分割。
+Accepted（2026-05-23、実装完了 2026-05-23）— 親 epic [#186](https://github.com/ozzy-labs/feedradar/issues/186) の起点 ADR。`radar workflow generate` サブコマンドの設計判断と、自動 research の暴走防止セーフティを記録する。sub-issue (#188 `workflow generate watch` / #189 `workflow generate combined` / #190 `research --batch` ハードキャップ / 他) は全て merge 済み。`research` / `review` 単独 type の workflow generate は Phase 2 ([#191](https://github.com/ozzy-labs/feedradar/issues/191)) として残置。
 
 ## Context
 
