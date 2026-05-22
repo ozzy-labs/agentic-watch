@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026-05-17 c）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/FeedRadar/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/FeedRadar/issues/77))。**Revision (c)** で `.gemini/commands/` への Gemini CLI slash command TOMLs 配置 (default-on、`--no-gemini-commands` で opt-out) を追加し、engine SKILL を adapter spawn / interactive 両対応の **dual-mode** に拡張、**5 層構成** に到達 ([#78](https://github.com/ozzy-labs/FeedRadar/issues/78))。
+Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026-05-17 c、Revised 2026-05-22 d）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/FeedRadar/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/FeedRadar/issues/77))。**Revision (c)** で `.gemini/commands/` への Gemini CLI slash command TOMLs 配置 (default-on、`--no-gemini-commands` で opt-out) を追加し、engine SKILL を adapter spawn / interactive 両対応の **dual-mode** に拡張、**5 層構成** に到達 ([#78](https://github.com/ozzy-labs/FeedRadar/issues/78))。
 
 ## Context
 
@@ -260,6 +260,60 @@ Gemini CLI の slash command は TOML 形式が canonical (`.gemini/commands/<na
 - Revision (a) / (b) と同じく、ユーザー編集後の sync 問題は引き続き発生 (`--force` または手 merge で対処)
 - `.gemini/settings.json` 等の **agent 設定ファイル** の bundling は本改訂のスコープ外 (別 Phase)
 - 本リポ自身の `.gemini/settings.json` / `.agents/skills/` は **触らない** (本 issue は user workspace 向け bundle の改訂のみ)
+
+## Revision (2026-05-22 d, post-#172/#186/#194 epics)
+
+### 動機 (Revision d)
+
+Revision (c) (2026-05-17) 以降に landed した複数 PR で、`init` が配布する
+**bundled assets が追加**された (#77 `CLAUDE.md`、#105 `templates/default.md`
+と `templates/digest.md`、#107 `FEEDRADAR.md` 等)。Revision (a)-(c) と異なり
+これらは個別 ADR Revision として記録されておらず、Decision 内の canonical な
+「5 層構成」 table が **実態より少ない bundled assets** を列挙する状態に drift
+していた。本 Revision (d) で table を実態に揃え、今後の `init` 拡張も同じ
+table を SSoT として参照できるようにする。
+
+### 改訂後の方針 (canonical bundled assets table)
+
+`init` が user workspace に配布する bundled assets の正準 (canonical) 一覧:
+
+| 種別 | 配置先 | 役割 | bundle 元 | opt-out |
+|---|---|---|---|---|
+| **engine SKILL (SSoT, dual-mode)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter spawn 経路 + interactive 起動の両モード procedure | `src/skills/` | (なし、SSoT) |
+| **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code `/research` 等の slash 発火点 | `src/claude-skills/` | `--no-claude-skills` |
+| **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Gemini CLI `/research` 等の slash 発火点 | `src/gemini-commands/` | `--no-gemini-commands` |
+| **AGENTS.md** | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
+| **CLAUDE.md** | `<cwd>/CLAUDE.md` | Claude Code が auto-read する workspace instructions (`@AGENTS.md` import パターン) | `src/templates/claude/CLAUDE.md` | `--no-claude-md` |
+| **FEEDRADAR.md** | `<cwd>/FEEDRADAR.md` | 人間向け workspace ガイド (自然言語指示 / slash の使い方を主、CLI 直叩きを副) | `src/templates/feedradar.md` | `--no-feedradar-md` |
+| **templates/default.md** | `<cwd>/templates/default.md` | 単体 research のテンプレート雛形 (frontmatter は engine SKILL 側で生成、body のみ) | `src/templates/default.md` | `--no-templates` |
+| **templates/digest.md** | `<cwd>/templates/digest.md` | digest research のテンプレート雛形 (ADR-0011) | `src/templates/digest.md` | `--no-templates` (共通) |
+| **schedule scaffolds (Routines)** | `<cwd>/claude/routines/watch-daily.md` | Claude Routines 定期実行雛形 (ADR-0004) | `src/templates/routines/` | (opt-in: `--with-routines`) |
+| **schedule scaffolds (Actions)** | `<cwd>/.github/workflows/watch.yaml` | GitHub Actions 定期実行雛形 (ADR-0004) | `src/templates/workflows/watch.yaml` | (opt-in: `--with-actions`) |
+
+合計 **10 種類** の bundled asset を `init` が扱う (Revision (c) 時点の 5 層 +
+追加 4 種 [`CLAUDE.md` / `FEEDRADAR.md` / `templates/default.md` /
+`templates/digest.md`] + schedule scaffolds 2 つを Routines / Actions に分離して
+カウント)。
+
+### 改訂 (d) が扱わないもの
+
+- `src/templates/workflows/*.template.yaml.tmpl` (combined / watch の placeholder
+  テンプレート) は **`init` で配布されない**。`radar workflow generate <type>` の
+  **runtime テンプレート**として `dist/templates/workflows/` から読まれるのみ
+  (ADR-0014)。本 table の対象外
+- `recipes/*.yaml` も同様に **`init` で配布されない**。`radar source recipes` /
+  `--recipe` の runtime データとして `dist/recipes/` から読まれる (ADR-0012)
+
+### SSoT 維持 (table drift 防止)
+
+本 Revision (d) 以降、`init` で新規 bundled asset を追加する際は必ず:
+
+1. `src/templates/` (または同等 `src/skills/` / `src/claude-skills/` / `src/gemini-commands/`) に source を配置
+2. `src/cli/init.ts` の copy ロジックに登録
+3. **本 ADR-0007 の canonical bundled assets table に row を追加**
+4. opt-out フラグを定義し table に明記
+
+このルールにより table の drift を構造的に防ぐ。
 
 ## Consequences
 
