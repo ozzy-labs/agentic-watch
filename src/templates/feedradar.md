@@ -111,17 +111,19 @@ slash で直接呼ぶなら:
 エージェントを起動しない自動化文脈では CLI を直接呼びます。`radar <subcommand> --help` で全コマンドのヘルプが出ます。
 
 ```bash
-radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
+radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
 radar source list
 radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
-radar watch run [--source <id>] [--bootstrap]
+radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]]
 radar research <item-id> --agent <agent>
 radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 item を 1 digest にまとめる (ADR-0011)
 radar review <research-id> --agent <agent>
 radar update <research-id> --agent <agent>
 radar dismiss <item-id>
 ```
+
+JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` を YAML に書く（[ADR-0012](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0012-json-api-adapter-and-recipe-strategy.md)）。JSON Feed 1.0 / 1.1 標準に準拠したサイトは URL だけで動く zero-config kind (`kind: json-feed`)。過去の全件取り込みは `radar watch run --backfill` を使う (kind: json-api / github-releases / npm-registry 対応)。
 
 定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で生成できます。
 
@@ -154,7 +156,7 @@ radar dismiss <item-id>
 
 ## セキュリティ警告
 
-FeedRadar が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry) は **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+FeedRadar が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) は **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - 信頼できる公式 source のみ登録するのが第一の防御線
 - `sources/<id>.yaml` の `trustLevel: trusted` で個別 opt-in 可 (既定 `untrusted`)

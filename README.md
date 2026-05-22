@@ -11,7 +11,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 ## Highlights
 
 - **Multi-agent**: switch between Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI via adapters.
-- **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry are all driven through the same `Source` abstraction.
+- **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe-driven, with `--backfill` for full history)** are all driven through the same `Source` abstraction ([ADR-0012](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md)).
 - **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
@@ -106,7 +106,7 @@ src/
     state.ts            state/<sourceId>.yaml load / save
     config.ts           radar.config.yaml load / validate
     injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
-    feeds/              rss / html / html-js / github-releases / npm-registry
+    feeds/              rss / html / html-js / github-releases / npm-registry / json-feed / json-api
   agents/               4 CLI adapters (claude-code / codex-cli / gemini-cli / copilot)
   schemas/              Zod schemas (Source / Item / State / Research)
   skills/               engine SKILL bundle (research / review / update; init copies into .agents/skills/)

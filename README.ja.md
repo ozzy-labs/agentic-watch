@@ -11,7 +11,7 @@
 ## 主な特徴
 
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
-- **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry を同一の `Source` 抽象で扱う。
+- **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe ベース、過去全件取り込みの `--backfill` 対応)** を同一の `Source` 抽象で扱う ([ADR-0012](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md))。
 - **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
@@ -105,7 +105,7 @@ src/
     state.ts            state/<sourceId>.yaml の load / save
     config.ts           radar.config.yaml の load / 検証
     injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
-    feeds/              rss / html / html-js / github-releases / npm-registry
+    feeds/              rss / html / html-js / github-releases / npm-registry / json-feed / json-api
   agents/               4 CLI adapters（claude-code / codex-cli / gemini-cli / copilot）
   schemas/              Zod スキーマ（Source / Item / State / Research）
   skills/               engine SKILL bundle (research / review / update; init で .agents/skills/ に配布)

@@ -166,7 +166,7 @@ workspace に既に独自の人間向けドキュメント (`README.md` 等) が
 | 引数 | 説明 |
 |---|---|
 | `<id>` | source 識別子（slug） |
-| `--kind` | `rss` / `html` / `html-js` / `github-releases` / `npm-registry` |
+| `--kind` | `rss` / `html` / `html-js` / `github-releases` / `npm-registry` / `json-feed` / `json-api` |
 | `--url` | fetch 対象の URL |
 | `--name` | 表示名（省略時は `<id>`） |
 | `--tags` | カンマ区切りタグ |
@@ -174,6 +174,25 @@ workspace に既に独自の人間向けドキュメント (`README.md` 等) が
 | `--exclude-keywords` | カンマ区切り、除外キーワード |
 
 なお `sources/<id>.yaml` は **`trustLevel: "trusted" | "untrusted"`** フィールドも持つ（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M4）。default は `"untrusted"` で、`source add` で生成される YAML には `trustLevel: untrusted` が書き出される。`"trusted"` への opt-in は YAML を手で編集する（CLI flag は提供しない。後述「[trustLevel: 信頼境界の opt-in](#trustlevel-信頼境界の-opt-in)」を参照）。
+
+#### 対応 kind 一覧
+
+| `--kind` | 用途 | recipe / selector | conditional GET | `--backfill` 対応 | ADR |
+|---|---|---|---|---|---|
+| `rss` | 標準 RSS / Atom feed | 不要（URL のみ） | ETag + Last-Modified | ― | ADR-0002 |
+| `html` | 任意 HTML ページの CSS スクレイピング | `selectors.*` 必須 | ETag + content-hash fallback | ― | ADR-0002 / `design/source-html.md` |
+| `html-js` | JS 実行後 DOM が必要な SPA / CSR ページ | `selectors.*` 必須 + `js.*` 任意 | content-hash のみ | ― | [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) |
+| `github-releases` | GitHub Releases API | 不要（`<owner>/<repo>` を URL から抽出） | ETag | partial | ADR-0002 |
+| `npm-registry` | npm registry packument | 不要（パッケージ名のみ） | ETag | partial | ADR-0002 |
+| `json-feed` | JSON Feed 1.0 / 1.1 標準 | 不要（URL のみ） | ETag + Last-Modified | partial（`next_url` を辿る範囲） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) |
+| `json-api` | 任意 JSON API（recipe ベース） | `pagination.*` 必須、`jsonSelectors.*` 任意（default chain あり） | ETag + content-hash fallback | **full**（recipe の `pagination.maxPages` まで辿る） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) |
+
+L0 / L1 tier の整理（recipe 不要かどうか）:
+
+- **L0 tier (URL のみで動く)**: `rss` / `json-feed` / `github-releases` / `npm-registry`。標準フォーマットまたは fixed endpoint。
+- **L1 tier (recipe / selector が必要)**: `html` / `html-js` / `json-api`。サイトごとに調整が要る。
+
+`json-api` の recipe は基本的に **page-based** API なら `jsonSelectors` を完全に省略でき（default chain が `$.items[*]` 等を試す）、`pagination` のみ書けば動くことが多い。詳細は「[`--kind json-api`](#--kind-json-api)」を参照。
 
 #### `--kind github-releases`
 
@@ -454,6 +473,345 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 - ETag-based 条件付き GET をサポート。サーバが `304` を返すと items 処理をスキップ
 - 既知バージョンは state の `lastSeenIds` で除外されるため、2 回目以降は新バージョンのみ検出される
 
+#### `--kind json-feed`
+
+[JSON Feed 1.0 / 1.1](https://jsonfeed.org/version/1.1) 標準に準拠したサイトを **URL のみ** で監視する zero-config adapter。RSS と同じ L0 tier（recipe 不要）として位置付けられる（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §C / §D3）。
+
+```bash
+# 例: micro.blog ユーザーフィード
+radar source add example-microblog \
+  --kind json-feed \
+  --url https://example.micro.blog/feed.json \
+  --keywords "release,announce"
+```
+
+##### いつ json-feed を使うか
+
+- 対象サイトが `application/feed+json` または `application/json` で JSON Feed を配信している
+- `<link rel="alternate" type="application/feed+json" href="...">` が HTML に張られている
+- 代表例: [micro.blog](https://micro.blog) のユーザーフィード、Daring Fireball、一部の静的サイトジェネレーター
+
+JSON Feed は仕様で `id` / `url` / `title` / `content_text` / `content_html` / `date_published` / `tags` 等のフィールドが固定されているため、サイトごとの recipe 調整は不要。
+
+##### 1.0 と 1.1 の違い
+
+両 version 共に `version` フィールドの URI で識別する:
+
+| version | URI | 受け付け |
+|---|---|---|
+| 1.0 | `https://jsonfeed.org/version/1` | ✅ |
+| 1.1 | `https://jsonfeed.org/version/1.1` | ✅ |
+| 上記以外 | ― | ❌ ハードエラー（typo / 別フォーマットを fail-fast で検出） |
+
+adapter が読む item フィールドは 1.0 / 1.1 で共通のため、version 差は version 受け付け判定のみに使う。1.1 で追加された `authors[]` / `language` 等の拡張は `Item.raw` に保持されるが `Item` schema には surface しない。
+
+##### Item フィールドへの正規化
+
+| Item フィールド | JSON Feed フィールド |
+|---|---|
+| `title` | `items[].title`（spec 上 optional のため未指定 item は空文字） |
+| `url` | `items[].url`（必須。これが無い item は silent drop） |
+| `summary` | `items[].content_html` → なければ `content_text` → なければ `summary` |
+| `publishedAt` | `items[].date_published`（ISO 8601、parse 失敗時は `undefined`） |
+| `id` | `<title-slug>-<8 hex of sha256(<publisherId-or-url>)>`（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)、`publisherId` = `items[].id`、なければ `url`） |
+| `raw` | item 全体 + `tags` 正規化済み |
+
+##### pagination (`next_url`)
+
+JSON Feed は仕様で `top.next_url` による pagination を許す。adapter は **最大 50 ページ**まで `next_url` を transitively 辿り、全 item を 1 fetch round で取得する。
+
+- ループ防止: 訪問済み URL は再訪しない（cycle 検出）
+- 50 ページ cap: 個人ブログ規模では実質無制限。`--backfill` フラグでさらに広げる予定は無い（JSON Feed は記事点数が支配的に少ない）
+
+##### json-feed の挙動の要点
+
+- ETag (`If-None-Match`) と Last-Modified (`If-Modified-Since`) の両条件付き GET をサポート。サーバが `304 Not Modified` を返すと items 処理をスキップしつつ `lastFetchedAt` のみ更新
+- malformed item（`url` 欠落、parse 不能な `date_published` 等）は silent drop（1 item の不正で feed 全体を落とさない）
+- 信頼境界は `rss` と同じく **サイト運営者のみ**（recipe 作者の信頼境界は無い — [ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A）
+
+#### `--kind json-api`
+
+任意 JSON API を **recipe** で記述して監視する汎用 adapter（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2）。AWS What's New / dev.to / Anthropic news 等、固定 schema を持たない JSON エンドポイントが対象。`--backfill` で過去全記事の一括取り込みもサポート。
+
+##### いつ json-api を使うか
+
+- 対象 API が **JSON** で応答する（HTML / XML なら `kind: html` / `kind: rss` を使う）
+- `kind: json-feed` 標準には準拠していない（独自 schema）
+- HTTP `GET` のみで取得できる（POST / GraphQL は範囲外）
+
+代表例:
+
+| サイト | endpoint | pagination | 備考 |
+|---|---|---|---|
+| AWS What's New | `https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0&...` | `page` (page-number) | 16,000+ 件、`--backfill` の主要 use case |
+| dev.to | `https://dev.to/api/articles?per_page=30&page=1` | `page` | zero-config（default chain で動く） |
+| 任意の REST API | `Link: ...; rel="next"` 形式 | `link-header` | GitHub-style pagination |
+
+##### 設定 YAML 完全例（AWS What's New）
+
+`source add` は flag で `pagination.*` を渡せるが、`jsonSelectors.*` は **YAML を直接編集**して指定する（フィールドが多いため flag では現実的でない）。AWS What's New の完全な recipe:
+
+```yaml
+# sources/aws-whats-new.yaml
+id: aws-whats-new
+kind: json-api
+url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&tags.id=whats-new%23general-products%23amazon-bedrock
+name: AWS What's New
+tags: ["aws", "cloud"]
+filters:
+  keywords: ["Bedrock", "Claude", "agents"]
+  matchMode: "word"
+http:
+  method: GET
+  headers:
+    accept: "application/json"
+pagination:
+  type: page
+  param: page
+  start: 0
+  pageSize: 100
+  pageSizeParam: size
+  maxPages: 200      # ≈ 20,000 件まで遡れるキャップ（--backfill 用）
+  totalPath: "$.metadata.totalHits"   # backfill 早期停止のヒント
+jsonSelectors:
+  items: "$.items[*].item"
+  title: "$.additionalFields.headline"
+  link: "$.additionalFields.headlineUrl"
+  publishedAt: "$.additionalFields.postDateTime"
+  summary: "$.additionalFields.postBody"
+  publisherId: "$.id"
+trustLevel: untrusted
+```
+
+##### 設定 YAML 完全例（dev.to、default chain で zero-config）
+
+dev.to API は `$.items` 直下に article 配列、各 article 直下に `title` / `url` / `description` / `published_at` を持つ「素直な」shape のため、`jsonSelectors` を完全に省略できる。default chain（`$.items[*]` → `$.title` → `$.url` → `$.published_at` → `$.description`）が動く:
+
+```yaml
+# sources/devto-claude.yaml
+id: devto-claude
+kind: json-api
+url: https://dev.to/api/articles?tag=claude&per_page=30
+name: dev.to Claude tag
+filters:
+  keywords: ["Claude Code", "Anthropic"]
+pagination:
+  type: page
+  param: page
+  start: 1
+  pageSize: 30
+  pageSizeParam: per_page
+  maxPages: 10
+trustLevel: untrusted
+```
+
+`jsonSelectors` ブロック自体を書かなくても動くのが json-api の zero-config 路線（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2 default chain / #174）。
+
+##### CLI で `source add` する場合（flag）
+
+```bash
+# AWS What's New: --pagination-* flag を使う
+radar source add aws-whats-new \
+  --kind json-api \
+  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0" \
+  --keywords "Bedrock,Claude" \
+  --pagination-strategy page \
+  --pagination-param page \
+  --pagination-start 0 \
+  --page-size 100 \
+  --page-size-param size \
+  --max-pages 200 \
+  --total-path "$.metadata.totalHits"
+
+# 生成された sources/aws-whats-new.yaml を編集して jsonSelectors を追記
+$EDITOR sources/aws-whats-new.yaml
+```
+
+`source add` 直後の YAML には `jsonSelectors` ブロックが入らないため、AWS のような non-standard shape を扱う場合は手動で追記する。default chain で済む API（dev.to 等）は flag だけで完結する。
+
+##### `http.*` リファレンス
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `method` | `"GET"` | Phase 1 では GET のみ（POST / GraphQL は範囲外） |
+| `headers` | `Record<string, string>` | カスタムヘッダ。`${VAR}` 形式で環境変数を補間（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5c）。未解決の `${VAR}` を含む header は **omit される**（fail-fast を runtime の 401/403 で出すため、recipe 側は env を必須前提で書ける） |
+
+env interpolation の例:
+
+```yaml
+http:
+  headers:
+    authorization: "Bearer ${DEV_TO_TOKEN}"   # DEV_TO_TOKEN 未設定なら header omit (= 401)
+    user-agent: "feedradar-corp/1.0"          # 静的値はそのまま
+```
+
+interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c）。`source test --show-content` でも header dump は出さない。
+
+##### `pagination.*` リファレンス（5 戦略）
+
+| `type` | 適用 query | 主要オプション | 代表例 |
+|---|---|---|---|
+| `page` | `?<param>=K&<pageSizeParam>=N` | `param` (default `page`), `start` (default `0`), `pageSize`, `pageSizeParam` (default `pageSize`) | AWS What's New, dev.to |
+| `offset` | `?<param>=K&<pageSizeParam>=N` | `param` (default `offset`), `start` (default `0`), `pageSize`, `pageSizeParam` (default `limit`) | 古典的な offset/limit |
+| `cursor` | `?<param>=<cursorValue>` | `param` (default `after`), `nextCursorPath` (必須) | GraphQL connection-like |
+| `token` | `?<param>=<tokenValue>` | `param` (default `pageToken`), `nextCursorPath` (必須) | Google API, Vimeo |
+| `link-header` | (URL は HTTP `Link: <url>; rel="next"` から取得) | ― | GitHub-style |
+| `none` | (1 リクエストのみ) | ― | 単一 endpoint |
+
+共通フィールド:
+
+| フィールド | 説明 |
+|---|---|
+| `maxPages` | ハードキャップ（default `20`）。recipe 側の暴走 / DoS 防御。`--backfill` で `--max-pages` から override 可能 |
+| `totalPath` | 全件数を表す JSONPath-lite（例: `$.metadata.totalHits`）。`--backfill` 時に「`pageSize * 想定ページ数 >= total`」になった時点で early-stop |
+
+##### pagination 戦略の選び方
+
+1. **HTTP `Link: <...>; rel="next"` ヘッダが返るか** → `link-header`（最も堅牢）
+2. **next_cursor / next_token が応答 body にあるか** → `cursor` / `token`（`nextCursorPath` で JSONPath-lite 指定）
+3. **page index または offset を query で渡せるか** → `page` / `offset`
+4. **そもそも単一 endpoint** → `none`
+
+「page と offset どちらでも書けるとき」は **page を優先**する。`?page=0&size=100` と `?offset=0&limit=100` は表現力が同じだが、page-based の方が AWS / dev.to 等で慣習化されているため recipe が読みやすい。
+
+##### `jsonSelectors.*` と default chain
+
+`jsonSelectors` 配下の selector は **JSONPath-lite** 式（後述「[JSONPath-lite の表現力上限](#jsonpath-lite-の表現力上限)」を参照）。完全省略可能で、省略時は per-field default chain が走る:
+
+| field | default chain | 必須 |
+|---|---|---|
+| `items` | `$.items[*]` → `$.data[*]` → `$.results[*]` → `$.posts[*]` → `$.entries[*]` → `$[*]` | ― |
+| `title` | `$.title` → `$.name` → `$.headline` | ― |
+| `link` | `$.url` → `$.link` → `$.permalink` → `$.html_url` | ― |
+| `publishedAt` | `$.publishedAt` → `$.published_at` → `$.date` → `$.created_at` → `$.pubDate` | ― |
+| `summary` | `$.summary` → `$.description` → `$.excerpt` → `$.body` | ― |
+| `publisherId` | (default chain なし) | optional |
+| `body` | (default chain なし、recipe 明示時のみ参照される) | optional |
+| `tags` | (default chain なし、現状 `Item.raw` 経由でのみ surface) | optional |
+
+明示 selector を指定する判断基準:
+
+- API が AWS のように **`additionalFields.headlineUrl` のようなネストパス**を使う → 明示
+- 同じ field 名が default chain にない（例: `byline` → title） → 明示
+- default chain で取れているか不安 → `source test --show-content` で **adoption 表**を確認（後述）
+
+##### `--backfill` フラグ（過去全履歴の取り込み）
+
+通常 `watch run` は新着検出に最適化されており、`lastSeenIds` に当たった時点でページネーションを打ち切る。**`--backfill` モード**を使うと、recipe の `pagination.maxPages` まで全ページを辿って items を一括取り込みする（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。
+
+```bash
+# AWS What's New の過去 16,000+ 件を取り込む
+radar watch run --source aws-whats-new --backfill --max-pages 200
+
+# default の maxPages（recipe 値）で backfill
+radar watch run --source aws-whats-new --backfill
+```
+
+挙動の要点:
+
+- 通常モードの early-stop（`lastSeenIds` ヒット / `pageSize` 未満 / 空ページ）が **無効化**される（`pageSize` 未満 / 空ページは引き続き termination）
+- conditional GET (`If-None-Match`) も **無効化**される（前回 `lastEtag` が stale な normal-mode の値だと 304 で early-out してしまうため）
+- `pagination.totalPath` が指定されていれば early-stop の上限を計算（例: `totalHits: 16281`, `pageSize: 100` → 163 ページで停止）
+- `--max-pages N` は `pagination.maxPages` と `N` の **小さい方** が effective cap（recipe の安全網は維持しつつユーザー側で更に絞れる）
+- `--bootstrap` と **mutually exclusive**（`--bootstrap` は seen 化のみで items を生成しない、`--backfill` は items を全件生成、目的が逆）。同時指定で exit code 2
+
+`--backfill` と `--bootstrap` の比較:
+
+| フラグ | items 生成 | state 更新 | conditional GET | early-stop | 用途 |
+|---|---|---|---|---|---|
+| (なし、通常モード) | 新着のみ | `lastSeenIds` 追加 + `lastEtag` | 有効 | `lastSeenIds` ヒットで止まる | 定期実行 |
+| `--bootstrap` | **生成しない** | `lastSeenIds` に全 id を seed | 有効 | 通常通り | 初回導入時のノイズ抑制 |
+| `--backfill` | **全件生成** | `lastSeenIds` に全 id 追加 + `lastEtag` | **無効** | `pagination.maxPages` または `totalPath` 由来の cap | 過去履歴の一括取り込み |
+
+##### `source test` の page 0 限定挙動
+
+`radar source test <id>` は dry-run なので、json-api でも **page 0 のみ fetch**して終了する。`--limit N` は表示件数の上限であり、ページ予算は変えない:
+
+```bash
+radar source test aws-whats-new --show-content
+# → fetched: 100 / filtered: <n> / matched: <m>
+#   selector adoption:
+#     items ← $.items[*].item を採用
+#     title ← $.additionalFields.headline を採用
+#     ...
+#   pagination preview (page 0 only — state not mutated):
+#     strategy:  page
+#     nextUrl:   https://.../search?page=1&size=100
+```
+
+`--show-content` を付けると **selector adoption 表**（どの JSONPath で値が取れたか）と **pagination preview**（page 1 として叩く URL / Link header / nextCursor の予測）が出る。recipe の `jsonSelectors` / `pagination` を tune するときの主要ツール。
+
+`source test` は `state/<id>.yaml` を書き換えないため、何度走らせても `lastSeenIds` は汚れない。tune 用途で安心して連打できる。
+
+過去全件を見たい場合は `radar watch run --source <id> --backfill` を使う（dry-run ではないので state / items は更新される）。
+
+##### JSONPath-lite の表現力上限
+
+selector に書ける JSONPath は `src/core/feeds/_jsonpath.ts` の **lite 版**で、依存パッケージなしで実装されている。サポート機能:
+
+| 機能 | 例 | サポート |
+|---|---|---|
+| ルート | `$` | ✅ |
+| プロパティアクセス | `$.foo.bar` | ✅ |
+| 配列 index | `$.items[0]` | ✅ |
+| 配列展開（全要素） | `$.items[*]` | ✅ |
+| ネスト展開 | `$.items[*].item.headline` | ✅ |
+| ブラケット記法 | `$["items"][*]["title"]` | ✅ |
+| 数値 / 文字列リテラル | ― | ✅（path 終端の値取得） |
+
+**サポートしない機能**（標準 JSONPath では使えるが lite では未実装）:
+
+- フィルタ式 `$.items[?(@.published == true)]`
+- スライス `$.items[1:5]`
+- 再帰下降 `$..title`（任意の深さ）
+- script expression `$.items[(@.length-1)]`
+- union `$.items[0,1,2]`
+- ワイルドカード property `$.items[*].*`
+
+これらが必要な場合は **`raw` 経由でデータを保持しておき、後段 filter で対処**する（recipe 側で複雑な filter を書かない）。または adapter 改修を別 issue で検討。
+
+##### `source add` flag 一覧（json-api 固有）
+
+`radar source add --kind json-api` で受け付ける flag:
+
+| flag | 説明 |
+|---|---|
+| `--pagination-strategy <s>` | `page` / `offset` / `cursor` / `link-header` / `token` / `none`（default `page`） |
+| `--pagination-param <name>` | page / offset / cursor の query param 名 |
+| `--pagination-start N` | initial page / offset 値（default `0`） |
+| `--page-size N` | 1 ページの item 数 |
+| `--page-size-param <name>` | page-size の query param 名 |
+| `--max-pages N` | ハードキャップ（default `20`） |
+| `--next-cursor-path <jp>` | cursor / token strategy の `nextCursorPath` |
+| `--total-path <jp>` | `--backfill` 早期停止のヒント JSONPath |
+
+`jsonSelectors.*` は flag では指定できない（YAML を直接編集する）。
+
+##### 信頼境界 / 防御層
+
+`kind: json-api` は recipe で任意 URL / 任意 header を許すため、既存 5 adapter より広い attack surface を持つ（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A / [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5）:
+
+| 防御層 | 内容 |
+|---|---|
+| **D5a** 応答サイズキャップ | 1 ページあたり **10 MB** で hard cap。recipe からは override 不可（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5a） |
+| **D5b** host allowlist / blocklist | `127.0.0.1` / loopback / RFC1918 private IP / `file://` / `169.254.169.254` (cloud metadata) を遮断（共通 fetch wrapper が SSRF 防御を持つ前提、現状は wrapper 側で実装中） |
+| **D5c** env interpolation の固定 policy | `${VAR}` 未解決時は header omit（degraded fetch）、interpolated 値は **ログ・frontmatter に出さない** |
+| **信頼境界の再評価** | サイト運営者 **+ recipe 作者**（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A）。公式バンドル recipe（将来）と user 手書き recipe で監査責任が異なる |
+
+##### json-api のトラブルシュート
+
+| 症状 | 対処 |
+|---|---|
+| `items` が 0 件で返る | `radar source test <id> --show-content` で **selector adoption 表** を確認。`items: (no candidate matched)` なら default chain が当たっていないので `jsonSelectors.items` を明示。`title: (no candidate matched)` なら `jsonSelectors.title` を明示。実際の JSON は `curl <url> \| jq .` で構造を確認すると早い |
+| `publishedAt: Invalid Date` で個別 item が drop | `jsonSelectors.publishedAt` が `new Date()` で parse 不能な形式（独自タイムスタンプ / 数値 epoch 等）を指している。ISO 8601 / RFC 2822 に変換できるパスを選ぶか、recipe 側で `publishedAt` を諦めて `raw` 経由で見る |
+| 同じ page を繰り返し取得する（無限ループに見える） | `pagination.type: cursor` / `token` で `nextCursorPath` が間違っており、毎回同じ cursor を抽出している。`source test --show-content` の pagination preview で `nextCursor: <値>` が一定でないか確認。`pagination.type: page` で `start` を間違えて固定値を返している場合も発生 |
+| `json-api adapter: response too large (>10485760 bytes cap) from ...` | 1 page で 10 MB を超えている。`pagination.pageSize` を下げる（例: 100 → 30）。API が pageSize 無視で全件返す仕様なら別 endpoint を探すか kind を切り替える |
+| `json-api adapter: HTTP 304` 後も何も取れない | normal mode で前回 `lastEtag` が hit。`--backfill` を付けると conditional GET が skip されるので、過去履歴を取り直したいなら `--backfill` で再実行 |
+| `${VAR}` を含む header を入れたのに 401 が出る | env が未解決で header が omit されている。`echo $VAR` で実値を確認し、`radar watch run` を呼ぶ shell に export されているか check |
+| `pagination.maxPages` が小さくて backfill が途中で打ち切られる | `--max-pages N` でその場限り上書き（`pagination.maxPages` と min を取る）。恒久的に上げるなら recipe 側の `maxPages` を編集 |
+
+詳細な設計判断は [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) を参照。
+
 ### `radar source list [-v|--verbose] [--enabled-only]`
 
 `sources/*.yaml` を一覧表示。
@@ -520,7 +878,7 @@ radar watch run --source anthropic-news
 - `<id>` 未指定や不正なオプションは exit code `2`
 - fetch / parse エラーは `watch run` 同様の per-source エラーとして stderr に出力され exit code `1` を返す
 
-### `radar watch run [--source <id>] [--bootstrap]`
+### `radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]]`
 
 すべての source（または `--source` で指定）を fetch、filter を適用、新規 item を `items/<sourceId>/<item-id>.yaml` に追加。
 
@@ -528,10 +886,22 @@ radar watch run --source anthropic-news
 |---|---|
 | `--source <id>` | 単一 source のみ fetch する。未指定なら `sources/*.yaml` 全件 |
 | `--bootstrap` | 既存記事を全て **検出済み (seen)** として state に取り込み、items は作らない。初回導入時のノイズ抑制用 |
+| `--backfill` | recipe の `pagination.maxPages` まで全ページを辿って items を全件生成する（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。`kind: json-api` / `github-releases` / `npm-registry` のみ完全対応、他 kind は通常 fetch と同じ |
+| `--max-pages N` | `--backfill` 時の上限を `min(pagination.maxPages, N)` で絞る。`--backfill` 必須（単独指定は exit code 2） |
+
+`--bootstrap` と `--backfill` は **mutually exclusive**（同時指定は exit code 2）:
+
+| フラグ | items 生成 | state 更新 | conditional GET | early-stop | 用途 |
+|---|---|---|---|---|---|
+| (なし、通常モード) | 新着のみ | `lastSeenIds` 追加 + `lastEtag` | 有効 | `lastSeenIds` ヒットで止まる | 定期実行 |
+| `--bootstrap` | **生成しない** | `lastSeenIds` に全 id を seed | 有効 | 通常通り | 初回導入時のノイズ抑制 |
+| `--backfill` | **全件生成** | `lastSeenIds` に全 id 追加 + `lastEtag` | **無効** | `pagination.maxPages` または `totalPath` 由来の cap | 過去履歴の一括取り込み |
+
+`--backfill` の詳細な挙動と使用例は「[`--kind json-api` の `--backfill` フラグ](#--backfill-フラグ過去全履歴の取り込み)」を参照。
 
 挙動:
 
-- 各 source の `kind` に応じた feed adapter を呼び出す（5 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する — ADR-0010）
+- 各 source の `kind` に応じた feed adapter を呼び出す（7 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` / `json-feed` / `json-api` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する — ADR-0010）
 - adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する（adapter 別の対応状況・304 時の詳細な挙動は [`docs/architecture.md` の "Fetch efficiency / conditional GET"](./architecture.md#fetch-efficiency--conditional-get) を参照）
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
@@ -539,7 +909,7 @@ radar watch run --source anthropic-news
 
 #### Fetch のタイムアウトとリトライ
 
-全 feed adapter (`rss` / `html` / `npm-registry` / `github-releases`) は共通の fetch wrapper を経由する。プロキシ越し / 不安定な公衆 RSS / 一時的な 5xx でも `watch run` が止まらないよう、デフォルトで次の挙動が入っている:
+全 feed adapter (`rss` / `html` / `npm-registry` / `github-releases` / `json-feed` / `json-api`) は共通の fetch wrapper を経由する。プロキシ越し / 不安定な公衆 RSS / 一時的な 5xx でも `watch run` が止まらないよう、デフォルトで次の挙動が入っている:
 
 - **タイムアウト**: 1 attempt あたり 30 秒（`AbortSignal.timeout` 実装）
 - **リトライ**: 5xx 応答および transient なネットワークエラー (`ECONNRESET` / `ETIMEDOUT` / `ENETUNREACH` / `EAI_AGAIN`) で最大 2 回
