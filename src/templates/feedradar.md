@@ -136,7 +136,7 @@ JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` �
 - `--quiet`（または `-q`）: reporter を完全に黙らせ、CLI の従来 1 行ログだけ残す
 - `RADAR_NO_PROGRESS=1`（env）: 上記より強い escape hatch。CI script で flag を消さずに reporter だけ off にしたいケース向け
 
-詳細・トラブルシュート（`Agent running…` で動いていないように見える時の対処等）は [docs/user-guide.md → 進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet) を参照。
+詳細・トラブルシュート（`Agent running [mm:ss]` で動いていないように見える時の対処等）は [docs/user-guide.md → 進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet) を参照。
 
 定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md)) を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
 

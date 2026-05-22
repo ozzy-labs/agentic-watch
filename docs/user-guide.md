@@ -1398,11 +1398,10 @@ phase markers は ADR-0015 D4 の命名規約に従い、動詞・形が統一�
 
 | Phase | 意味 | 典型時間 |
 |---|---|---|
-| `Loaded item <id>` / `Loaded template <id>` | 入力 YAML / template を読み終えた | <100ms |
-| `Spawning <agent> (cwd: <path>)` | 子プロセス spawn 直前 | <50ms（spawn 自体は次行） |
-| `Agent process started (PID <N>)` | spawn 直後、stdin を流す前 | <100ms |
-| `Agent running… [mm:ss]` | heartbeat tick（TTY のみ同一行更新）。`stdout: 4.2 KB` `output: 1.2 KB` が併記 | 数十秒〜数分 |
-| `Agent completed (<duration>, exit <code>)` | 子プロセス終了 | ― |
+| `Loaded item: <id>` / `Loaded template: <id>.md` | 入力 YAML / template を読み終えた | <100ms |
+| `Spawning <agent> (cwd: <path>)` | 子プロセス spawn 直前 | <50ms |
+| `Agent running [mm:ss]` | heartbeat tick（TTY のみ同一行更新）。spinner 行に `stdout: 4.2 KB` `output: 1.2 KB` が併記 | 数十秒〜数分 |
+| `Agent completed (exit <code>) (<duration>)` | 子プロセス終了。`succeed()` の duration が括弧で追記される | ― |
 | `Frontmatter validated` | `ResearchFrontmatterSchema` 検証通過 | <50ms |
 | `Status: detected → researched` | items.yaml の status 遷移 | <50ms |
 | `[<source-id>] Fetching… (kind: <kind>)` | watch run の per-source 開始 | ― |
@@ -1419,7 +1418,7 @@ spinner 行に表示される副次メトリクス:
 
 | キー | 単位 | 出所 | 目的 |
 |---|---|---|---|
-| `stdout` | バイト（`4.2 KB` 等） | agent CLI が stderr に書いた累積量 | agent が黙っていないか／token を消費しているかの代理指標 |
+| `stdout` | バイト（`4.2 KB` 等） | agent CLI が stdout に書いた累積量（`buildAgentProgressCallback` が `kind === "stdout"` のみカウント） | agent が黙っていないか／token を消費しているかの代理指標 |
 | `output` | バイト | `research/<id>.md` 等の出力ファイルを `fs.stat` 500ms 間隔で polling した最新サイズ | レポート本体の生成進捗。完了直前にどっと増えるパターンが多い |
 | `page` | `i/N` | json-api pagination の現在ページ | `--backfill` 進捗 |
 | `items` | 整数 | 直近 page で取れた item 数 | filter 通過前の生 fetch カウント |
@@ -1444,7 +1443,7 @@ spinner 行に表示される副次メトリクス:
 
 | 症状 | 想定される原因 | 対処 |
 |---|---|---|
-| `Agent running… [mm:ss]` から `stdout` / `output` のメトリクスが伸びない | agent が思考中（tool call の前後で何分も無音になる場合あり）／API rate limit 待ち／ネットワーク待ち | まず `--verbose` で再実行して stdout を直接見る。tool call の trace が出ていれば進行中。30 秒以上完全沈黙なら Ctrl+C で中断して `radar doctor` で agent CLI / 認証を確認 |
+| `Agent running [mm:ss]` から `stdout` / `output` のメトリクスが伸びない | agent が思考中（tool call の前後で何分も無音になる場合あり）／API rate limit 待ち／ネットワーク待ち | まず `--verbose` で再実行して stdout を直接見る。tool call の trace が出ていれば進行中。30 秒以上完全沈黙なら Ctrl+C で中断して `radar doctor` で agent CLI / 認証を確認 |
 | `Still waiting for "<selector>"… [mm:ss]` が連続して出続ける | `kind: html-js` の `js.waitFor` セレクタが JS 実行後の DOM に出現しない | 別 terminal で `radar source test <id> --show-content` を実行し、実際の DOM に当該 selector が存在するかを確認。出ないなら selector を組み直す。`js.timeout` 経過後（既定 30 秒）に hard error で止まる |
 | `Launching Chromium…` から進まない | Chromium 起動 / shared library 不在（Linux で `libnss3` 等） | `radar doctor` で Playwright / Chromium の検出状況を確認。CI なら `npx playwright install --with-deps chromium` で OS 依存も入れる |
 | `[<source-id>] Page <i>/<n>` が伸びない | json-api endpoint が遅い／pagination 終端が見えない API | `--max-pages N` で上限を下げて完了させ、recipe の `pagination.totalPath` / `maxPages` を見直す |
@@ -1989,4 +1988,4 @@ filters:
 | 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す）。TLS 中継 / NTLM / WSL2 を含む詳細は [docs/user-guide/proxy-setup.ja.md](./user-guide/proxy-setup.ja.md) を参照 |
 | `kind: html-js` source がプロキシ越しに失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` のいずれかを設定すれば `html-js` adapter が Playwright の `launch({ proxy })` に自動注入する。`NO_PROXY` も尊重し、Node 形式（`,` 区切り・`.example.com` で suffix match）から Playwright 形式（`;` 区切り・`*.example.com` glob）へ自動変換される。fetch 系 adapter と違い Playwright は `--use-env-proxy` を読まないため、この自動注入が必要 |
 | `refused to fetch private / loopback IPv4 address ...` / `refused to fetch URL with non-HTTP scheme ...` / `refused to fetch loopback hostname ...` | ADR-0009 §D5b の SSRF host blocklist (cloud metadata / RFC1918 / loopback / `file://` 等を遮断) が発火している。意図した遮断ならそのまま (recipe の URL を見直す)。testing 等で意図的にローカル fixture を叩きたい場合は `RADAR_FETCH_HOST_ALLOWLIST=<host>` を設定する。詳細は「[SSRF host blocklist](#ssrf-host-blocklist)」を参照 |
-| `Agent running… [mm:ss]` から動いていないように見える / `Still waiting for "<selector>"…` が連続する | progress reporter の表示で、内部では agent / Playwright が稼働している可能性が高い。`--verbose` で agent stdout を直接見るか、`radar source test <id> --show-content` で DOM を確認する。詳細は「[進捗表示 / verbose / quiet](#進捗表示--verbose--quiet)」を参照 |
+| `Agent running [mm:ss]` から動いていないように見える / `Still waiting for "<selector>"…` が連続する | progress reporter の表示で、内部では agent / Playwright が稼働している可能性が高い。`--verbose` で agent stdout を直接見るか、`radar source test <id> --show-content` で DOM を確認する。詳細は「[進捗表示 / verbose / quiet](#進捗表示--verbose--quiet)」を参照 |
