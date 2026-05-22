@@ -398,6 +398,7 @@ trustLevel: untrusted
 | `waitForSelector timeout` | `js.waitFor` を実際に DOM に出現する selector に変更する／`js.timeout` を伸ばす／`js.waitUntil` を `domcontentloaded` 等に切り替える |
 | `radar watch run` が html-js source を skip し他は完走 | lazy detection が Playwright / Chromium 不在を検知した。`radar doctor` で詳細を確認 |
 | 巨大ページで Chromium が hang する | `js.timeout` を短く設定する（既定 30 秒）。それでも改善しないなら `kind: html` 対象外サイトとして dismiss を検討 |
+| プロキシ越しで `html-js` source が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` を設定する。Playwright は Node の `--use-env-proxy` を読まないが、`html-js` adapter が env を probe して `launch({ proxy: { server, bypass } })` に自動注入する。`NO_PROXY` は Node 形式（`,` 区切り・`.suffix`）から Playwright 形式（`;` 区切り・`*.suffix`）に自動変換 |
 
 詳細な設計判断は [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) を参照。
 
@@ -1020,3 +1021,4 @@ filters:
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
 | workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
 | 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す） |
+| `kind: html-js` source がプロキシ越しに失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` のいずれかを設定すれば `html-js` adapter が Playwright の `launch({ proxy })` に自動注入する。`NO_PROXY` も尊重し、Node 形式（`,` 区切り・`.example.com` で suffix match）から Playwright 形式（`;` 区切り・`*.example.com` glob）へ自動変換される。fetch 系 adapter と違い Playwright は `--use-env-proxy` を読まないため、この自動注入が必要 |

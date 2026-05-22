@@ -305,6 +305,130 @@ describe("html-js adapter — items & dedup (injected Playwright)", () => {
   });
 });
 
+describe("html-js adapter — proxy auto-injection (injected Playwright)", () => {
+  it("omits the proxy field on launch when no proxy env is set", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: {},
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch).toHaveBeenCalledTimes(1);
+    const launchOpts = spies.launch.mock.calls[0]?.[0] as Record<string, unknown>;
+    // Bit-identical to pre-feature behavior in unproxied environments: the
+    // `proxy` key must be absent (not `proxy: undefined`) so Playwright does
+    // not enter the proxy code path at all.
+    expect(launchOpts).toMatchObject({ headless: true });
+    expect("proxy" in launchOpts).toBe(false);
+  });
+
+  it("forwards HTTPS_PROXY into launch options as proxy.server", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: { HTTPS_PROXY: "http://proxy.corp:8080" },
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      headless: true,
+      proxy: { server: "http://proxy.corp:8080" },
+    });
+  });
+
+  it("prefers HTTPS_PROXY over HTTP_PROXY and ALL_PROXY", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: {
+        HTTPS_PROXY: "http://https.example:8080",
+        HTTP_PROXY: "http://http.example:8080",
+        ALL_PROXY: "socks5://all.example:1080",
+      },
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      proxy: { server: "http://https.example:8080" },
+    });
+  });
+
+  it("falls back to HTTP_PROXY when HTTPS_PROXY is absent", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: { HTTP_PROXY: "http://http.example:8080" },
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      proxy: { server: "http://http.example:8080" },
+    });
+  });
+
+  it("forwards ALL_PROXY (SOCKS) as proxy.server when only ALL_PROXY is set", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: { ALL_PROXY: "socks5://all.example:1080" },
+    } as HtmlJsAdapterOptions);
+    // Unlike Node's `--use-env-proxy` (which ignores ALL_PROXY), Playwright
+    // accepts any URL scheme it recognizes (incl. socks5) directly, so the
+    // adapter forwards it verbatim — corporate setups where ALL_PROXY is the
+    // only proxy var should still work end-to-end.
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      proxy: { server: "socks5://all.example:1080" },
+    });
+  });
+
+  it("translates NO_PROXY (comma / leading-dot) to Playwright bypass (semicolon / glob)", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: {
+        HTTPS_PROXY: "http://proxy.corp:8080",
+        NO_PROXY: "localhost,.internal.corp,127.0.0.1",
+      },
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      proxy: {
+        server: "http://proxy.corp:8080",
+        bypass: "localhost;*.internal.corp;127.0.0.1",
+      },
+    });
+  });
+
+  it("accepts lower-case no_proxy alongside upper-case envs", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: {
+        HTTPS_PROXY: "http://proxy.corp:8080",
+        no_proxy: ".example.com",
+      },
+    } as HtmlJsAdapterOptions);
+    expect(spies.launch.mock.calls[0]?.[0]).toMatchObject({
+      proxy: { server: "http://proxy.corp:8080", bypass: "*.example.com" },
+    });
+  });
+
+  it("omits proxy.bypass when NO_PROXY is unset (proxy alone, no bypass)", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: { HTTPS_PROXY: "http://proxy.corp:8080" },
+    } as HtmlJsAdapterOptions);
+    const proxyOpt = (spies.launch.mock.calls[0]?.[0] as { proxy: Record<string, unknown> }).proxy;
+    expect(proxyOpt).toMatchObject({ server: "http://proxy.corp:8080" });
+    // Asserting absence (not `bypass: undefined`) so Playwright's "no bypass
+    // list" branch is selected rather than "empty bypass list".
+    expect("bypass" in proxyOpt).toBe(false);
+  });
+
+  it("treats empty-string proxy env values as unset (curl/wget convention)", async () => {
+    const { playwright, spies } = makeFakePlaywright();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      env: { HTTPS_PROXY: "", HTTP_PROXY: "", ALL_PROXY: "" },
+    } as HtmlJsAdapterOptions);
+    const launchOpts = spies.launch.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect("proxy" in launchOpts).toBe(false);
+  });
+});
+
 describe("html-js adapter — error paths", () => {
   it("throws a user-friendly error when Playwright is not installed", async () => {
     // Force the dynamic import to fail by aliasing 'playwright' to a missing

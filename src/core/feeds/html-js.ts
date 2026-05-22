@@ -1,4 +1,5 @@
 import type { Source, SourceJsOptions } from "../../schemas/index.js";
+import { detectProxyUrl, noProxyToPlaywrightBypass } from "../proxy.js";
 import { contentHash, parseHtmlDocument } from "./_html-common.js";
 import type { FeedAdapter, FeedAdapterOptions } from "./types.js";
 
@@ -32,6 +33,18 @@ import type { FeedAdapter, FeedAdapterOptions } from "./types.js";
  * Chromium. The import is therefore `await import("playwright")` and resolves
  * lazily on the first `html-js` fetch; missing-module errors are translated
  * into a user-friendly install hint.
+ *
+ * ## Proxy auto-injection
+ *
+ * Unlike Node's built-in `fetch()` (which honors `HTTPS_PROXY` once
+ * `--use-env-proxy` is on), Playwright's `chromium.launch()` does NOT read
+ * proxy env vars automatically. The adapter probes `HTTPS_PROXY` /
+ * `HTTP_PROXY` / `ALL_PROXY` on every fetch and forwards the URL through
+ * `launch({ proxy: { server, bypass } })`. `NO_PROXY` is translated from
+ * the Node convention (`,`-separated, leading-dot subdomain match) to the
+ * Playwright convention (`;`-separated, `*.example.com` glob) by
+ * `noProxyToPlaywrightBypass`. In unproxied environments the `proxy` field
+ * is omitted entirely so launch behavior is bit-identical to before.
  */
 
 /**
@@ -53,9 +66,27 @@ const DEFAULT_WAIT_UNTIL: SourceJsOptions["waitUntil"] = "networkidle";
  * pull in the full Playwright type tree (which is itself an optional peer
  * dep and therefore not guaranteed to be installed in dev).
  */
+/**
+ * Subset of Playwright's `BrowserType.launch()` proxy options used by this
+ * adapter. Playwright does NOT auto-honor `HTTPS_PROXY` / `HTTP_PROXY` the way
+ * Node's `--use-env-proxy` does for built-in `fetch()` — it requires the proxy
+ * to be passed explicitly into launch options. The adapter therefore probes
+ * the env (via `detectProxyUrl`) on every fetch and forwards the URL to
+ * Chromium so corporate proxies / NO_PROXY rules are respected end-to-end.
+ */
+export interface PlaywrightProxyOptions {
+  /** Proxy URL (e.g. `http://proxy.corp:8080`). Playwright resolves SOCKS / HTTP automatically. */
+  server: string;
+  /** Optional semicolon-separated bypass list (NOT comma — see `noProxyToPlaywrightBypass`). */
+  bypass?: string;
+}
+
 export interface PlaywrightLike {
   chromium: {
-    launch(options?: { headless?: boolean }): Promise<PlaywrightBrowserLike>;
+    launch(options?: {
+      headless?: boolean;
+      proxy?: PlaywrightProxyOptions;
+    }): Promise<PlaywrightBrowserLike>;
   };
 }
 
@@ -92,6 +123,12 @@ export interface PlaywrightPageLike {
 export interface HtmlJsAdapterOptions extends FeedAdapterOptions {
   /** Injected Playwright module (tests only). Production uses dynamic import. */
   playwright?: PlaywrightLike;
+  /**
+   * Injected env (tests only) — production reads `process.env`. Used to probe
+   * `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` so the proxy injection branch is
+   * deterministically testable without polluting the real process env.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -131,9 +168,34 @@ export const htmlJsAdapter: FeedAdapter = {
     const previous = options.state;
     const fetchedAt = new Date().toISOString();
 
+    // Probe proxy env BEFORE launch. Playwright's `BrowserType.launch()` does
+    // not honor `HTTPS_PROXY` / `HTTP_PROXY` automatically (unlike Node's
+    // `--use-env-proxy` flag for built-in `fetch()`) — we must pass the URL
+    // through `launch({ proxy: { server, bypass } })` explicitly. When no
+    // proxy env is set, omit the field entirely so the launch path is bit-
+    // identical to the pre-proxy behavior in unproxied environments.
+    const env = options.env ?? process.env;
+    const detection = detectProxyUrl(env);
+    const proxyOption = detection
+      ? {
+          server: detection.url,
+          // Honor `NO_PROXY` end-to-end so internal hosts skip the corporate
+          // proxy. `noProxyToPlaywrightBypass` returns `undefined` when
+          // NO_PROXY is unset/empty; spreading `undefined` is a no-op so the
+          // `bypass` field is absent in that case (Playwright treats omitted
+          // vs `""` slightly differently — we want omitted).
+          ...(noProxyToPlaywrightBypass(env.NO_PROXY ?? env.no_proxy) !== undefined
+            ? { bypass: noProxyToPlaywrightBypass(env.NO_PROXY ?? env.no_proxy) as string }
+            : {}),
+        }
+      : undefined;
+
     // Hardening: headless is forced true. Even if a future Playwright default
     // changes, the adapter pins it explicitly here.
-    const browser = await playwright.chromium.launch({ headless: true });
+    const browser = await playwright.chromium.launch({
+      headless: true,
+      ...(proxyOption ? { proxy: proxyOption } : {}),
+    });
     let html: string;
     try {
       // Hardening: fresh context per fetch (no SW / IndexedDB / localStorage
