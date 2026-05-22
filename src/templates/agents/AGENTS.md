@@ -76,7 +76,7 @@ radar watch run
 radar watch run --source aws-whats-new --backfill --max-pages 200
 
 # 検出済み item に対する操作
-radar research <item-id> --agent <agent>     # 調査レポートを生成 (status: detected -> researched)
+radar research <item-id> --agent <agent> [--verbose]   # 調査レポートを生成 (status: detected -> researched)。--verbose で agent stdout を直接見る (ADR-0015)
 radar research --digest <item-id> <item-id> ... [--agent <agent>]  # 複数 item を 1 digest にまとめる (ADR-0011)
 radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (ADR-0014 D3a、--max-items 既定 10)
 radar review <research-id> --agent <agent>   # 既存レポートをレビュー (status: researched -> reviewed)
@@ -89,6 +89,8 @@ radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filt
 ```
 
 > **自動 research のコスト管理 (重要)**: `radar workflow generate combined` は watch → 自動 research を連鎖する workflow を生成し、`--max-items N` (既定 10) のハードキャップを YAML literal + CLI default の **二重防御**で焼き込む (ADR-0014 D3a)。`--max-items 100` のように大きい値を渡す前に必ず agent provider の billing alert を設定すること。暴走に気付いたら GitHub UI から workflow を `Disable workflow` で即停止する。詳細は `docs/user-guide.md` の「[`radar workflow generate`](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#radar-workflow-generate)」を参照。
+>
+> **進捗表示 (ADR-0015)**: `research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test` は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を出力する。`--verbose` で agent stdout を pass-through（デバッグ・「フリーズに見える」時の第一手）、`--quiet` または `RADAR_NO_PROGRESS=1` で完全に黙らせる。詳細は `docs/user-guide.md` の「[進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet)」を参照。
 
 `<agent>` の値: `claude-code` / `codex-cli` / `gemini-cli` / `copilot`
 

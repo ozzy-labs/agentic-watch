@@ -16,6 +16,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 - **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
 - **Scheduled workflows**: `radar workflow generate watch` / `combined` emits GitHub Actions YAML on demand — combine watch with auto-research under a hard-capped `--max-items` budget so a runaway feed cannot blow your LLM bill ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md)).
+- **Progress reporting & verbose mode**: long-running commands (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) stream phase markers + a spinner + side metrics (`stdout` / `output` / `page x/N`) on stderr. Pass `--verbose` to also stream the agent CLI's stdout/stderr, `--quiet` (or `RADAR_NO_PROGRESS=1` for CI) to silence the reporter ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md)).
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
 ## Install

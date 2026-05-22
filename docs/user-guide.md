@@ -1346,6 +1346,120 @@ agent が最新情報を取得しても material な変更が無いと判断し�
 
 CI で自動 install したい場合は環境変数 `RADAR_AUTO_INSTALL_CHROMIUM=1` を `radar watch run` 側でセットすると Chromium 不在時に `npx playwright install chromium` を spawn する（`radar doctor` 自体は read-only で install を行わない）。Playwright npm package 自体の install (`npm i -g playwright`) は radar が代行しない（global npm install の権限問題を避けるため、ユーザー側で実行を強制する設計）。
 
+## 進捗表示 / verbose / quiet
+
+長時間実行コマンド (`radar research` / `review` / `update` / `radar research --batch` / `radar watch run --backfill` / `kind: html-js` の fetch / `radar source test`) は、進捗を **phase markers + spinner + 副次メトリクス** の 3 層で stderr に出力する（[ADR-0015](./adr/0015-progress-reporting-ux.md)）。stdout には CLI の本来の出力（`research:` の完了 1 行、`watch run:` のサマリ等）のみが流れるため、`radar research > out.md` のような pipe は従来どおり機能する。
+
+### default の挙動
+
+- **TTY（対話 terminal）**: phase markers を 1 行ずつ stderr に出力しつつ、同一行で spinner と elapsed time `[mm:ss]` を上書き表示する。`stdout: 4.2 KB` / `output: 1.2 KB` / `page: 3/80` のような副次メトリクスが spinner 行に併記される
+- **non-TTY（CI / pipe / リダイレクト）**: spinner / `\r` 上書きを無効化し、phase markers を **1 行ずつ plain text** で出力する。各 phase が独立行として残るため `tee log.txt` / GitHub Actions の log でも narrative が読める
+- **`radar watch run` のヒューリスティック**: source 数 3 件以上、または `kind: html-js` / `kind: json-api + --backfill` を 1 件でも含む場合のみ per-source の progress を出す。小規模 workspace（RSS 1-2 件、~3 秒で終わる）では spinner が flash するだけで価値が無いため、暗黙に抑制する（後述 [`shouldEnableProgress` ヒューリスティック](#shouldenableprogress-ヒューリスティック)）
+
+### `--verbose` / `--quiet` / `RADAR_NO_PROGRESS=1` の優先順
+
+| 条件 | 挙動 |
+|---|---|
+| `RADAR_NO_PROGRESS=1`（env） | spinner / phase markers / `raw()` をすべて無効化（no-op reporter）。CI / 静かにしたい script 向けの強制 escape hatch |
+| `--quiet`（flag） | reporter を no-op 化。`io.log("research: wrote …")` 等の従来の完了 1 行だけが残る |
+| `--verbose`（flag） | phase markers + spinner（TTY 時のみ）+ **agent CLI の stdout / stderr pass-through**。tool call のログ等を直接見られる |
+| 既定（flag なし） | TTY 検出に応じて phase markers + spinner（TTY）または plain text phase markers（non-TTY） |
+
+優先順は **env > flag > TTY auto-detect**。`RADAR_NO_PROGRESS=1` は `--verbose` を併用しても勝つ（CI で flag を消さずに reporter だけ off にしたいケースに対応）。`--verbose` と `--quiet` の同時指定は `--verbose and --quiet are mutually exclusive` で exit code 2。
+
+```bash
+# 既定（TTY で spinner + phase markers）
+radar research <item-id>
+
+# agent stdout を見たい（デバッグ / bug report 用）
+radar research <item-id> --verbose
+
+# CI script で reporter を完全に黙らせる
+RADAR_NO_PROGRESS=1 radar watch run
+
+# pipe で stdout だけ使い、stderr は捨てる
+radar research <item-id> 2>/dev/null | tee report.md
+```
+
+`--verbose` / `--quiet` は以下のコマンドで利用可能（[#197](https://github.com/ozzy-labs/feedradar/pull/197) / [#198](https://github.com/ozzy-labs/feedradar/pull/198)）:
+
+| コマンド | `--verbose` | `--quiet` | 備考 |
+|---|---|---|---|
+| `radar research <item-id>` | ✅ | ✅ | agent stdout pass-through |
+| `radar review <research-id>` | ✅ | ✅ | 同上 |
+| `radar update <research-id>` | ✅ | ✅ | 同上 |
+| `radar research --batch` | ✅ | ✅ | バッチ内の各 item で適用される |
+| `radar watch run` | ✅ (`-v`) | ✅ (`-q`) | source 単位の phase markers + html-js / json-api の sub-phases |
+| `radar source test <id>` | ✅ (`-v`) | ✅ (`-q`) | 1 source 1 fetch なのでヒューリスティックを介さず常に有効 |
+
+### Phase markers の意味
+
+phase markers は ADR-0015 D4 の命名規約に従い、動詞・形が統一されている。代表的なものと典型時間:
+
+| Phase | 意味 | 典型時間 |
+|---|---|---|
+| `Loaded item: <id>` / `Loaded template: <id>.md` | 入力 YAML / template を読み終えた | <100ms |
+| `Spawning <agent> (cwd: <path>)` | 子プロセス spawn 直前 | <50ms |
+| `Agent running [mm:ss]` | heartbeat tick（TTY のみ同一行更新）。spinner 行に `stdout: 4.2 KB` `output: 1.2 KB` が併記 | 数十秒〜数分 |
+| `Agent completed (exit <code>) (<duration>)` | 子プロセス終了。`succeed()` の duration が括弧で追記される | ― |
+| `Frontmatter validated` | `ResearchFrontmatterSchema` 検証通過 | <50ms |
+| `Status: detected → researched` | items.yaml の status 遷移 | <50ms |
+| `[<source-id>] Fetching… (kind: <kind>)` | watch run の per-source 開始 | ― |
+| `[<source-id>] Page <i>/<n>: <m> items fetched` | json-api pagination 進行（[#198](https://github.com/ozzy-labs/feedradar/pull/198)） | 数百ms / page |
+| `Launching Chromium…` / `Navigating to <url>…` / `Waiting for selector "<sel>" (timeout: <N>ms)…` / `Capturing page content…` / `Closing browser…` | html-js Playwright lifecycle | 数秒〜数十秒 |
+| `Still waiting for "<sel>"… [mm:ss]` | `waitForSelector` が 10 秒以上かかったときの定期 reminder（既定の `js.timeout` 30 秒の ~33%） | timeout まで継続 |
+| `[<source-id>] Completed: <n> total, <m> new (<duration>)` | watch run の per-source 完了 | ― |
+
+phase markers は **副作用を伴わない**（exit code / control flow に影響しない）。debug 用の追加情報は phase markers の後ろに括弧書きで添えられる。
+
+### メトリクスの読み方
+
+spinner 行に表示される副次メトリクス:
+
+| キー | 単位 | 出所 | 目的 |
+|---|---|---|---|
+| `stdout` | バイト（`4.2 KB` 等） | agent CLI が stdout に書いた累積量（`buildAgentProgressCallback` が `kind === "stdout"` のみカウント） | agent が黙っていないか／token を消費しているかの代理指標 |
+| `output` | バイト | `research/<id>.md` 等の出力ファイルを `fs.stat` 500ms 間隔で polling した最新サイズ | レポート本体の生成進捗。完了直前にどっと増えるパターンが多い |
+| `page` | `i/N` | json-api pagination の現在ページ | `--backfill` 進捗 |
+| `items` | 整数 | 直近 page で取れた item 数 | filter 通過前の生 fetch カウント |
+
+非 TTY 環境では spinner 行が無いため、これらは phase marker の括弧書き（`Page 3/80: 100 items fetched`）として 1 行ずつ出力される。
+
+### `shouldEnableProgress` ヒューリスティック
+
+`radar watch run` は次のいずれかを満たす場合のみ per-source の progress を出す（[`src/core/watcher.ts`](https://github.com/ozzy-labs/feedradar/blob/main/src/core/watcher.ts) の `shouldEnableProgress`）:
+
+1. source 数が 3 件以上
+2. `kind: html-js` source を 1 件でも含む
+3. `kind: json-api` source を含み、かつ `--backfill` 指定
+
+このヒューリスティックは **user-configurable ではない**（ADR-0015 D5）。「1 RSS source で spinner が flash するだけ」のケースを避けるための設計判断。これでも spinner を消したい場合は `--quiet` / `RADAR_NO_PROGRESS=1`、逆に「常に progress を見たい」なら現状の解は無く、future issue で扱う。
+
+`radar source test` は 1 source 1 fetch という性質上、ヒューリスティックを介さず常に reporter を有効化する（recipe を tune する場面では phase markers が主目的のため）。
+
+### トラブルシュート: フリーズに見える時の対処
+
+長時間実行で「進んでいるのか止まっているのか」分からなくなったときの判定手順:
+
+| 症状 | 想定される原因 | 対処 |
+|---|---|---|
+| `Agent running [mm:ss]` から `stdout` / `output` のメトリクスが伸びない | agent が思考中（tool call の前後で何分も無音になる場合あり）／API rate limit 待ち／ネットワーク待ち | まず `--verbose` で再実行して stdout を直接見る。tool call の trace が出ていれば進行中。30 秒以上完全沈黙なら Ctrl+C で中断して `radar doctor` で agent CLI / 認証を確認 |
+| `Still waiting for "<selector>"… [mm:ss]` が連続して出続ける | `kind: html-js` の `js.waitFor` セレクタが JS 実行後の DOM に出現しない | 別 terminal で `radar source test <id> --show-content` を実行し、実際の DOM に当該 selector が存在するかを確認。出ないなら selector を組み直す。`js.timeout` 経過後（既定 30 秒）に hard error で止まる |
+| `Launching Chromium…` から進まない | Chromium 起動 / shared library 不在（Linux で `libnss3` 等） | `radar doctor` で Playwright / Chromium の検出状況を確認。CI なら `npx playwright install --with-deps chromium` で OS 依存も入れる |
+| `[<source-id>] Page <i>/<n>` が伸びない | json-api endpoint が遅い／pagination 終端が見えない API | `--max-pages N` で上限を下げて完了させ、recipe の `pagination.totalPath` / `maxPages` を見直す |
+| spinner が表示されない | TTY 判定が false（WSL / Docker exec / MINGW64 の境界ケース）／`RADAR_NO_PROGRESS=1` が設定済み | `env \| grep RADAR_NO_PROGRESS` を確認。non-TTY 検出なら phase markers は 1 行ずつ出力されているはずなので `2>&1 \| less` で stderr を確認 |
+| 文字化け（spinner frame `⠋⠙⠹` が `???` 等になる） | terminal の locale が UTF-8 でない／日本語 IME 経路で文字幅が崩れる | `LANG=C.UTF-8` / `LANG=ja_JP.UTF-8` を設定。それでも崩れるなら `--quiet` で spinner を回避 |
+
+#### Phase 3 機能（未実装）
+
+[ADR-0015 D5](./adr/0015-progress-reporting-ux.md) の Phase 3 として下記が予定されているが、現状は未実装（[#199](https://github.com/ozzy-labs/feedradar/issues/199) で追跡）:
+
+- **hung 検出**: 60 秒以上 agent stdout が無いと warning を出す
+- **SIGINT 段階的終了**: Ctrl+C 時に SIGTERM を送り 3 秒後 SIGKILL する 2 段階 graceful shutdown（現状は Node default の `setTimeout` ベース、子プロセスが即時に死なないことがある）
+- **token / cost meter**: agent CLI が token usage を出すようになったら spinner 行に追加
+
+Phase 1 / 2（本セクションが扱う範囲）は実装済み。Phase 3 が必要になったら #199 を参照。
+
 ## radar.config.yaml
 
 ワークスペースルート（`sources/` と同じ階層）に `radar.config.yaml` を置くと、`research` / `review` コマンドの `--agent` 省略時に使う default agent を指定できる。設定ファイルは任意で、無ければハードコードされた `claude-code` がそのまま fallback として使われる。
@@ -1874,3 +1988,4 @@ filters:
 | 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す）。TLS 中継 / NTLM / WSL2 を含む詳細は [docs/user-guide/proxy-setup.ja.md](./user-guide/proxy-setup.ja.md) を参照 |
 | `kind: html-js` source がプロキシ越しに失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` のいずれかを設定すれば `html-js` adapter が Playwright の `launch({ proxy })` に自動注入する。`NO_PROXY` も尊重し、Node 形式（`,` 区切り・`.example.com` で suffix match）から Playwright 形式（`;` 区切り・`*.example.com` glob）へ自動変換される。fetch 系 adapter と違い Playwright は `--use-env-proxy` を読まないため、この自動注入が必要 |
 | `refused to fetch private / loopback IPv4 address ...` / `refused to fetch URL with non-HTTP scheme ...` / `refused to fetch loopback hostname ...` | ADR-0009 §D5b の SSRF host blocklist (cloud metadata / RFC1918 / loopback / `file://` 等を遮断) が発火している。意図した遮断ならそのまま (recipe の URL を見直す)。testing 等で意図的にローカル fixture を叩きたい場合は `RADAR_FETCH_HOST_ALLOWLIST=<host>` を設定する。詳細は「[SSRF host blocklist](#ssrf-host-blocklist)」を参照 |
+| `Agent running [mm:ss]` から動いていないように見える / `Still waiting for "<selector>"…` が連続する | progress reporter の表示で、内部では agent / Playwright が稼働している可能性が高い。`--verbose` で agent stdout を直接見るか、`radar source test <id> --show-content` で DOM を確認する。詳細は「[進捗表示 / verbose / quiet](#進捗表示--verbose--quiet)」を参照 |
