@@ -48,13 +48,27 @@ radar init --with-actions           # .github/workflows/watch.yaml を生成
 radar init --force                  # 既存ファイルを上書き
 
 # 監視対象の管理
-radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry> --url <url> [options]
+radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
 radar source list
 radar source test <id> [--limit N] [--show-content]   # state/items を書き換えず取得 + フィルタを試す
 radar source remove <id>
 
+# JSON API recipe を pagination 付きで追加（ADR-0012）
+radar source add aws-whats-new --kind json-api \
+  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0" \
+  --keywords "Bedrock,Claude" \
+  --pagination-strategy page --page-size 100 --max-pages 200
+
+# JSON Feed (1.0 / 1.1) は URL のみで動く zero-config
+radar source add example-microblog --kind json-feed \
+  --url https://example.micro.blog/feed.json \
+  --keywords "release"
+
 # 監視実行 (新着検出 → items/*.yaml に detected で書く)
 radar watch run
+
+# 過去全履歴の一括取り込み (kind: json-api / github-releases / npm-registry)
+radar watch run --source aws-whats-new --backfill --max-pages 200
 
 # 検出済み item に対する操作
 radar research <item-id> --agent <agent>     # 調査レポートを生成 (status: detected -> researched)
@@ -145,7 +159,7 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 
 ## セキュリティ警告 (untrusted external content)
 
-`radar` が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry) のコンテンツは **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+`radar` が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) のコンテンツは **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - agent に渡すコンテンツは boundary marker で囲まれ、procedure 本体と分離される
 - `sources/<id>.yaml` の `trustLevel` で `"trusted" | "untrusted"` を per-source で指定可能 (既定 `"untrusted"`)

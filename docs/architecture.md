@@ -30,7 +30,8 @@
 │  core/                                                    │
 │    ├─ watcher           : Feed adapter を呼び出して fetch │
 │    ├─ feeds/            : RSS / HTML / HTML-JS (Playwright) / GitHub Releases / npm │
-│    │                     + github-api / derive-id / _html-common (shared) │
+│    │                     / JSON Feed / JSON API (recipe + JSONPath-lite) │
+│    │                     + github-api / derive-id / _html-common / _jsonpath │
 │    ├─ filter            : keyword + excludeKeywords 判定  │
 │    ├─ items             : 検出アイテムの保存・status 管理 │
 │    ├─ templates         : Markdown テンプレート差し込み   │
@@ -54,7 +55,7 @@ bundled-asset 4 ディレクトリ (`skills/` / `claude-skills/` / `gemini-comma
 | モジュール | パス | 責務 |
 |---|---|---|
 | `core/watcher` | `src/core/watcher.ts` | Source 配列を受け取り、各 source の kind に応じた Feed adapter で fetch、Item[] を返す |
-| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装 (rss / html / html-js / github-releases / npm-registry)。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）+ shared helpers (`github-api.ts` rate-limit-aware GitHub API client、`derive-id.ts` stable item id 派生、`_html-common.ts` parser / content-hash を `html` と `html-js` で共有 — [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md))。`html-js.ts` は Playwright を **optional peer dep** として動的 import する |
+| `core/feeds` | `src/core/feeds/` | Source kind ごとの fetch 実装 (rss / html / html-js / github-releases / npm-registry / **json-feed** / **json-api**)。共通 `FeedAdapter` interface（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)）+ shared helpers (`github-api.ts` rate-limit-aware GitHub API client、`derive-id.ts` stable item id 派生、`_html-common.ts` parser / content-hash を `html` と `html-js` で共有 — [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md)、`_jsonpath.ts` 依存パッケージ無しの JSONPath-lite evaluator を `json-api` で利用 — [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md))。`html-js.ts` は Playwright を **optional peer dep** として動的 import する。`json-feed.ts` は JSON Feed 1.0 / 1.1 標準 (URL のみ、L0 tier)、`json-api.ts` は任意 JSON API の recipe ベース汎用 adapter (5 種類の pagination 戦略 / `--backfill` をサポート、L1 tier) |
 | `core/filter` | `src/core/filter.ts` | Item に対する `keywords` `excludeKeywords` 判定。Source に紐づく filter を適用（詳細仕様: [`design/filter-spec.md`](./design/filter-spec.md)）|
 | `core/items` | `src/core/items.ts` | items YAML の保存・読み込み・status 遷移管理 |
 | `core/templates` | `src/core/templates.ts` | テンプレ Markdown の読み込み + frontmatter 駆動の差し込み |
@@ -124,10 +125,12 @@ Status は `items/*.yaml` に保存され、CLI が遷移を駆動。詳細・wr
 | `html-js` | ― | ― | ✅ |
 | `github-releases` | ✅ | ― | ― |
 | `npm-registry` | ✅ | ― | ― |
+| `json-feed` | ✅ | ✅ | ― |
+| `json-api` | ✅ | ― | ✅ |
 
 凡例: ✅ = 実装あり / ― = 未対応または該当なし。
 
-実装は `src/core/feeds/<kind>.ts` を参照（`rss.ts` / `html.ts` / `html-js.ts` / `github-releases.ts` / `npm-registry.ts`）。
+実装は `src/core/feeds/<kind>.ts` を参照（`rss.ts` / `html.ts` / `html-js.ts` / `github-releases.ts` / `npm-registry.ts` / `json-feed.ts` / `json-api.ts`）。`json-api` は `--backfill` モード時のみ conditional GET を skip して全履歴を walk する（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。
 
 ### 304 (Not Modified) の挙動
 
@@ -213,6 +216,7 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 | Phase 2 | 4 agent adapters + `review` | 完了 |
 | Phase 3 | HTML scraping / GitHub Releases / npm registry の追加 source 種別 | 完了 |
 | Phase 3a | JS-rendered HTML (`kind: html-js`、Playwright optional peer dep、[ADR-0010](./adr/0010-html-js-adapter-and-distribution.md)) | adapter 実装完了 ([#118](https://github.com/ozzy-labs/feedradar/pull/118))、`radar doctor` + CI matrix + docs は親 epic [#111](https://github.com/ozzy-labs/feedradar/issues/111) の sub-issue で進行中 |
+| Phase 3b | JSON API / JSON Feed (`kind: json-api` / `kind: json-feed`、JSONPath-lite + `--backfill`、[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md)) | 完了 — adapter ([#185](https://github.com/ozzy-labs/feedradar/pull/185)) / default chain + `source add` flag ([#192](https://github.com/ozzy-labs/feedradar/pull/192)) / json-feed ([#183](https://github.com/ozzy-labs/feedradar/pull/183)) / docs 統合 ([#176](https://github.com/ozzy-labs/feedradar/issues/176)) |
 | Phase 4 | schedule 雛形（[ADR-0004](./adr/0004-schedule-strategy.md)）を `init --with-routines` / `init --with-actions` で吐く | 完了 |
 | Phase 5 | `update` コマンド（既存 research の差分更新）、`dismiss` コマンド | 完了 |
 | Phase 6 | npm publish 初版 + Trusted Publisher 登録（手順: [`docs/release.md`](./release.md)） | 初回 publish 待ち（sibling-style workflow 配備済み） |
@@ -231,6 +235,8 @@ GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため�
 - [0008 Item Status State Machine](./adr/0008-status-state-machine.md)
 - [0009 Untrusted External Content Handling for Agent Prompts](./adr/0009-untrusted-external-content-handling.md)
 - [0010 html-js Adapter and Playwright Distribution](./adr/0010-html-js-adapter-and-distribution.md)
+- [0011 Digest Research Output](./adr/0011-digest-research-output.md)
+- [0012 JSON API Adapter and Recipe Bundling Strategy](./adr/0012-json-api-adapter-and-recipe-strategy.md)
 
 ## 関連 Design Docs
 
