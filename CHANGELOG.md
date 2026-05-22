@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.5](https://github.com/ozzy-labs/feedradar/compare/v0.1.4...v0.1.5) (2026-05-22)
+
+
+### Features
+
+* **cli,feeds:** watch run --backfill / html-js / source test に進捗統合 ([#218](https://github.com/ozzy-labs/feedradar/issues/218)) ([919cee1](https://github.com/ozzy-labs/feedradar/commit/919cee13b52903c650e5fd693bd693e153528cc6))
+* **cli,recipes:** recipe CLI extension (radar source recipes / --recipe) ([#201](https://github.com/ozzy-labs/feedradar/issues/201)) ([5264c75](https://github.com/ozzy-labs/feedradar/commit/5264c753da953f6048600632ece55eb2bdef5cda))
+* **cli:** integrate progress reporter and --verbose/--quiet into research/review/update ([#217](https://github.com/ozzy-labs/feedradar/issues/217)) ([5f12f69](https://github.com/ozzy-labs/feedradar/commit/5f12f69f044e5e636a06708c9228a837222a5969))
+* **cli:** radar workflow generate combined (watch + auto research with hard cap) ([#215](https://github.com/ozzy-labs/feedradar/issues/215)) ([ba49a7d](https://github.com/ozzy-labs/feedradar/commit/ba49a7d5b3eca313f853757a6c6bd58d7b52af62))
+* **cli:** radar workflow generate watch 実装 ([#214](https://github.com/ozzy-labs/feedradar/issues/214)) ([5d415f5](https://github.com/ozzy-labs/feedradar/commit/5d415f55bc6538e1f234441ac1d3314d55801dfe))
+* **core,agents:** ProgressReporter + onProgress callback ([#213](https://github.com/ozzy-labs/feedradar/issues/213)) ([70a53bc](https://github.com/ozzy-labs/feedradar/commit/70a53bc59ff36fb6560bebec809464e28eecafb2))
+* **feeds,cli:** add default selector chain and source add for json-api ([#192](https://github.com/ozzy-labs/feedradar/issues/192)) ([f35cd37](https://github.com/ozzy-labs/feedradar/commit/f35cd3752f07b8abe4bc9cb9925c1449c7daea50))
+* **feeds:** add kind: json-api adapter with --backfill ([#185](https://github.com/ozzy-labs/feedradar/issues/185)) ([9dbd6af](https://github.com/ozzy-labs/feedradar/commit/9dbd6afa13bdb3857586ecb942583bf2be120678))
+* **feeds:** add kind: json-feed adapter ([#183](https://github.com/ozzy-labs/feedradar/issues/183)) ([21a01d2](https://github.com/ozzy-labs/feedradar/commit/21a01d263092492d7b4823e5fc7ea814b4302a99))
+* **recipes:** add bundled aws-whats-new + dev-to recipes with CI smoke ([#202](https://github.com/ozzy-labs/feedradar/issues/202)) ([7b5b285](https://github.com/ozzy-labs/feedradar/commit/7b5b2852dca92cb93fd3c80167eedc157e1e43c1)), closes [#178](https://github.com/ozzy-labs/feedradar/issues/178)
+
+
+### Bug Fixes
+
+* **feeds:** add SSRF host blocklist to shared fetch wrapper ([#209](https://github.com/ozzy-labs/feedradar/issues/209)) ([cf5c107](https://github.com/ozzy-labs/feedradar/commit/cf5c107abf722164c63d6687fb90a792f31b7182))
+* **feeds:** resolve relative link URLs in json-api adapter ([#208](https://github.com/ozzy-labs/feedradar/issues/208)) ([07a487d](https://github.com/ozzy-labs/feedradar/commit/07a487d33a731e4bdd0f5fff3e03e4339b57f11c)), closes [#204](https://github.com/ozzy-labs/feedradar/issues/204)
+
 ## [0.1.4](https://github.com/ozzy-labs/feedradar/compare/v0.1.3...v0.1.4) (2026-05-22)
 
 
