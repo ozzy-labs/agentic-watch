@@ -17,9 +17,9 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 - **副作用**: false positive / UX 悪化 / 既存 ADR との抵触
 - **位置づけ**: defense-in-depth のどの層に該当するか ([prompt-injection.md § 防御の階層](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md#防御の階層))
 
-### Source kind 別の信頼境界 (2026-05-17 html-js 追加)
+### Source kind 別の信頼境界 (2026-05-17 html-js 追加 / 2026-05-22 json-api・json-feed 追加)
 
-[ADR-0010](./0010-html-js-adapter-and-distribution.md) の `kind: html-js` 採択に伴い、本 ADR が前提とする信頼境界表を以下のとおり拡張する (threat-model.md §A と整合):
+[ADR-0010](./0010-html-js-adapter-and-distribution.md) の `kind: html-js` 採択、および [ADR-0012](./0012-json-api-adapter-and-recipe-strategy.md) の `kind: json-api` / `kind: json-feed` 採択に伴い、本 ADR が前提とする信頼境界表を以下のとおり拡張する (threat-model.md §A と整合):
 
 | Source kind | コントロール元 | FeedRadar プロセスとの関係 | 追加 attack surface | 備考 |
 |---|---|---|---|---|
@@ -28,6 +28,10 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 | `html-js` | サイト運営者 | **Chromium (別 OS process) で page JS 実行** | **中** (WebRTC IP 漏洩 / drive-by download / 巨大ページ OOM 等。Chromium プロセスは sandbox 有効 + headless + accept_downloads=false で FeedRadar プロセスから OS process 境界で隔離。詳細は [ADR-0010 §D5](./0010-html-js-adapter-and-distribution.md#d5-chromium-hardening-要件) と [`docs/design/threat-model.md`](../design/threat-model.md) §C-2) | page JS が抽出するテキストも untrusted item として M1c boundary marker で wrap される |
 | `github-releases` | リポジトリ owner / collaborator | API JSON 受信のみ | 低 | release body は contributors が書ける |
 | `npm-registry` | パッケージ maintainer | packument JSON 受信のみ | 低 | typosquat / 乗っ取り maintainer の risk |
+| `json-api` | サイト運営者 + **recipe 作者** | text 受信 + JSON parse + JSONPath-lite 評価 | **中** (任意 URL / 任意 header / レスポンスサイズ多様性。下記「JSON API generic adapter 拡張」の D5a〜D5c で size cap / host blocklist / env interpolation を強制) | recipe 作者という第二の信頼境界が新規。公式バンドル recipe (`recipes/*.yaml`) と user 手書き recipe で監査責任が異なる ([ADR-0012 D6](./0012-json-api-adapter-and-recipe-strategy.md#d6-adr-0009-信頼境界表の更新) 参照) |
+| `json-feed` | サイト運営者 | text 受信 + JSON parse | 低 (固定 schema、`jsonfeed.org/version/1.1` 準拠) | parser バグ以外は静的データ。recipe 不要のため recipe 作者の信頼境界は無い |
+
+**`json-api` 特記**: `kind: html-js` の Chromium 隔離と異なり、`kind: json-api` の追加 attack surface は **JSON parser 自体の脆弱性ではなく recipe 設定経由の任意 URL fetch** に集中する。これは Chromium バイナリ脆弱性追跡責任 (html-js) と同様、recipe 監査責任が user 側 (user 手書き recipe の場合) または FeedRadar repo owner 側 (公式バンドル recipe の場合) に分かれる構造になる。下記「JSON API generic adapter 拡張」で固定 policy として強制する防御層を確立する。
 
 **`html-js` 特記**: Chromium 自体は FeedRadar プロセスとは別の OS process で動作し、Chromium 内蔵の sandbox + headless により page JS は FeedRadar ホスト上の sensitive ファイル (`~/.ssh/`, `~/.aws/credentials`, `.env` 等) に **直接アクセスできない**。ただし Chromium バイナリ自体の脆弱性 (例: V8 0-day) が悪用された場合は sandbox escape の可能性がある。詳細は次節「Chromium バイナリ脆弱性追跡責任」参照。
 
@@ -47,6 +51,72 @@ FeedRadar は外部 feed (RSS / HTML / html-js / GitHub Releases / npm-registry)
 - `kind: html-js` を実運用する場合は、Chromium 脆弱性アラート (CISA KEV / Chrome Releases) を購読する
 
 詳細は [ADR-0010](./0010-html-js-adapter-and-distribution.md) を参照。
+
+### JSON API generic adapter 拡張 (2026-05-22 json-api 追加)
+
+[ADR-0012](./0012-json-api-adapter-and-recipe-strategy.md) の `kind: json-api` 採択に伴い、generic adapter 用の追加防御策を確立する。既存 5 adapter は固定 endpoint / 固定 schema を持つのに対し、`kind: json-api` は recipe 経由で **任意 URL / 任意 header / 任意ページサイズ** を許容するため、attack surface が広がる。下記は adapter 内部で固定値として強制する policy であり、recipe 側から override 不可。
+
+| ID | 防御策 | 状態 |
+|---|---|---|
+| **D5a** | レスポンスサイズキャップ (デフォルト 10 MB / page) | Adopt (ADR-0012 D5 で確立、実装は #173 で sub-issue 化) |
+| **D5b** | host allowlist / blocklist (private IP / loopback / file:// / cloud metadata 遮断) | Adopt (既存 `src/core/feeds/_fetch.ts` の遮断ロジックを json-api adapter にも適用) |
+| **D5c** | credential 漏洩防止 (env var interpolation: `${VAR}` のみ、log redact) | Adopt |
+| **D5d** | JSON body の prompt injection | 既存 M1c (boundary marker) で十分 — 追加策不要 |
+
+#### D5a レスポンスサイズキャップ
+
+- デフォルト 10 MB / page を adapter 内部の固定値として強制する
+- 超過時は [ADR-0008](./0008-status-state-machine.md) の状態機械に従い `Source.lastErrorReason: "response too large"` で fail
+- 巨大 body の OOM / disk fill / agent CLI の context window 食い潰しを防ぐ
+- recipe からは override 不可 (信頼できないユーザー recipe からの DoS 経路を断つ)
+
+#### D5b Host allowlist / blocklist
+
+`kind: json-api` の `url` および pagination で fetch する後続 URL すべてに対し、既存 fetch wrapper (`src/core/feeds/_fetch.ts`) が遮断する以下のホスト集合を必ず通す。
+
+| 遮断対象 | 理由 |
+|---|---|
+| `127.0.0.0/8` / `localhost` / `0.0.0.0` | SSRF: user の localhost で動く管理画面 / dev server を fetch される |
+| RFC1918 private IP (`10.0.0.0/8` / `172.16.0.0/12` / `192.168.0.0/16`) | SSRF: 同一 VPC / LAN 内の internal service へ到達 |
+| `169.254.169.254` / `metadata.google.internal` / `metadata.azure.com` | cloud instance metadata service: IAM role credentials の窃取 |
+| `file://` / `ftp://` / その他 non-http(s) scheme | local filesystem / 異プロトコル経由の任意 read |
+| DNS rebinding 経路 (動的 IP 変化) | resolver hook で fetch 時の IP も確認 (実装は #173 で詳細) |
+
+既存 5 adapter は固定 endpoint のため遮断ロジックは事実上 no-op だったが、recipe で任意 URL を書ける `kind: json-api` では **必須**。
+
+#### D5c Credential 漏洩防止 (env var interpolation)
+
+recipe の `http.headers` で `Authorization` 等の sensitive header を扱う場合、env var を明示的に interpolation する仕様を確立する。
+
+- **構文**: `${VAR_NAME}` の形のみ受け付ける
+- **不可**:
+  - shell expansion (`$VAR` / `${VAR:-default}` / `$((arith))`)
+  - command substitution (`$(cmd)` / `` `cmd` ``)
+  - file 参照 (`@/path/to/secret`)
+- **recipe YAML に生の credential 文字列を書かない契約** を schema description (`http.headers` の field doc) と user-guide で明文化する
+- **env var が未定義の場合**: interpolation はエラーではなく **header 自体を送信しない** (degraded fetch) として扱う
+  - public API は recipe そのままで動く
+  - 認証必須 API は env が無い時点で 401/403 が返って fail-fast する
+- **log redact 必須**:
+  - log / frontmatter / error message に interpolation **後**の値を絶対に載せない
+  - `Authorization` / `X-Api-Key` / `Cookie` / `Proxy-Authorization` / その他 `*-Token` / `*-Secret` 系を含む header 名を redact 対象とする
+  - 既存 [#170](https://github.com/ozzy-labs/feedradar/pull/170) の credential masking 方針 (proxy 認証情報の masking) と同じ実装パターンを踏襲する
+
+#### D5d JSON body の prompt injection
+
+`kind: json-api` で取得した item content (`title` / `summary` / `body` / `tags`) は、既存 5 adapter と同じく item normalize 後 prompt builder で **M1c boundary marker (`<untrusted_item>...</untrusted_item>`) でラップ**される。M1a regex pre-filter / M5a 検出ログも既存経路で動く。`kind: json-api` 固有の追加対策は不要。
+
+#### Recipe 作者という第二の信頼境界
+
+`kind: json-api` で初めて登場する「recipe 作者」を信頼境界の構成要素として明示する:
+
+| Recipe 経路 | 信頼境界 | 監査責任 |
+|---|---|---|
+| **公式バンドル recipe** (`recipes/*.yaml`、本 repo 同梱) | FeedRadar repo owner + reviewer | PR review で host / header / pageSize / pagination をレビュー、CI smoke test で endpoint reachability を継続検証 |
+| **user 手書き recipe** (user が `~/.config/feedradar/recipes/` 等に置く) | user 自身 | user 自身が recipe 内容を audit。FeedRadar 側の防御は D5a〜D5c の固定 policy が backstop |
+| **第三者配布 recipe** (将来検討、現状は範囲外) | 配布元 | F1 (recipe ライブラリ化) で再評価 ([ADR-0012 Future Work](./0012-json-api-adapter-and-recipe-strategy.md#future-work-条件付き再評価)) |
+
+user-guide で「recipe は YAML config と同等の責任で扱う、悪意ある recipe を copy-paste しない、公式 recipe 以外は内容を必ず確認する」旨を警告する (作業は #176 docs 統合に委譲)。
 
 ## Decision
 
@@ -186,6 +256,7 @@ M4 (`Source.trustLevel`) は **schema レベルの基盤**として上記スタ�
   - [ADR-0006 Filter Specification](./0006-filter-specification.md) (filter 層との配置整合)
   - [ADR-0008 Item Status State Machine](./0008-status-state-machine.md) (M5b 却下理由の出所)
   - [ADR-0010 html-js Adapter and Playwright Distribution](./0010-html-js-adapter-and-distribution.md) (§A 信頼境界表に `html-js` 行追加、Chromium バイナリ脆弱性追跡責任の所在)
+  - [ADR-0012 JSON API Adapter and Recipe Bundling Strategy](./0012-json-api-adapter-and-recipe-strategy.md) (§A 信頼境界表に `json-api` / `json-feed` 行追加、generic adapter 用追加防御 D5a〜D5c、recipe 作者という第二の信頼境界)
 - 関連 docs: [`docs/user-guide.md`](../user-guide.md) § Security 警告 ([#48](https://github.com/ozzy-labs/feedradar/issues/48))
 - knowledge:
   - [`ai/practice/prompt-injection`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md) (6 layer 防御階層、lethal trifecta、OWASP LLM01)
