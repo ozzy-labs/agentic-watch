@@ -46,13 +46,15 @@ jsonSelectors:
   # rooted at the actual record.
   items: $.items[*].item
   title: $.additionalFields.headline
-  # KNOWN LIMITATION (#178): `headlineUrl` is a relative path like
-  # `/about-aws/whats-new/.../`, but `Item.url` requires an absolute URL
-  # (zod `.url()`). The smoke test will flag every item as drop-on-parse
-  # until the json-api adapter learns to resolve relative paths against
-  # `source.url` (tracked as follow-up). dev.to and most other bundled
-  # recipes return absolute URLs and are unaffected.
+  # `headlineUrl` is a relative path like `/about-aws/whats-new/.../`. The
+  # json-api adapter resolves it against `linkBase` so `Item.url` lands as
+  # an absolute URL (#204). `source.url` points at the API endpoint
+  # (`aws.amazon.com/api/...`) which would also work as the implicit
+  # fallback base, but we declare `linkBase` explicitly here so the recipe
+  # documents the intent and is robust if the API endpoint host ever drifts
+  # away from the public site host.
   link: $.additionalFields.headlineUrl
+  linkBase: https://aws.amazon.com
   publishedAt: $.additionalFields.postDateTime
   summary: $.additionalFields.postBody
   publisherId: $.id
