@@ -270,7 +270,7 @@ function printAddHelp(log: (m: string) => void): void {
   log("");
   log("Options:");
   log(
-    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-api",
+    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed | json-api",
   );
   log("  --url <url>              fetch target URL");
   log("  --name <name>            display name (defaults to <id>)");
@@ -380,7 +380,7 @@ export async function addSource(
   const kindResult = SourceKindSchema.safeParse(parsed.kind);
   if (!kindResult.success) {
     error(
-      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-api)`,
+      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed | json-api)`,
     );
     return 2;
   }

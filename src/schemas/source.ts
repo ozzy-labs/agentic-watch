@@ -6,6 +6,7 @@ export const SourceKindSchema = z.enum([
   "html-js",
   "github-releases",
   "npm-registry",
+  "json-feed",
   "json-api",
 ]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
