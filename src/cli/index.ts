@@ -9,6 +9,7 @@ import { reviewCommand } from "./review.js";
 import { sourceCommand } from "./source.js";
 import { updateCommand } from "./update.js";
 import { watchCommand } from "./watch.js";
+import { workflowCommand } from "./workflow.js";
 
 export interface Command {
   name: string;
@@ -25,6 +26,7 @@ const commands: Command[] = [
   reviewCommand,
   updateCommand,
   doctorCommand,
+  workflowCommand,
 ];
 
 // Read the installed package's version at runtime so `radar --version`

@@ -20,11 +20,20 @@ async function copyMdTree(srcRel, distRel, label) {
   await mkdir(dist, { recursive: true });
   await cp(src, dist, {
     recursive: true,
-    // Allow directories so cp can recurse; otherwise restrict to .md / .yaml / .toml.
+    // Allow directories so cp can recurse; otherwise restrict to bundled
+    // asset extensions. `.tmpl` is included for workflow placeholder
+    // templates (e.g. `watch.template.yaml.tmpl`) that intentionally hold
+    // pre-substitution syntax and are stored with a non-`.yaml` extension
+    // to escape repo-wide yamlfmt — see ADR-0014 / #188.
     filter: (p) => {
       try {
         if (!/\.[^./\\]+$/.test(p)) return true;
-        return p.endsWith(".md") || p.endsWith(".yaml") || p.endsWith(".toml");
+        return (
+          p.endsWith(".md") ||
+          p.endsWith(".yaml") ||
+          p.endsWith(".toml") ||
+          p.endsWith(".tmpl")
+        );
       } catch {
         return false;
       }
