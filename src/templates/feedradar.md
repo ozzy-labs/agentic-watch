@@ -117,18 +117,26 @@ radar source list
 radar source recipes                                  # バンドル recipe を一覧表示
 radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
-radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]]
-radar research <item-id> --agent <agent>
+radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]] [-v|--verbose | -q|--quiet]
+radar research <item-id> --agent <agent> [--verbose | --quiet]    # 進捗表示・stdout pass-through は --verbose で有効化 (ADR-0015)
 radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 item を 1 digest にまとめる (ADR-0011)
-radar review <research-id> --agent <agent>
-radar update <research-id> --agent <agent>
+radar review <research-id> --agent <agent> [--verbose | --quiet]
+radar update <research-id> --agent <agent> [--verbose | --quiet]
 radar dismiss <item-id>
-radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (ADR-0014)
+radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>] [--verbose | --quiet]  # detected を一括 research (ADR-0014)
 radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]            # GitHub Actions watch 雛形を後追い生成 (ADR-0014)
 radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]   # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
 ```
 
 JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` を YAML に書く（[ADR-0012](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0012-json-api-adapter-and-recipe-strategy.md)）。JSON Feed 1.0 / 1.1 標準に準拠したサイトは URL だけで動く zero-config kind (`kind: json-feed`)。過去の全件取り込みは `radar watch run --backfill` を使う (kind: json-api / github-releases / npm-registry 対応)。
+
+長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を表示します（[ADR-0015](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0015-progress-reporting-ux.md)）。挙動切替は env > flag > TTY auto-detect の優先順:
+
+- `--verbose`（または `-v`）: agent CLI / Playwright の stdout/stderr を pass-through。デバッグや「フリーズに見える」ときの第一手
+- `--quiet`（または `-q`）: reporter を完全に黙らせ、CLI の従来 1 行ログだけ残す
+- `RADAR_NO_PROGRESS=1`（env）: 上記より強い escape hatch。CI script で flag を消さずに reporter だけ off にしたいケース向け
+
+詳細・トラブルシュート（`Agent running…` で動いていないように見える時の対処等）は [docs/user-guide.md → 進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet) を参照。
 
 定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md)) を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
 

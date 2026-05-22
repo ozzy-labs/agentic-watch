@@ -16,6 +16,7 @@
 - **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
 - **定期実行 workflow 後追い生成**: `radar workflow generate watch` / `combined` で GitHub Actions YAML を CLI から後追い生成。`combined` は watch + 自動 research を `--max-items` ハードキャップ付きで実行し、暴走 feed による LLM cost 爆発を設計レベルで遮断 ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
+- **進捗表示と verbose mode**: 長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) が phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を stderr に出力する。`--verbose` で agent CLI の stdout/stderr を pass-through、`--quiet`（CI なら `RADAR_NO_PROGRESS=1`）で reporter を完全に黙らせる ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md))。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
 ## インストール
