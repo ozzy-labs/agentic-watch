@@ -8,8 +8,6 @@
   },
   "files": [
     "dist",
-    "dist/skills",
-    "dist/recipes",
     "LICENSE",
     "README.md"
   ],
