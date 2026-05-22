@@ -72,3 +72,41 @@ export function mergeNodeOptions(existing: string | undefined, flag: string): st
   if (tokens.includes(flag)) return existing;
   return `${existing} ${flag}`;
 }
+
+/**
+ * Convert a `NO_PROXY` env value (Node / curl / wget convention) to Playwright's
+ * `proxy.bypass` form.
+ *
+ * Differences between the two formats:
+ *
+ * | Concern        | Node `NO_PROXY`              | Playwright `bypass`             |
+ * |----------------|------------------------------|---------------------------------|
+ * | Separator      | `,`                          | `;`                             |
+ * | Domain suffix  | `.example.com` (leading dot) | `*.example.com` (glob wildcard) |
+ * | Bare host      | `example.com`                | `example.com`                   |
+ *
+ * Empty / whitespace-only entries are dropped so trailing commas or accidental
+ * double commas don't produce empty rules (which Playwright would treat as
+ * "bypass nothing"). Returns `undefined` when the input is unset / empty so
+ * callers can pass through "no bypass list" to Playwright without an empty
+ * string (Playwright treats `""` as a valid empty bypass list — slightly
+ * different intent than "not specified").
+ */
+export function noProxyToPlaywrightBypass(noProxy: string | undefined): string | undefined {
+  if (!noProxy) return undefined;
+  const entries = noProxy
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((entry) => {
+      // Node convention: a leading dot means "match this domain and all
+      // subdomains" (`.example.com` matches `api.example.com`). Playwright
+      // expresses the same intent with a glob wildcard: `*.example.com`.
+      // Bare hosts (no leading dot) are passed through untouched — both
+      // formats agree on the exact-match semantics there.
+      if (entry.startsWith(".")) return `*${entry}`;
+      return entry;
+    });
+  if (entries.length === 0) return undefined;
+  return entries.join(";");
+}
