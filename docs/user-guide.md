@@ -1008,6 +1008,7 @@ radar watch run --source anthropic-news
 |---|---|---|
 | `RADAR_FETCH_TIMEOUT_MS` | `30000` | 1 attempt あたりのタイムアウト (ms) |
 | `RADAR_FETCH_RETRIES` | `2` | 初回失敗後のリトライ回数（`0` で即失敗） |
+| `RADAR_FETCH_HOST_ALLOWLIST` | (空) | SSRF host blocklist の override (カンマ区切り host literal、testing 用)。詳細は下記「[SSRF host blocklist](#ssrf-host-blocklist)」 |
 
 ```bash
 # 例: タイムアウトを 10 秒、リトライを 4 回に
@@ -1015,6 +1016,41 @@ export RADAR_FETCH_TIMEOUT_MS=10000
 export RADAR_FETCH_RETRIES=4
 radar watch run
 ```
+
+#### SSRF host blocklist
+
+[ADR-0009 §D5b](./adr/0009-untrusted-external-content-handling.md#d5b-host-allowlist--blocklist) に従い、共通 fetch wrapper は次のホストへの fetch を **常時遮断** する (`kind: json-api` で recipe 経由の任意 URL を許容する都合上、`fetchWithRetry` を通る全 adapter に効かせている):
+
+- **loopback / 内部ネットワーク**: `127.0.0.0/8`、`localhost`、`0.0.0.0/8`、RFC1918 private IP (`10.0.0.0/8` / `172.16.0.0/12` / `192.168.0.0/16`)
+- **cloud metadata service**: `169.254.0.0/16` (AWS / GCP / Azure metadata の `169.254.169.254` 等を含む link-local 全体)
+- **IPv6**: loopback (`::1`)、link-local (`fe80::/10`)、ULA (`fc00::/7`)、IPv4-mapped 形式 (`::ffff:127.0.0.1` 等)
+- **非 HTTP scheme**: `file://` / `data:` / `gopher://` / `ftp://` / `javascript:` 等
+
+遮断されると `radar watch run` 等は次の形のエラーで止まる:
+
+```text
+refused to fetch private / loopback IPv4 address "192.168.1.10" (http://192.168.1.10/feed.xml). Set RADAR_FETCH_HOST_ALLOWLIST=192.168.1.10 to override (testing only).
+```
+
+##### 対処: 意図的に private IP / localhost を叩きたい場合 (testing / 社内 fixture)
+
+`RADAR_FETCH_HOST_ALLOWLIST` にカンマ区切りで host literal を列挙すると、その host だけ blocklist を bypass できる:
+
+```bash
+# 例: ローカル開発サーバ (127.0.0.1:8080) で fixture を配信している
+export RADAR_FETCH_HOST_ALLOWLIST=127.0.0.1
+radar watch run
+
+# 複数 host を列挙
+export RADAR_FETCH_HOST_ALLOWLIST=127.0.0.1,192.168.1.5,localhost
+```
+
+注意点:
+
+- CIDR / glob は未サポート、exact host literal の match のみ
+- IPv6 は `[::1]` でも `::1` でもよい (角括弧は内部で剥がす)
+- `RADAR_FETCH_HOST_ALLOWLIST` を恒久的に設定すると SSRF 防御が無効になる host が増えるため、**testing scope 限定** で使うこと。production / 公開 source 運用では未設定が既定
+- DNS rebinding (公開 DNS が `127.0.0.1` を返す攻撃) は防げない (URL hostname literal のみ check)
 
 ### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
@@ -1486,3 +1522,4 @@ filters:
 | workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
 | 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す）。TLS 中継 / NTLM / WSL2 を含む詳細は [docs/user-guide/proxy-setup.ja.md](./user-guide/proxy-setup.ja.md) を参照 |
 | `kind: html-js` source がプロキシ越しに失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` のいずれかを設定すれば `html-js` adapter が Playwright の `launch({ proxy })` に自動注入する。`NO_PROXY` も尊重し、Node 形式（`,` 区切り・`.example.com` で suffix match）から Playwright 形式（`;` 区切り・`*.example.com` glob）へ自動変換される。fetch 系 adapter と違い Playwright は `--use-env-proxy` を読まないため、この自動注入が必要 |
+| `refused to fetch private / loopback IPv4 address ...` / `refused to fetch URL with non-HTTP scheme ...` / `refused to fetch loopback hostname ...` | ADR-0009 §D5b の SSRF host blocklist (cloud metadata / RFC1918 / loopback / `file://` 等を遮断) が発火している。意図した遮断ならそのまま (recipe の URL を見直す)。testing 等で意図的にローカル fixture を叩きたい場合は `RADAR_FETCH_HOST_ALLOWLIST=<host>` を設定する。詳細は「[SSRF host blocklist](#ssrf-host-blocklist)」を参照 |

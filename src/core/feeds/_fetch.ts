@@ -75,6 +75,189 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 }
 
 /**
+ * SSRF host-blocklist for the shared fetch wrapper (ADR-0009 §D5b /
+ * ADR-0012 §D5b). Every adapter that funnels through `fetchWithRetry`
+ * inherits this check, including pagination follow-up URLs and recipe-
+ * supplied URLs in `kind: json-api` where a malicious recipe / compromised
+ * upstream could otherwise point us at:
+ *
+ * - cloud instance metadata endpoints (`169.254.169.254`, etc.) — IAM
+ *   credential theft
+ * - LAN / VPC internal services (`10.0.0.0/8`, `192.168.0.0/16`,
+ *   `172.16.0.0/12`) — internal admin panels, unauthenticated dev servers
+ * - loopback (`127.0.0.0/8` / `::1`) — user's localhost dev / debug services
+ * - link-local (`169.254.0.0/16` / `fe80::/10`)
+ * - IPv6 ULA (`fc00::/7`)
+ * - non-HTTP schemes (`file://`, `data:`, `gopher://`, `ftp://`, …) —
+ *   filesystem reads / SMTP smuggling / arbitrary protocol abuse
+ *
+ * Scope: this is the minimum useful defense — we inspect the URL hostname
+ * literal only. We do not resolve DNS; an attacker can still get past this
+ * by pointing a public DNS record at `127.0.0.1` (DNS rebinding). That
+ * deeper defense is tracked separately (see ADR-0009 §D5b note on DNS
+ * rebinding); the literal check still cuts off the common SSRF recipes
+ * (metadata IPs, `file://`, `localhost`) for negligible cost.
+ *
+ * Override via `RADAR_FETCH_HOST_ALLOWLIST` (comma-separated host literals).
+ * Intended for testing (e2e smoke tests that spin up a local HTTP fixture
+ * on `127.0.0.1`) and explicit opt-in to private-network targets. The
+ * allowlist is matched against the URL hostname after lowercasing and
+ * trimming IPv6 brackets; entries are exact-match (no glob / CIDR).
+ */
+
+/** IPv4 octet sequence — used as a heuristic to detect numeric-only hosts. */
+const IPV4_PATTERN = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/** Hostnames that always resolve to a loopback / unspecified address. */
+const BLOCKED_HOSTNAMES = new Set(["localhost", "ip6-localhost", "ip6-loopback"]);
+
+/**
+ * Parse the `RADAR_FETCH_HOST_ALLOWLIST` env into a normalized Set. We
+ * lowercase and strip IPv6 brackets so users can write either `[::1]` or
+ * `::1` and have the override apply.
+ */
+function parseHostAllowlist(value: string | undefined): Set<string> {
+  if (!value) return new Set();
+  const entries = value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .map((s) => normalizeHost(s));
+  return new Set(entries);
+}
+
+/** Lowercase a host and strip wrapping `[` / `]` from IPv6 literals. */
+function normalizeHost(host: string): string {
+  const lower = host.toLowerCase();
+  if (lower.startsWith("[") && lower.endsWith("]")) {
+    return lower.slice(1, -1);
+  }
+  return lower;
+}
+
+/** Whether a host string is an IPv4 address in one of the private ranges. */
+function isPrivateIPv4(host: string): boolean {
+  const match = host.match(IPV4_PATTERN);
+  if (!match) return false;
+  const [, a, b, c, d] = match;
+  const o1 = Number.parseInt(a ?? "", 10);
+  const o2 = Number.parseInt(b ?? "", 10);
+  const o3 = Number.parseInt(c ?? "", 10);
+  const o4 = Number.parseInt(d ?? "", 10);
+  // Reject malformed octets (>255). The URL parser already rejects most of
+  // these but we keep the bound check for defense in depth.
+  if (![o1, o2, o3, o4].every((n) => Number.isFinite(n) && n >= 0 && n <= 255)) {
+    return true; // malformed = unsafe; treat as blocked.
+  }
+  // 10.0.0.0/8
+  if (o1 === 10) return true;
+  // 172.16.0.0/12 (172.16.x.x – 172.31.x.x)
+  if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
+  // 192.168.0.0/16
+  if (o1 === 192 && o2 === 168) return true;
+  // 127.0.0.0/8 (loopback)
+  if (o1 === 127) return true;
+  // 169.254.0.0/16 (link-local / AWS metadata)
+  if (o1 === 169 && o2 === 254) return true;
+  // 0.0.0.0/8 (unspecified — listens-everywhere on Linux)
+  if (o1 === 0) return true;
+  return false;
+}
+
+/**
+ * Whether an IPv6 literal (already lowercase, brackets stripped) is in a
+ * blocked range. We do not implement full address arithmetic — instead we
+ * pattern-match the textual prefix, which is enough for the well-known
+ * ranges we want to block (loopback, link-local, ULA, unspecified).
+ *
+ * Edge: `::ffff:a.b.c.d` IPv4-mapped form is normalized by Node's URL
+ * parser to bracketed IPv6, so we also rerun the IPv4 check on the trailing
+ * dotted-quad to catch the mapped-loopback case (`::ffff:127.0.0.1`).
+ */
+function isPrivateIPv6(host: string): boolean {
+  if (host === "::" || host === "::1") return true;
+  // Link-local: fe80::/10 — first 10 bits are 1111 1110 10, which in hex
+  // means `fe80::` through `febf::`. Match the first two chars after fe.
+  if (/^fe[89ab][0-9a-f]?:/.test(host)) return true;
+  // ULA: fc00::/7 — first 7 bits are 1111 110, i.e. fc00–fdff.
+  if (/^f[cd][0-9a-f]{2}:/.test(host)) return true;
+  // IPv4-mapped IPv6, dotted-quad form: ::ffff:127.0.0.1, ::ffff:10.0.0.1
+  const v4MappedDotted = host.match(/^::ffff:([\d.]+)$/);
+  if (v4MappedDotted?.[1] && isPrivateIPv4(v4MappedDotted[1])) return true;
+  // IPv4-mapped IPv6, hex form: Node's URL parser normalizes
+  // `::ffff:127.0.0.1` → `[::ffff:7f00:1]`, so we also accept the two
+  // 16-bit hex groups after `::ffff:` and reconstruct the dotted quad.
+  const v4MappedHex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (v4MappedHex?.[1] && v4MappedHex[2]) {
+    const high = Number.parseInt(v4MappedHex[1], 16);
+    const low = Number.parseInt(v4MappedHex[2], 16);
+    if (Number.isFinite(high) && Number.isFinite(low)) {
+      const dotted = `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
+      if (isPrivateIPv4(dotted)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Validate a fetch URL against the SSRF host blocklist (ADR-0009 §D5b).
+ *
+ * Throws a `TypeError` with a user-friendly message when the URL is
+ * rejected. Returns nothing on success.
+ *
+ * Exported so adapters / tests can trigger the check independently of
+ * `fetchWithRetry` (e.g. validate a recipe URL at config-load time).
+ */
+export function validateFetchUrl(url: string | URL, env: NodeJS.ProcessEnv = process.env): void {
+  let parsed: URL;
+  try {
+    parsed = url instanceof URL ? url : new URL(url);
+  } catch {
+    throw new TypeError(`refused to fetch invalid URL: ${String(url)}`);
+  }
+  const allowlist = parseHostAllowlist(env.RADAR_FETCH_HOST_ALLOWLIST);
+  const host = normalizeHost(parsed.hostname);
+
+  // Allowlist short-circuits both scheme and host checks so users testing
+  // a local fixture over `http://127.0.0.1:PORT/` do not need to fight
+  // the blocklist for every adapter test.
+  if (allowlist.has(host)) return;
+
+  // Reject non-HTTP(S) schemes outright. `data:` / `file:` / `gopher:` /
+  // `ftp:` / `javascript:` all have no business being fetched through an
+  // adapter; even when they would not technically SSRF, they break the
+  // wrapper's invariant ("HTTP request, retry on transient errors").
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new TypeError(
+      `refused to fetch URL with non-HTTP scheme "${parsed.protocol}" (${String(url)}). ` +
+        `Only http:// and https:// are allowed.`,
+    );
+  }
+
+  // Blocked literal hostnames (`localhost` etc.).
+  if (BLOCKED_HOSTNAMES.has(host)) {
+    throw new TypeError(
+      `refused to fetch loopback hostname "${host}" (${String(url)}). ` +
+        `Set RADAR_FETCH_HOST_ALLOWLIST=${host} to override (testing only).`,
+    );
+  }
+
+  // Numeric IPv4 / IPv6 ranges.
+  if (isPrivateIPv4(host)) {
+    throw new TypeError(
+      `refused to fetch private / loopback IPv4 address "${host}" (${String(url)}). ` +
+        `Set RADAR_FETCH_HOST_ALLOWLIST=${host} to override (testing only).`,
+    );
+  }
+  if (host.includes(":") && isPrivateIPv6(host)) {
+    throw new TypeError(
+      `refused to fetch private / loopback IPv6 address "${host}" (${String(url)}). ` +
+        `Set RADAR_FETCH_HOST_ALLOWLIST=${host} to override (testing only).`,
+    );
+  }
+}
+
+/**
  * Build a `FetchConfig` from env vars + explicit overrides.
  *
  * Precedence: explicit `options` → env vars → defaults. Negative / non-numeric
@@ -177,6 +360,11 @@ export async function fetchWithRetry(
   const config = resolveFetchConfig(options);
   const sleep = options.sleep ?? defaultSleep;
   const callerSignal = options.signal ?? init.signal;
+
+  // SSRF host blocklist (ADR-0009 / ADR-0012 §D5b). Runs *before* the retry
+  // loop so a blocked URL fails fast with a single clear error rather than
+  // looking like a transient network failure across multiple attempts.
+  validateFetchUrl(url, options.env ?? process.env);
 
   let lastError: unknown;
   let lastResponse: FetchResponse | undefined;
