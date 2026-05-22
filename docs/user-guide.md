@@ -411,7 +411,7 @@ GitHub Actions で `kind: html-js` source を含む workspace の `watch run` �
 
 - uses: actions/setup-node@v4
   with:
-    node-version: "22"
+    node-version: "22.21" # or "24"; radar requires Node 22.21+ / 24.5+ for HTTPS_PROXY support
 
 - run: npm i -g @ozzylabs/feedradar playwright
 
@@ -996,3 +996,4 @@ filters:
 | `html-js adapter: failed to load Playwright (...)` | `npm i -g playwright` を実行し、`npx playwright install chromium` で Chromium も install。詳細は「[`--kind html-js` のセットアップ手順](#--kind-html-js)」。`radar doctor` でも検出される |
 | OIDC 認証エラー（publish 時） | maintainer 向け。`standards/npm-trusted-publishers` を参照 |
 | workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
+| 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す） |
