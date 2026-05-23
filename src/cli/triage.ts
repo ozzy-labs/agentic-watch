@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -248,6 +248,7 @@ function printTriageHelp(log: (m: string) => void): void {
   log("");
   log("Subcommands:");
   log("  feedback <item-id> --correct | --wrong [--reason <text>]");
+  log("  stats [--since <duration>] [--source <id>] [--json]");
   log("");
   log("Run modes (when no subcommand given):");
   log("  --dry-run            print proposed decisions");
@@ -430,6 +431,9 @@ export async function runTriage(
   const [first, ...rest] = args;
   if (first === "feedback") {
     return runTriageFeedback(rest, options);
+  }
+  if (first === "stats") {
+    return runTriageStats(rest, options, { log, warn, error });
   }
   if (first === "help") {
     printTriageHelp(log);
@@ -748,6 +752,552 @@ async function runTriageFeedback(args: string[], options: TriageCommandOptions):
   log(`triage feedback: items/${item.sourceId}/${item.id}.yaml feedback -> ${verdict}`);
   return 0;
 }
+
+// ---------------------------------------------------------------------------
+// `radar triage stats` (#242) — aggregate triage decisions + human feedback
+// to surface precision / recall drift and policy-tuning hints.
+//
+// The command is read-only: it walks `items/<source>/<id>.yaml`, groups items
+// per source, counts decisions, derives override directions from the feedback
+// array (for research / digest / dismiss) or current status (for unsure), and
+// renders one block per source. `--json` returns the same data as a structured
+// payload for downstream scripts.
+// ---------------------------------------------------------------------------
+
+interface TriageStatsArgs {
+  since?: string;
+  source?: string;
+  json?: boolean;
+  help?: boolean;
+}
+
+interface PerSourceStats {
+  source: string;
+  total: number;
+  byDecision: Record<"research" | "digest" | "dismiss" | "unsure", number>;
+  digestGroups: number;
+  humanOverrides: {
+    triagedDismissToResearch: number; // false negative (recall miss)
+    triagedResearchToDismiss: number; // false positive (precision miss)
+    triagedUnsureToResearch: number;
+    triagedUnsureToDismiss: number;
+  };
+  agent: string | null; // dominant agent across triaged items
+  policyPath: string | null; // sources/<id>.yaml or null
+  policyLastEditedDaysAgo: number | null;
+  suggestions: string[];
+}
+
+interface StatsOutput {
+  sinceDays: number | null;
+  generatedAt: string;
+  perSource: PerSourceStats[];
+}
+
+function parseTriageStatsArgs(args: string[]): TriageStatsArgs {
+  const out: TriageStatsArgs = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-h" || a === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (a === "--since") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.since = value;
+      continue;
+    }
+    if (a === "--source") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.source = value;
+      continue;
+    }
+    if (a === "--json") {
+      out.json = true;
+      continue;
+    }
+    if (a?.startsWith("--")) {
+      throw new Error(`unknown option: ${a}`);
+    }
+    throw new Error(`unexpected positional argument: ${a}`);
+  }
+  return out;
+}
+
+function printStatsHelp(log: (m: string) => void): void {
+  log("Usage: radar triage stats [--since <duration>] [--source <id>] [--json]");
+  log("");
+  log("Aggregate triage decisions and human feedback (ADR-0018 §W5, #242).");
+  log("Use after running `radar triage --apply` for some weeks; the output");
+  log("highlights precision / recall drift and suggests `triagePolicy.rules:`");
+  log("tweaks. See docs/user-guide.md `policy tuning workflow` for the");
+  log("recommended monthly loop.");
+  log("");
+  log("Options:");
+  log("  --since <duration>   only count items triaged within the cutoff (e.g. 30d, 24h)");
+  log("  --source <id>        limit stats to a single source (default: all sources)");
+  log("  --json               emit machine-readable JSON instead of the text report");
+}
+
+/**
+ * Parse `Nd | Nh | Nm | Ns` into a `Date` cutoff. Returns `null` when the
+ * shape doesn't match — callers translate that into a CLI error. Mirrors
+ * `parseSinceCutoff` in items.ts so the two `--since` flags accept the same
+ * syntax.
+ */
+function parseSinceCutoffForStats(value: string, now: Date = new Date()): Date | null {
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) return null;
+  const n = Number(match[1]);
+  const unit = match[2];
+  const ms =
+    unit === "s"
+      ? n * 1000
+      : unit === "m"
+        ? n * 60_000
+        : unit === "h"
+          ? n * 3_600_000
+          : n * 86_400_000;
+  return new Date(now.getTime() - ms);
+}
+
+function sinceCutoffToDays(value: string | undefined): number | null {
+  if (!value) return null;
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) return null;
+  const n = Number(match[1]);
+  const unit = match[2];
+  if (unit === "d") return n;
+  if (unit === "h") return Math.round((n / 24) * 10) / 10;
+  if (unit === "m") return Math.round((n / 1440) * 10) / 10;
+  return Math.round((n / 86_400) * 10) / 10;
+}
+
+/**
+ * Derive the human-override breakdown for a single source's triaged items.
+ *
+ * Two pathways feed the same counters:
+ *
+ * 1. `triage.feedback[].correct === false` (research / digest / dismiss
+ *    decisions) — an explicit signal the human disagreed. Each decision class
+ *    only flips one direction (research → dismiss, dismiss → research), so a
+ *    single boolean is enough.
+ * 2. `status` mutation downstream of `triaged_unsure` — the schema has no
+ *    "unsure direction" feedback field; instead we infer from where the item
+ *    landed (`researched` / `reviewed` → research; `dismissed` → dismiss).
+ *    This is best-effort: items still sitting in `triaged_unsure` are
+ *    excluded.
+ *
+ * The function only walks items whose `triage.decision` is set — items
+ * without a triage record (legacy or pending) are silently skipped.
+ */
+function computeHumanOverrides(items: Item[]): PerSourceStats["humanOverrides"] {
+  let triagedDismissToResearch = 0;
+  let triagedResearchToDismiss = 0;
+  let triagedUnsureToResearch = 0;
+  let triagedUnsureToDismiss = 0;
+
+  for (const item of items) {
+    const triage = item.triage;
+    if (!triage) continue;
+    const latestFeedback = triage.feedback[triage.feedback.length - 1];
+    if (triage.decision === "research" || triage.decision === "digest") {
+      if (latestFeedback?.correct === false) {
+        triagedResearchToDismiss += 1;
+      }
+    } else if (triage.decision === "dismiss") {
+      if (latestFeedback?.correct === false) {
+        triagedDismissToResearch += 1;
+      }
+    } else if (triage.decision === "unsure") {
+      // Two reads: explicit feedback (with --correct flagging an outcome) and
+      // status-derived inference. Status wins because the schema doesn't have
+      // a per-direction field for unsure.
+      if (item.status === "researched" || item.status === "reviewed") {
+        triagedUnsureToResearch += 1;
+      } else if (item.status === "dismissed") {
+        triagedUnsureToDismiss += 1;
+      } else if (item.status === "triaged_research") {
+        triagedUnsureToResearch += 1;
+      }
+    }
+  }
+
+  return {
+    triagedDismissToResearch,
+    triagedResearchToDismiss,
+    triagedUnsureToResearch,
+    triagedUnsureToDismiss,
+  };
+}
+
+/**
+ * Heuristic policy-tuning hints (ADR-0018 §W5, #242).
+ *
+ * Triggered by 3 thresholds:
+ *
+ * - 3+ false negatives → recommend reviewing dismiss criteria, prefixing
+ *   common `matchedKeywords` from the offending items so the user knows
+ *   *which* dismissed items the agent missed.
+ * - 3+ false positives → recommend tightening research criteria with the
+ *   same keyword extraction pattern (different message).
+ * - 5+ unsure decisions → recommend lowering `confidenceThreshold` or
+ *   spelling out unsure cases in `rules:`.
+ *
+ * Below the thresholds we stay silent — surfacing 1-event "trends" would
+ * train users to ignore the section.
+ */
+function buildSuggestions(items: Item[], overrides: PerSourceStats["humanOverrides"]): string[] {
+  const suggestions: string[] = [];
+
+  const falseNegativeItems = items.filter(
+    (i) =>
+      i.triage?.decision === "dismiss" &&
+      i.triage.feedback[i.triage.feedback.length - 1]?.correct === false,
+  );
+  const falsePositiveItems = items.filter(
+    (i) =>
+      (i.triage?.decision === "research" || i.triage?.decision === "digest") &&
+      i.triage.feedback[i.triage.feedback.length - 1]?.correct === false,
+  );
+
+  if (falseNegativeItems.length >= 3) {
+    const hint = extractTopKeywordHint(falseNegativeItems);
+    suggestions.push(
+      `${falseNegativeItems.length} false negatives — review dismiss criteria${hint ? ` for ${hint} topics` : ""}`,
+    );
+  }
+  if (falsePositiveItems.length >= 3) {
+    const hint = extractTopKeywordHint(falsePositiveItems);
+    suggestions.push(
+      `${falsePositiveItems.length} false positives — tighten research criteria${hint ? ` for ${hint} topics` : ""}`,
+    );
+  }
+  const unsureCount =
+    overrides.triagedUnsureToResearch +
+    overrides.triagedUnsureToDismiss +
+    items.filter((i) => i.triage?.decision === "unsure" && i.status === "triaged_unsure").length;
+  if (unsureCount >= 5) {
+    suggestions.push(
+      `${unsureCount} unsure decisions — lower confidenceThreshold or add "判断困難なら ..." clause to rules`,
+    );
+  }
+  return suggestions;
+}
+
+/**
+ * Extract the top 1-3 most common `matchedKeywords` (or title-derived words
+ * when keywords are absent) from a set of items, joined as ` / `. Used to
+ * give the suggestion a concrete "what to look at" hook without dumping
+ * every keyword in the source.
+ */
+function extractTopKeywordHint(items: Item[]): string {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    if (item.matchedKeywords.length > 0) {
+      for (const kw of item.matchedKeywords) {
+        counts.set(kw, (counts.get(kw) ?? 0) + 1);
+      }
+    } else {
+      // Fall back to title tokens (best-effort). We only consider tokens of
+      // length >= 4 to skip prepositions / particles.
+      for (const token of item.title.split(/[\s/,.;:!?()[\]【】「」、。]+/)) {
+        if (token.length >= 4) counts.set(token, (counts.get(token) ?? 0) + 1);
+      }
+    }
+  }
+  if (counts.size === 0) return "";
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const top = sorted.slice(0, 3).map(([k]) => k);
+  return top.join(" / ");
+}
+
+/**
+ * Aggregate stats per source group. Pure: takes items + a per-source policy
+ * lookup, returns a sorted array of `PerSourceStats`. The CLI layer wires
+ * disk I/O around it.
+ */
+function aggregatePerSource(
+  items: Item[],
+  policyMeta: Map<string, { agent: string; path: string; lastEditedDaysAgo: number | null }>,
+  sinceCutoff: Date | null,
+): PerSourceStats[] {
+  const grouped = new Map<string, Item[]>();
+  for (const item of items) {
+    if (!item.triage) continue;
+    if (sinceCutoff) {
+      const triagedAt = new Date(item.triage.triagedAt);
+      if (Number.isNaN(triagedAt.getTime()) || triagedAt < sinceCutoff) continue;
+    }
+    const arr = grouped.get(item.sourceId);
+    if (arr) arr.push(item);
+    else grouped.set(item.sourceId, [item]);
+  }
+
+  const out: PerSourceStats[] = [];
+  for (const [sourceId, group] of [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const byDecision = { research: 0, digest: 0, dismiss: 0, unsure: 0 };
+    const groups = new Set<string>();
+    const agentCounts = new Map<string, number>();
+    for (const item of group) {
+      const triage = item.triage;
+      if (!triage) continue;
+      byDecision[triage.decision] += 1;
+      if (triage.decision === "digest" && triage.group) {
+        groups.add(triage.group);
+      }
+      agentCounts.set(triage.agent, (agentCounts.get(triage.agent) ?? 0) + 1);
+    }
+    const overrides = computeHumanOverrides(group);
+    const suggestions = buildSuggestions(group, overrides);
+    const dominantAgent =
+      [...agentCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ??
+      null;
+    const meta = policyMeta.get(sourceId);
+    out.push({
+      source: sourceId,
+      total: group.length,
+      byDecision,
+      digestGroups: groups.size,
+      humanOverrides: overrides,
+      agent: dominantAgent,
+      policyPath: meta?.path ?? null,
+      policyLastEditedDaysAgo: meta?.lastEditedDaysAgo ?? null,
+      suggestions,
+    });
+  }
+  return out;
+}
+
+function formatPercent(n: number, total: number): string {
+  if (total === 0) return "0.0%";
+  return `${((n / total) * 100).toFixed(1)}%`;
+}
+
+function pad(value: string, width: number): string {
+  return value.length >= width ? value : `${value}${" ".repeat(width - value.length)}`;
+}
+
+function renderStatsBlock(stat: PerSourceStats, sinceDays: number | null): string[] {
+  const lines: string[] = [];
+  const heading = sinceDays
+    ? `[${stat.source}] triage stats (last ${sinceDays} day${sinceDays === 1 ? "" : "s"})`
+    : `[${stat.source}] triage stats`;
+  lines.push(heading);
+  lines.push(`  total triaged:    ${stat.total}`);
+  lines.push(
+    `  research:          ${stat.byDecision.research} (${formatPercent(stat.byDecision.research, stat.total)})`,
+  );
+  const digestSuffix =
+    stat.byDecision.digest > 0
+      ? ` — ${stat.digestGroups} group${stat.digestGroups === 1 ? "" : "s"}`
+      : "";
+  lines.push(
+    `  digest:            ${stat.byDecision.digest} (${formatPercent(stat.byDecision.digest, stat.total)})${digestSuffix}`,
+  );
+  lines.push(
+    `  dismiss:           ${stat.byDecision.dismiss} (${formatPercent(stat.byDecision.dismiss, stat.total)})`,
+  );
+  lines.push(
+    `  unsure:             ${stat.byDecision.unsure} (${formatPercent(stat.byDecision.unsure, stat.total)})`,
+  );
+
+  // Human overrides section — derived precision / recall from the feedback
+  // arrays. The "miss" percentages are computed against the relevant decision
+  // count (recall miss = false negatives / dismiss total, precision miss =
+  // false positives / (research + digest) total) so a high override count on
+  // a small decision class doesn't masquerade as a global problem.
+  const o = stat.humanOverrides;
+  const totalOverrides =
+    o.triagedDismissToResearch +
+    o.triagedResearchToDismiss +
+    o.triagedUnsureToResearch +
+    o.triagedUnsureToDismiss;
+  if (totalOverrides > 0) {
+    lines.push("");
+    lines.push("  human overrides:");
+    if (o.triagedDismissToResearch > 0) {
+      const recallMiss = formatPercent(o.triagedDismissToResearch, stat.byDecision.dismiss);
+      lines.push(
+        `    triaged_dismiss → research:    ${pad(String(o.triagedDismissToResearch), 2)} (false negatives, ${recallMiss} recall miss)`,
+      );
+    }
+    if (o.triagedResearchToDismiss > 0) {
+      const denom = stat.byDecision.research + stat.byDecision.digest;
+      const precisionMiss = formatPercent(o.triagedResearchToDismiss, denom);
+      lines.push(
+        `    triaged_research → dismiss:    ${pad(String(o.triagedResearchToDismiss), 2)} (false positives, ${precisionMiss} precision miss)`,
+      );
+    }
+    if (o.triagedUnsureToResearch > 0) {
+      lines.push(`    triaged_unsure → research:     ${pad(String(o.triagedUnsureToResearch), 2)}`);
+    }
+    if (o.triagedUnsureToDismiss > 0) {
+      lines.push(`    triaged_unsure → dismiss:      ${pad(String(o.triagedUnsureToDismiss), 2)}`);
+    }
+  }
+
+  lines.push("");
+  if (stat.agent) lines.push(`  agent: ${stat.agent}`);
+  if (stat.policyPath) {
+    const ageSuffix =
+      stat.policyLastEditedDaysAgo !== null
+        ? ` (last edited ${stat.policyLastEditedDaysAgo} day${stat.policyLastEditedDaysAgo === 1 ? "" : "s"} ago)`
+        : "";
+    lines.push(`  policy: ${stat.policyPath}${ageSuffix}`);
+  }
+
+  if (stat.suggestions.length > 0) {
+    lines.push("");
+    lines.push("  Suggestions:");
+    for (const s of stat.suggestions) {
+      lines.push(`    - ${s}`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Implementation of `radar triage stats`. Walks `items/` (optionally filtered
+ * by `--source` / `--since`), groups by source, and renders the per-source
+ * decision breakdown + override summary + heuristic suggestions.
+ *
+ * Pure failures (no items / no triaged items) return exit 0 with an
+ * informational message so cron-wrapped invocations don't trip alarms.
+ */
+async function runTriageStats(
+  args: string[],
+  options: TriageCommandOptions,
+  io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<number> {
+  const { log, error } = io;
+  const cwd = options.cwd ?? process.cwd();
+  const nowFn = options.now ?? defaultNow;
+  const now = new Date(nowFn());
+
+  let parsed: TriageStatsArgs;
+  try {
+    parsed = parseTriageStatsArgs(args);
+  } catch (e) {
+    error(`triage stats: ${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  if (parsed.help) {
+    printStatsHelp(log);
+    return 0;
+  }
+
+  let sinceCutoff: Date | null = null;
+  if (parsed.since) {
+    sinceCutoff = parseSinceCutoffForStats(parsed.since, now);
+    if (!sinceCutoff) {
+      error(`triage stats: invalid --since '${parsed.since}' (expected Ns | Nm | Nh | Nd)`);
+      return 2;
+    }
+  }
+
+  const itemsDir = join(cwd, "items");
+  if (!(await pathExists(itemsDir))) {
+    if (parsed.json) {
+      log(
+        JSON.stringify(
+          {
+            sinceDays: sinceCutoffToDays(parsed.since),
+            generatedAt: now.toISOString(),
+            perSource: [],
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      log("triage stats: no items/ directory (run `radar init` first)");
+    }
+    return 0;
+  }
+
+  let items: Item[];
+  try {
+    items = await loadItems(itemsDir, parsed.source);
+  } catch (e) {
+    error(`triage stats: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  // Build a per-source policy meta lookup so we can show `policy: sources/<id>.yaml
+  // (last edited N days ago)`. Best-effort: missing files become null entries
+  // and the rendering side omits the line.
+  const sourcesDir = join(cwd, "sources");
+  const policyMeta = new Map<
+    string,
+    { agent: string; path: string; lastEditedDaysAgo: number | null }
+  >();
+  if (await pathExists(sourcesDir)) {
+    const sources = await loadSources(sourcesDir, () => {
+      /* swallow load errors — stats is read-only and shouldn't fail loudly */
+    });
+    for (const source of sources) {
+      if (!source.triagePolicy) continue;
+      const relPath = `sources/${source.id}.yaml`;
+      const abs = join(sourcesDir, `${source.id}.yaml`);
+      let daysAgo: number | null = null;
+      try {
+        const st = await stat(abs);
+        const diffMs = now.getTime() - st.mtime.getTime();
+        daysAgo = Math.max(0, Math.floor(diffMs / 86_400_000));
+      } catch {
+        // File missing or stat failed — leave daysAgo null.
+      }
+      policyMeta.set(source.id, {
+        agent: source.triagePolicy.agent,
+        path: relPath,
+        lastEditedDaysAgo: daysAgo,
+      });
+    }
+  }
+
+  const perSource = aggregatePerSource(items, policyMeta, sinceCutoff);
+  const sinceDays = sinceCutoffToDays(parsed.since);
+
+  if (parsed.json) {
+    const payload: StatsOutput = {
+      sinceDays,
+      generatedAt: now.toISOString(),
+      perSource,
+    };
+    log(JSON.stringify(payload, null, 2));
+    return 0;
+  }
+
+  if (perSource.length === 0) {
+    log("triage stats: no triaged items match the filter (nothing to report)");
+    return 0;
+  }
+
+  let first = true;
+  for (const block of perSource) {
+    if (!first) log("");
+    first = false;
+    for (const line of renderStatsBlock(block, sinceDays)) {
+      log(line);
+    }
+  }
+  return 0;
+}
+
+// Exported for unit tests (`tests/cli/triage-stats*.test.ts`) so the
+// aggregation / suggestion heuristics can be exercised without the surrounding
+// CLI plumbing. Not part of the public API.
+export const __test__ = {
+  aggregatePerSource,
+  buildSuggestions,
+  computeHumanOverrides,
+  extractTopKeywordHint,
+  parseSinceCutoffForStats,
+  renderStatsBlock,
+};
 
 export const triageCommand: Command = {
   name: "triage",
