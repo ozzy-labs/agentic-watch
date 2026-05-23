@@ -278,6 +278,41 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
     expect(calls[3]).toContain("y-2026");
   });
 
+  it("resolves a `current-year` upper bound to the current calendar year (#257)", async () => {
+    // The sentinel auto-extends the swept range to the current year at fetch
+    // time so year-axis recipes do not silently drop new items at year
+    // boundaries. Use [currentYear - 1, "current-year"] so the range always
+    // spans exactly two years regardless of when the test runs.
+    const currentYear = new Date().getFullYear();
+    const startYear = currentYear - 1;
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: [startYear, "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => itemBody("any", 1),
+      };
+    };
+    await jsonApiAdapter.fetch(source, { fetch: fetchImpl });
+    // Two facet values walked: startYear (= currentYear - 1) and currentYear.
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain(`y-${startYear}`);
+    expect(calls[1]).toContain(`y-${currentYear}`);
+  });
+
   it("falls through to the non-facet code path when facets is omitted", async () => {
     // Backward compat: existing recipes without `facets:` should behave
     // identically to pre-ADR-0017 (single-axis pagination only).

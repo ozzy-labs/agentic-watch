@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import type {
+  FacetRangeEnd,
   Item,
   Source,
   SourceFacet,
   SourceJsonApiSelectors,
   SourcePagination,
 } from "../../schemas/index.js";
-import { ItemSchema } from "../../schemas/index.js";
+import { FACET_RANGE_CURRENT_YEAR, ItemSchema } from "../../schemas/index.js";
 import { fetchWithRetry } from "./_fetch.js";
 import { selectAll, selectOne } from "./_jsonpath.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
@@ -566,15 +567,31 @@ function applyFacetValue(rawUrl: string, facet: SourceFacet, value: string | num
 }
 
 /**
+ * Resolve a range upper bound to a concrete number.
+ *
+ * The `"current-year"` sentinel (#257) expands to the current calendar year
+ * at fetch time so year-axis recipes auto-extend across year boundaries
+ * instead of silently capping at a hardcoded upper bound. `now` is injected
+ * for deterministic testing; it defaults to the wall clock.
+ */
+function resolveRangeEnd(end: FacetRangeEnd, now: Date = new Date()): number {
+  return end === FACET_RANGE_CURRENT_YEAR ? now.getFullYear() : end;
+}
+
+/**
  * Enumerate the facet values for a single facet spec.
  *
  * - `range`: `[start, end]` inclusive, walked with `step` (default 1).
- *   Schema guarantees `step > 0` and `start <= end` so the loop terminates.
+ *   Schema guarantees `step > 0`. The upper bound may be the literal
+ *   `"current-year"` sentinel, resolved here to the current calendar year
+ *   (#257); when start > the resolved end the loop yields nothing (a future-
+ *   dated start is a degenerate 0-item config, not an error).
  * - `enum`: returns the explicit list verbatim (string or number).
  */
 function* generateFacetValues(facet: SourceFacet): Generator<string | number> {
   if (facet.type === "range") {
-    const [start, end] = facet.range;
+    const [start, rawEnd] = facet.range;
+    const end = resolveRangeEnd(rawEnd);
     const step = facet.step;
     for (let v = start; v <= end; v += step) yield v;
     return;

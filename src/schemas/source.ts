@@ -287,6 +287,25 @@ export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema
  * `pagination.type: facet`, lastSeenIds-as-global semantics, conditional
  * GET disablement in facet sweep mode).
  */
+/**
+ * Sentinel for a relative range upper bound (#257).
+ *
+ * When the `range` end element is the literal string `"current-year"` instead
+ * of a number, the adapter resolves it to the current calendar year at fetch
+ * time (`generateFacetValues`). This keeps year-axis facet recipes from
+ * silently dropping new items at year boundaries: a hardcoded upper bound
+ * (e.g. `[2004, 2026]`) stops querying `…#year#2027` once 2027 arrives, with
+ * no error (out-of-range years simply return 0 items). The sentinel auto-
+ * extends the swept range so coverage tracks wall-clock time without manual
+ * recipe bumps.
+ *
+ * Only the upper bound supports this today; the lower bound stays a literal
+ * number (AWS's first announcement year is fixed at 2004).
+ */
+export const FACET_RANGE_CURRENT_YEAR = "current-year";
+export const FacetRangeEndSchema = z.union([z.number(), z.literal(FACET_RANGE_CURRENT_YEAR)]);
+export type FacetRangeEnd = z.infer<typeof FacetRangeEndSchema>;
+
 export const SourceFacetRangeSchema = z
   .object({
     type: z.literal("range"),
@@ -297,8 +316,15 @@ export const SourceFacetRangeSchema = z
      * E.g. `whats-new-v2#year#{}` → injected as `whats-new-v2#year#2024`.
      */
     template: z.string().min(1),
-    /** Inclusive `[start, end]` range — both endpoints are visited. */
-    range: z.tuple([z.number(), z.number()]),
+    /**
+     * Inclusive `[start, end]` range — both endpoints are visited.
+     *
+     * The `end` element accepts either a literal number (`[2004, 2026]`) or
+     * the sentinel string `"current-year"` (`[2004, "current-year"]`). The
+     * sentinel is resolved to the current calendar year at fetch time so the
+     * swept range tracks wall-clock time without manual recipe bumps (#257).
+     */
+    range: z.tuple([z.number(), FacetRangeEndSchema]),
     /** Step size (default 1). Must be a positive integer. */
     step: z.number().int().positive().default(1),
   })
@@ -310,7 +336,11 @@ export const SourceFacetRangeSchema = z
         message: "template must contain '{}' placeholder",
       });
     }
-    if (value.range[0] > value.range[1]) {
+    // `start > end` is only checkable when the upper bound is a literal
+    // number. The `"current-year"` sentinel resolves at fetch time and is
+    // assumed to be >= start (a recipe whose start is in the future is a
+    // degenerate config the adapter handles as a 0-iteration loop).
+    if (typeof value.range[1] === "number" && value.range[0] > value.range[1]) {
       ctx.addIssue({
         code: "custom",
         path: ["range"],
