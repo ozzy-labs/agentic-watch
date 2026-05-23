@@ -1790,6 +1790,7 @@ phase markers は ADR-0015 D4 の命名規約に従い、動詞・形が統一�
 | `Status: detected → researched` | items.yaml の status 遷移 | <50ms |
 | `[<source-id>] Fetching… (kind: <kind>)` | watch run の per-source 開始 | ― |
 | `[<source-id>] Page <i>/<n>: <m> items fetched` | json-api pagination 進行（[#198](https://github.com/ozzy-labs/feedradar/pull/198)） | 数百ms / page |
+| `[<source-id>] <facet>=<value> (<k>/<N>) Page <i>/<n>: <m> items fetched` | facet sweep（[ADR-0017](adr/0017-facet-sweep-recipe-extension.md)）の per-page 進行。facet 値ごとに `Page` カウンタが `1/n` から振り直されるため、`<facet>=<value> (<k>/<N>)`（例: `year=2018 (15/23)`）でどの facet 値・sweep 全体の何番目かを前置する（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） | 数百ms / page |
 | `Launching Chromium…` / `Navigating to <url>…` / `Waiting for selector "<sel>" (timeout: <N>ms)…` / `Capturing page content…` / `Closing browser…` | html-js Playwright lifecycle | 数秒〜数十秒 |
 | `Still waiting for "<sel>"… [mm:ss]` | `waitForSelector` が 10 秒以上かかったときの定期 reminder（既定の `js.timeout` 30 秒の ~33%） | timeout まで継続 |
 | `[<source-id>] Completed: <n> total, <m> new (<duration>)` | watch run の per-source 完了 | ― |
@@ -1806,6 +1807,7 @@ spinner 行に表示される副次メトリクス:
 | `output` | バイト | `research/<id>.md` 等の出力ファイルを `fs.stat` 500ms 間隔で polling した最新サイズ | レポート本体の生成進捗。完了直前にどっと増えるパターンが多い |
 | `page` | `i/N` | json-api pagination の現在ページ | `--backfill` 進捗 |
 | `items` | 整数 | 直近 page で取れた item 数 | filter 通過前の生 fetch カウント |
+| `<facet>`（例 `year`） | `<value> (<k>/<N>)` | facet sweep（[ADR-0017](adr/0017-facet-sweep-recipe-extension.md)）で walk 中の facet 値と sweep 全体での位置 | どの facet 値を処理中か（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） |
 
 非 TTY 環境では spinner 行が無いため、これらは phase marker の括弧書き（`Page 3/80: 100 items fetched`）として 1 行ずつ出力される。
 

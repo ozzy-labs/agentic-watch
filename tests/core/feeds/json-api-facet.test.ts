@@ -99,6 +99,63 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
     expect(result.state.lastEtag).toBeUndefined();
   });
 
+  it("stamps facet context onto each onPage event so the CLI can label the counter (#269)", async () => {
+    // The inner pagination loop resets its page counter per facet value; the
+    // sweep must annotate every page event with which value (and its 1-based
+    // position in the sweep) so the CLI page row is not ambiguous.
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: [2024, 2026],
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      let body: string;
+      if (urlStr.includes("year%232024")) body = itemBody("y2024", 1);
+      else if (urlStr.includes("year%232025")) body = itemBody("y2025", 1);
+      else if (urlStr.includes("year%232026")) body = itemBody("y2026", 1);
+      else throw new Error(`unexpected url: ${urlStr}`);
+      return { status: 200, headers: { get: () => null }, text: async () => body };
+    };
+    const facets: Array<unknown> = [];
+    await jsonApiAdapter.fetch(source, {
+      fetch: fetchImpl,
+      backfill: true,
+      onPage: (info) => facets.push(info.facet),
+    });
+    // One page per year (1 item < pageSize) → one onPage event per value,
+    // each carrying the value and its position in the 3-year sweep.
+    expect(facets).toEqual([
+      { name: "year", value: 2024, index: 1, total: 3 },
+      { name: "year", value: 2025, index: 2, total: 3 },
+      { name: "year", value: 2026, index: 3, total: 3 },
+    ]);
+  });
+
+  it("omits facet context on onPage when the source has no facets (#269)", async () => {
+    // Non-faceted sources keep the monotonic counter and must not gain a
+    // spurious facet label.
+    const source = makeSource();
+    const fetchImpl: FetchLike = async () => ({
+      status: 200,
+      headers: { get: () => null },
+      text: async () => itemBody("plain", 1),
+    });
+    const facets: Array<unknown> = [];
+    await jsonApiAdapter.fetch(source, {
+      fetch: fetchImpl,
+      backfill: true,
+      onPage: (info) => facets.push(info.facet),
+    });
+    expect(facets).toEqual([undefined]);
+  });
+
   it("aggregates lastSeenIds across all facet values (global set)", async () => {
     // Verify the inner fetchSingle receives the running aggregated
     // lastSeenIds so early-stop dedupes against items already observed

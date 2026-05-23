@@ -410,10 +410,20 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
         // narrative ("Page 3/80: 100 items") and TTY rows pick up the
         // metric on the spinner.
         onPage: progress
-          ? ({ pageIndex, pageTotal, items: pageItems }) => {
-              const human = `Page ${pageIndex + 1}/${pageTotal}: ${pageItems} items fetched`;
+          ? ({ pageIndex, pageTotal, items: pageItems, facet }) => {
+              // Facet sweep (ADR-0017) restarts pagination per facet value, so
+              // the page counter resets to `1/N` each value. Prefix the facet
+              // label (e.g. `year=2018 (15/23) `) so the repeated resets read as
+              // sweep progress rather than a glitching counter (#269).
+              const facetLabel = facet
+                ? `${facet.name}=${facet.value} (${facet.index}/${facet.total}) `
+                : "";
+              const human = `${facetLabel}Page ${pageIndex + 1}/${pageTotal}: ${pageItems} items fetched`;
               progress.phase(`[${source.id}] ${human}`);
               progress.update({
+                ...(facet
+                  ? { [facet.name]: `${facet.value} (${facet.index}/${facet.total})` }
+                  : {}),
                 page: `${pageIndex + 1}/${pageTotal}`,
                 items: String(pageItems),
               });

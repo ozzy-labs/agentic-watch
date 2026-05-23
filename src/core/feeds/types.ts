@@ -182,8 +182,21 @@ export interface FeedAdapterOptions {
    * Unset means no per-page callback. Independent of `onProgress`: callers
    * that want the spinner but not per-page metrics can wire one and not the
    * other.
+   *
+   * `facet` is set only during a facet sweep (ADR-0017): the json-api adapter
+   * walks every facet value and **restarts the inner pagination loop per
+   * value**, so `pageIndex`/`pageTotal` reset to `1/N` on each value. Without
+   * the facet context the repeated resets read as a glitching counter (#269);
+   * with it the CLI can prefix the page row with which value it belongs to
+   * (e.g. `year=2018 (15/23)`). `index`/`total` are 1-based positions in the
+   * sweep. Unset for non-faceted sources (the counter is monotonic).
    */
-  onPage?: (info: { pageIndex: number; pageTotal: number; items: number }) => void;
+  onPage?: (info: {
+    pageIndex: number;
+    pageTotal: number;
+    items: number;
+    facet?: { name: string; value: string | number; index: number; total: number };
+  }) => void;
 }
 
 export interface FeedAdapter {
