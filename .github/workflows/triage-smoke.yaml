@@ -94,9 +94,11 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Surface to the script which optional agents are available so it
-          # can skip silently rather than failing on missing creds.
-          RADAR_TRIAGE_SMOKE_AGENTS: gemini-cli
+          # Pin the agent the smoke spawns. Singular: the script triages
+          # against one agent per run. Default in the script is also
+          # `gemini-cli`; setting it explicitly here documents the choice
+          # and lets a `workflow_dispatch` operator override via the env.
+          RADAR_TRIAGE_SMOKE_AGENT: gemini-cli
         run: node scripts/triage-smoke.mjs
 
       # File a tracking issue when the smoke fails. The body embeds the
