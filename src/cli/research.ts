@@ -1,5 +1,5 @@
 import { access, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -19,6 +19,7 @@ const matterOptions = {
   },
 };
 
+import { renderResearchPayloadBlock } from "../agents/_boundary.js";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
@@ -104,6 +105,18 @@ interface ResearchArgs {
   maxItems?: string;
   /** Comma-separated allow-list matched against each item's `matchedKeywords`. */
   filterTags?: string;
+  /**
+   * Host-agent mode (#254 / ADR-0019): emit the research payload to stdout
+   * without spawning an agent. The host (interactive) session executes the
+   * SKILL procedure itself, then finalizes via `--commit`.
+   */
+  emitPayload?: boolean;
+  /**
+   * Host-agent mode (#254 / ADR-0019): finalize an externally-written report.
+   * Holds the path to the report the host session wrote. The CLI validates it
+   * against `ResearchFrontmatterSchema` and applies the status transition.
+   */
+  commit?: string;
 }
 
 function parseArgs(args: string[]): ResearchArgs {
@@ -142,6 +155,14 @@ function parseArgs(args: string[]): ResearchArgs {
       out.filterTags = args[++i];
       continue;
     }
+    if (a === "--emit-payload") {
+      out.emitPayload = true;
+      continue;
+    }
+    if (a === "--commit") {
+      out.commit = args[++i];
+      continue;
+    }
     if (a?.startsWith("--")) {
       throw new Error(`unknown option: ${a}`);
     }
@@ -159,6 +180,8 @@ function printHelp(log: (m: string) => void): void {
   log(
     `  radar research --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
   );
+  log("  radar research <item-id> --emit-payload [--digest <ids...>] [--template <id>]");
+  log("  radar research --commit <path>");
   log("");
   log("Arguments:");
   log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
@@ -184,6 +207,14 @@ function printHelp(log: (m: string) => void): void {
   log("                        detection cannot blow the cap from inside a workflow.");
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each item's matchedKeywords (case-insensitive). Default: all.");
+  log("  --emit-payload        Host-agent mode (ADR-0019): print the research payload to");
+  log("                        stdout and DO NOT spawn an agent. The interactive host");
+  log("                        session runs the SKILL procedure itself, then finalizes");
+  log("                        with `radar research --commit <path>`. Interactive/opt-in");
+  log("                        only — CI/headless must use the default spawn path.");
+  log("  --commit <path>       Host-agent mode (ADR-0019): validate an externally-written");
+  log("                        report (under <cwd>/research/) against ResearchFrontmatter-");
+  log("                        Schema and apply the detected → researched transition.");
   log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
@@ -319,21 +350,27 @@ async function resolveAgent(
   }
 }
 
-async function processResearchInvocation(params: {
+/**
+ * PRE block (shared by the spawn path and `--emit-payload`): emit injection
+ * warnings, derive the deterministic `outputPath`, and guard against
+ * overwriting an existing report. Returns the resolved path or an `exitCode`
+ * for the caller to propagate.
+ *
+ * Extracted from `processResearchInvocation` so the host-agent emit path
+ * (#254 / ADR-0019) computes the exact same `outputPath` and reuses the same
+ * collision backstop as the spawn path, without the model-call step.
+ */
+async function prepareResearch(params: {
   cwd: string;
   items: Item[];
   digest: boolean;
-  agent: AgentId;
   templateId: string;
-  template: ResearchTemplate;
   now: Date;
-  log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
-}): Promise<number> {
-  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
-    params;
+}): Promise<{ outputPath: string; filename: string } | { exitCode: number }> {
+  const { cwd, items, digest, templateId, now, warn, error, progress } = params;
 
   for (const item of items) {
     if (item.injectionFlags.length > 0) {
@@ -357,12 +394,9 @@ async function processResearchInvocation(params: {
   const outputPath = join(cwd, "research", filename);
   if (await pathExists(outputPath)) {
     error(`research: ${outputPath} already exists (use \`radar update\` to re-research)`);
-    return 1;
+    return { exitCode: 1 };
   }
 
-  const itemDescription = digest
-    ? `${items.length} items (${items.map((i) => i.id).join(", ")})`
-    : `item '${items[0].id}'`;
   // Phase marker: items resolved (ADR-0015 D4 "Loaded <noun>"). One marker
   // per invocation regardless of digest cardinality so the progress stream
   // stays uniform between single / digest / batch modes.
@@ -373,44 +407,38 @@ async function processResearchInvocation(params: {
   // Phase marker: template resolved. Echoes the actual template id so a
   // user running `--template deep-dive` sees the value flow through.
   progress.phase(`Loaded template: ${templateId}.md`);
-  log(`research: invoking ${agent} adapter for ${itemDescription} -> ${filename}`);
+  return { outputPath, filename };
+}
 
-  const adapter = getAgentAdapter(agent);
-  // Phase marker + spinner: agent spawn. We pair `phase("Spawning …")` with
-  // `start("Agent running…")` so the marker is printed once for scrollback
-  // and the spinner row carries the live `[mm:ss]` heartbeat + metrics.
-  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
-  progress.start("Agent running");
-  const adapterStartedAt = Date.now();
-  const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
-  let adapterExitCode = 0;
-  try {
-    await adapter.research({
-      agent,
-      templateId,
-      templateBody: template.body,
-      items,
-      outputPath,
-      cwd,
-      onProgress: buildAgentProgressCallback(progress),
-    });
-  } catch (e) {
-    adapterExitCode = 1;
-    polling.stop();
-    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
-    error(`research: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
-    return 1;
-  } finally {
-    polling.stop();
-  }
-  if (adapterExitCode === 0) {
-    progress.succeed(`Agent completed (exit ${adapterExitCode})`, Date.now() - adapterStartedAt);
-  }
+/**
+ * POST block (shared by the spawn path and `--commit`): validate the written
+ * report against `ResearchFrontmatterSchema`, reset Phase-1-contract drift,
+ * and apply the `detected → researched` status transition.
+ *
+ * This is the single source of truth for "finalize" so the spawn and
+ * host-agent paths (#254 / ADR-0019) cannot diverge on schema validation or
+ * the state-machine transition — the acceptance-condition that the CLI keeps
+ * owning both is satisfied structurally, not by a second copy of the logic.
+ *
+ * `items` is the transition target set. The spawn path passes the items it
+ * already resolved; `--commit` passes `undefined` and lets finalize derive the
+ * set from the report's `itemIds` frontmatter (reverse-lookup against
+ * `items/`), so a host-written digest with multiple `itemIds` transitions all
+ * of them.
+ */
+async function finalizeResearch(params: {
+  cwd: string;
+  outputPath: string;
+  items?: Item[];
+  log: (m: string) => void;
+  warn: (m: string) => void;
+  error: (m: string) => void;
+  progress: ProgressReporter;
+}): Promise<number> {
+  const { cwd, outputPath, log, warn, error, progress } = params;
 
   if (!(await pathExists(outputPath))) {
-    error(
-      `research: adapter completed but did not write ${outputPath} (agent ignored the output path?)`,
-    );
+    error(`research: report was not written to ${outputPath} (did not write the output path?)`);
     return 1;
   }
   let body: string;
@@ -468,6 +496,30 @@ async function processResearchInvocation(params: {
     await writeFile(outputPath, rewritten, "utf8");
   }
 
+  // Resolve the transition target set. Spawn passes the items it already
+  // loaded; `--commit` derives them from the report's `itemIds` frontmatter so
+  // the host-written file is self-describing (digest reports transition every
+  // linked item).
+  let targetItems: Item[];
+  if (params.items !== undefined) {
+    targetItems = params.items;
+  } else {
+    const all = await loadItems(join(cwd, "items"));
+    const byId = new Map(all.map((i) => [i.id, i]));
+    const resolved: Item[] = [];
+    for (const id of fmResult.data.itemIds) {
+      const match = byId.get(id);
+      if (!match) {
+        error(
+          `research: --commit report references unknown item id '${id}' (no items/*/${id}.yaml under ${cwd})`,
+        );
+        return 1;
+      }
+      resolved.push(match);
+    }
+    targetItems = resolved;
+  }
+
   // Defer the "which prior statuses can transition into `researched`"
   // decision to `isValidTransition()` (src/core/transitions.ts). That
   // module enumerates the ADR-0008 / ADR-0018 state machine edges in one
@@ -482,7 +534,7 @@ async function processResearchInvocation(params: {
   // `radar research <item-id>` against an item already past the
   // pre-research stage.
   const transitions = new Map<string, ItemStatus>();
-  const updated: Item[] = items.map((item) => {
+  const updated: Item[] = targetItems.map((item) => {
     if (isValidTransition(item.status, "researched")) {
       transitions.set(item.id, item.status);
       return { ...item, status: "researched" as ItemStatus };
@@ -509,6 +561,157 @@ async function processResearchInvocation(params: {
     }
   }
   return 0;
+}
+
+async function processResearchInvocation(params: {
+  cwd: string;
+  items: Item[];
+  digest: boolean;
+  agent: AgentId;
+  templateId: string;
+  template: ResearchTemplate;
+  now: Date;
+  log: (m: string) => void;
+  warn: (m: string) => void;
+  error: (m: string) => void;
+  progress: ProgressReporter;
+}): Promise<number> {
+  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
+    params;
+
+  const prepared = await prepareResearch({
+    cwd,
+    items,
+    digest,
+    templateId,
+    now,
+    warn,
+    error,
+    progress,
+  });
+  if ("exitCode" in prepared) return prepared.exitCode;
+  const { outputPath, filename } = prepared;
+
+  const itemDescription = digest
+    ? `${items.length} items (${items.map((i) => i.id).join(", ")})`
+    : `item '${items[0].id}'`;
+  log(`research: invoking ${agent} adapter for ${itemDescription} -> ${filename}`);
+
+  const adapter = getAgentAdapter(agent);
+  // Phase marker + spinner: agent spawn. We pair `phase("Spawning …")` with
+  // `start("Agent running…")` so the marker is printed once for scrollback
+  // and the spinner row carries the live `[mm:ss]` heartbeat + metrics.
+  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
+  progress.start("Agent running");
+  const adapterStartedAt = Date.now();
+  const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
+  let adapterExitCode = 0;
+  try {
+    await adapter.research({
+      agent,
+      templateId,
+      templateBody: template.body,
+      items,
+      outputPath,
+      cwd,
+      onProgress: buildAgentProgressCallback(progress),
+    });
+  } catch (e) {
+    adapterExitCode = 1;
+    polling.stop();
+    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
+    error(`research: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  } finally {
+    polling.stop();
+  }
+  if (adapterExitCode === 0) {
+    progress.succeed(`Agent completed (exit ${adapterExitCode})`, Date.now() - adapterStartedAt);
+  }
+
+  return finalizeResearch({ cwd, outputPath, items, log, warn, error, progress });
+}
+
+/**
+ * Host-agent emit path (#254 / ADR-0019): run the same PRE block as the spawn
+ * path (`prepareResearch`) to derive `outputPath` + collision guard, then print
+ * the agent-neutral payload to stdout instead of spawning. The host session
+ * reads the payload, executes the SKILL procedure itself, and finalizes via
+ * `radar research --commit`.
+ */
+async function runResearchEmitPayload(params: {
+  cwd: string;
+  items: Item[];
+  digest: boolean;
+  agent: AgentId;
+  templateId: string;
+  template: ResearchTemplate;
+  now: Date;
+  log: (m: string) => void;
+  warn: (m: string) => void;
+  error: (m: string) => void;
+  progress: ProgressReporter;
+}): Promise<number> {
+  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
+    params;
+  const prepared = await prepareResearch({
+    cwd,
+    items,
+    digest,
+    templateId,
+    now,
+    warn,
+    error,
+    progress,
+  });
+  if ("exitCode" in prepared) return prepared.exitCode;
+  log(
+    renderResearchPayloadBlock({
+      agent,
+      templateId,
+      templateBody: template.body,
+      items,
+      outputPath: prepared.outputPath,
+    }),
+  );
+  return 0;
+}
+
+/**
+ * Host-agent commit path (#254 / ADR-0019): finalize a report the host session
+ * wrote out-of-band. Independent of agent / template / item resolution — the
+ * report is self-describing via its `itemIds` frontmatter, which
+ * `finalizeResearch` reverse-looks-up.
+ *
+ * Before finalize, the path is constrained to `<cwd>/research/` so a host that
+ * was misled by injected content into committing an arbitrary path (e.g.
+ * `../../etc/...`) is rejected at the CLI boundary (ADR-0009 M3b enforced in
+ * code, not just SKILL guidance).
+ */
+async function runResearchCommit(params: {
+  cwd: string;
+  commitPath: string;
+  log: (m: string) => void;
+  warn: (m: string) => void;
+  error: (m: string) => void;
+  progress: ProgressReporter;
+}): Promise<number> {
+  const { cwd, commitPath, log, warn, error, progress } = params;
+  const researchDir = resolve(cwd, "research");
+  const resolved = resolve(cwd, commitPath);
+  if (!resolved.startsWith(researchDir + sep)) {
+    error(`research: --commit path must be a file under ${researchDir} (got: ${commitPath})`);
+    return 2;
+  }
+  return finalizeResearch({
+    cwd,
+    outputPath: resolved,
+    items: undefined,
+    log,
+    warn,
+    error,
+    progress,
+  });
 }
 
 function parseMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
@@ -687,6 +890,35 @@ export async function runResearch(
     printHelp(log);
     return 0;
   }
+  // Host-agent commit (#254 / ADR-0019). Independent of agent / template /
+  // item resolution: the report is self-describing via its `itemIds`
+  // frontmatter. Handled before the other modes since it takes a path, not
+  // <item-id> arguments.
+  if (parsed.commit !== undefined) {
+    if (parsed.batch) {
+      error("research: --commit is incompatible with --batch");
+      return 2;
+    }
+    if (parsed.digest) {
+      error("research: --commit is incompatible with --digest");
+      return 2;
+    }
+    if (parsed.emitPayload) {
+      error("research: --commit is incompatible with --emit-payload");
+      return 2;
+    }
+    if (parsed.itemIds.length > 0) {
+      error(
+        `research: --commit takes a <path>, not <item-id> arguments (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
+      );
+      return 2;
+    }
+    return runResearchCommit({ cwd, commitPath: parsed.commit, log, warn, error, progress });
+  }
+  if (parsed.emitPayload && parsed.batch) {
+    error("research: --emit-payload is incompatible with --batch");
+    return 2;
+  }
   if (parsed.batch) {
     return runResearchBatch(parsed, cwd, log, warn, error, progress);
   }
@@ -757,6 +989,25 @@ export async function runResearch(
   } catch (e) {
     error(`research: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
+  }
+
+  // Host-agent emit (#254 / ADR-0019): same item / template resolution as the
+  // spawn path, but print the payload instead of spawning. `--digest` is
+  // allowed (emits a digest payload).
+  if (parsed.emitPayload) {
+    return runResearchEmitPayload({
+      cwd,
+      items,
+      digest: parsed.digest ?? false,
+      agent,
+      templateId,
+      template,
+      now: new Date(),
+      log,
+      warn,
+      error,
+      progress,
+    });
   }
 
   return processResearchInvocation({

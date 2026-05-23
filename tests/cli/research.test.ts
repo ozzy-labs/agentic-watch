@@ -1155,4 +1155,349 @@ describe("cli/research", () => {
       expect(captured.error.some((m) => m.includes("--batch halted on item"))).toBe(true);
     });
   });
+
+  // Host-agent (in-session) mode — #254 / ADR-0019. The CLI keeps payload
+  // construction, schema validation, the status transition, and the untrusted
+  // boundary; only the model-call step moves to the interactive host session.
+  describe("emit-payload mode (--emit-payload, #254)", () => {
+    function expectedOutputPath(workdir: string): string {
+      return join(
+        workdir,
+        "research",
+        "20260510_anthropic-news-claude-code-shiny-new-feature_v1.md",
+      );
+    }
+
+    it("emits a payload to stdout and does NOT spawn the adapter", async () => {
+      const workdir = await setupWorkspace();
+      const { adapter, calls } = buildMockAdapter(async () => undefined);
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // The model-call step never runs in host mode.
+      expect(calls).toHaveLength(0);
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("FEEDRADAR RESEARCH PAYLOAD");
+      // The deterministic output path and the commit hint are both present so
+      // the host knows where to write and how to finalize.
+      expect(payload).toContain(expectedOutputPath(workdir));
+      expect(payload).toContain(`radar research --commit ${expectedOutputPath(workdir)}`);
+      expect(payload).toContain(`Items to research: ${SAMPLE_ITEM.id}`);
+    });
+
+    it("wraps untrusted item content in <untrusted_item> markers (ADR-0009 M1c)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("<untrusted_item>");
+      expect(payload).toContain("</untrusted_item>");
+      // The feed title (untrusted) is inside the boundary; the id (trusted
+      // routing metadata) is rendered outside it by renderItemForPrompt.
+      expect(payload).toContain(SAMPLE_ITEM.title);
+    });
+
+    it("includes a schema-compatible JSON fence in the payload", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      const payload = captured.log.join("\n");
+      const match = payload.match(/```json\n([\s\S]*?)\n```/);
+      expect(match).not.toBeNull();
+      const parsed = JSON.parse((match as RegExpMatchArray)[1]);
+      expect(parsed.agent).toBe("claude-code");
+      expect(parsed.outputPath).toBe(expectedOutputPath(workdir));
+      expect(parsed.items.map((i: { id: string }) => i.id)).toEqual([SAMPLE_ITEM.id]);
+    });
+
+    it("does NOT transition item status and does NOT write the report", async () => {
+      const workdir = await setupWorkspace();
+      const { io } = captureIo();
+      await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      // The item stays detected — only `--commit` (after the host writes the
+      // report) advances it.
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("detected");
+      // No report file is written by the emit step.
+      expect(await pathExists(expectedOutputPath(workdir))).toBe(false);
+    });
+
+    it("refuses to emit when the output file already exists", async () => {
+      const workdir = await setupWorkspace();
+      await writeFile(expectedOutputPath(workdir), "# pre-existing\n", "utf8");
+
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("already exists"))).toBe(true);
+    });
+
+    it("emits a digest payload for multiple ids with --digest", async () => {
+      const workdir = await setupWorkspace();
+      const SECOND_ITEM = ItemSchema.parse({
+        id: "anthropic-news-2026-05-12-claude-code-skills",
+        sourceId: "anthropic-news",
+        title: "Claude Code skills: ship and iterate",
+        url: "https://anthropic.com/news/claude-code-skills",
+        publishedAt: "2026-05-12T00:00:00.000Z",
+        fetchedAt: "2026-05-12T01:00:00.000Z",
+        summary: "Claude Code skills, anthropic deep dive.",
+        matchedKeywords: ["Claude Code", "Anthropic"],
+        status: "detected",
+      });
+      await writeFile(
+        join(workdir, "items", SECOND_ITEM.sourceId, `${SECOND_ITEM.id}.yaml`),
+        stringifyYaml(SECOND_ITEM),
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(
+        ["--digest", SAMPLE_ITEM.id, SECOND_ITEM.id, "--emit-payload"],
+        { cwd: workdir, io },
+      );
+
+      expect(code).toBe(0);
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("_digest_");
+      expect(payload).toContain(SAMPLE_ITEM.id);
+      expect(payload).toContain(SECOND_ITEM.id);
+    });
+
+    it("rejects --emit-payload combined with --batch", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--emit-payload", "--batch"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with --batch"))).toBe(true);
+    });
+  });
+
+  describe("commit mode (--commit, #254)", () => {
+    const REPORT_NAME = "20260510_anthropic-news-claude-code-shiny-new-feature_v1.md";
+
+    function commitFrontmatter(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        id: "20260510_anthropic-news-claude-code-shiny-new-feature_v1",
+        itemIds: [SAMPLE_ITEM.id],
+        agent: "claude-code",
+        templateId: "default",
+        createdAt: "2026-05-10T03:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+        ...overrides,
+      };
+    }
+
+    async function writeReport(
+      workdir: string,
+      name: string,
+      fm: Record<string, unknown>,
+      body = "# host-written report\n\n本文。\n",
+    ): Promise<string> {
+      const reportPath = join(workdir, "research", name);
+      await writeFile(reportPath, matter.stringify(body, fm), "utf8");
+      return reportPath;
+    }
+
+    it("validates an externally written report and transitions detected → researched", async () => {
+      const workdir = await setupWorkspace();
+      const reportPath = await writeReport(workdir, REPORT_NAME, commitFrontmatter());
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+      expect(captured.log.some((m) => m.includes("wrote"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("status -> researched"))).toBe(true);
+    });
+
+    it("reverse-looks-up items from frontmatter itemIds (digest with multiple ids)", async () => {
+      const workdir = await setupWorkspace();
+      const SECOND_ITEM = ItemSchema.parse({
+        id: "anthropic-news-2026-05-12-claude-code-skills",
+        sourceId: "anthropic-news",
+        title: "Claude Code skills",
+        url: "https://anthropic.com/news/claude-code-skills",
+        publishedAt: "2026-05-12T00:00:00.000Z",
+        fetchedAt: "2026-05-12T01:00:00.000Z",
+        matchedKeywords: ["Claude Code"],
+        status: "detected",
+      });
+      await writeFile(
+        join(workdir, "items", SECOND_ITEM.sourceId, `${SECOND_ITEM.id}.yaml`),
+        stringifyYaml(SECOND_ITEM),
+        "utf8",
+      );
+      const reportPath = await writeReport(
+        workdir,
+        "20260512_digest_claude-code_v1.md",
+        commitFrontmatter({
+          id: "20260512_digest_claude-code_v1",
+          itemIds: [SAMPLE_ITEM.id, SECOND_ITEM.id],
+          templateId: "digest",
+        }),
+      );
+
+      const { io } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      for (const item of [SAMPLE_ITEM, SECOND_ITEM]) {
+        const itemRaw = await readFile(
+          join(workdir, "items", item.sourceId, `${item.id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(itemRaw).status).toBe("researched");
+      }
+    });
+
+    it("rejects a --commit path outside <cwd>/research/ (path traversal, M3b)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", "../escape.md"], { cwd: workdir, io });
+
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
+      // The item is untouched.
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("detected");
+    });
+
+    it("rejects a report that violates ResearchFrontmatterSchema (no transition)", async () => {
+      const workdir = await setupWorkspace();
+      // Legacy/invalid frontmatter: missing required fields, stray `status`.
+      const reportPath = await writeReport(workdir, REPORT_NAME, {
+        id: "20260510_anthropic-news-claude-code-shiny-new-feature_v1",
+        status: "researched",
+      });
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(
+        captured.error.some((m) => m.includes("does not match ResearchFrontmatterSchema")),
+      ).toBe(true);
+      // Rollback: items.yaml is untouched.
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("detected");
+    });
+
+    it("errors when frontmatter itemIds reference an unknown item", async () => {
+      const workdir = await setupWorkspace();
+      const reportPath = await writeReport(
+        workdir,
+        REPORT_NAME,
+        commitFrontmatter({ itemIds: ["does-not-exist"] }),
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("unknown item id 'does-not-exist'"))).toBe(true);
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("detected");
+    });
+
+    it("resets reviewedAt/reviewedBy/supersedes drift on commit (shares finalizeResearch)", async () => {
+      const workdir = await setupWorkspace();
+      const reportPath = await writeReport(
+        workdir,
+        REPORT_NAME,
+        commitFrontmatter({ reviewedAt: "2026-05-10T05:00:00.000Z", reviewedBy: "codex-cli" }),
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      const body = await readFile(reportPath, "utf8");
+      expect(matter(body).data.reviewedAt).toBeNull();
+      expect(matter(body).data.reviewedBy).toBeNull();
+      expect(captured.warn.some((m) => m.includes("resetting to null"))).toBe(true);
+    });
+
+    it("errors when the committed report file does not exist", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", join(workdir, "research", "missing.md")], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("was not written"))).toBe(true);
+    });
+
+    it("does not re-transition an already-researched item (idempotent guard)", async () => {
+      const workdir = await setupWorkspace();
+      await writeFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        stringifyYaml({ ...SAMPLE_ITEM, status: "researched" }),
+        "utf8",
+      );
+      const reportPath = await writeReport(workdir, REPORT_NAME, commitFrontmatter());
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // No transition happened (researched → researched is not a legal edge).
+      expect(captured.log.some((m) => m.includes("status -> researched"))).toBe(false);
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+    });
+
+    it("rejects --commit combined with --digest", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", "research/x.md", "--digest"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with --digest"))).toBe(true);
+    });
+
+    it("rejects --commit combined with positional item ids", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", "research/x.md", SAMPLE_ITEM.id], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("takes a <path>"))).toBe(true);
+    });
+  });
 });

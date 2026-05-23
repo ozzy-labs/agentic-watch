@@ -1559,6 +1559,41 @@ radar review <research-id> --agent claude-code
 
 CLI 側で agent の組合せを強制はしない（ユーザー判断）。`radar.config.yaml` で default agent を指定すれば、`--agent` を毎回付けずに済む（[後述](#radarconfigyaml)）。
 
+#### host-agent (in-session) モード (opt-in)
+
+interactive な agent セッションから `/research <id>` を呼ぶと、既定では CLI が**別の agent サブプロセスを spawn**して research を実行する（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。つまり「今あなたが対話しているセッション」の中から、さらに nested で `claude -p` 等を起動する形になる。
+
+host-agent モードは、この nested spawn を避け、**今あなたが対話しているホストセッション自身に手順を実行させる** opt-in モード（[ADR-0019](./adr/0019-host-agent-execution-mode.md)、[#254](https://github.com/ozzy-labs/feedradar/issues/254)）。radar は payload 構築・schema 検証・status 遷移・untrusted 境界の責任を保持したまま、モデル呼び出しのステップだけをホストセッションに委ねる **prepare / commit の 2-call protocol** で動く:
+
+```bash
+# 1. prepare: payload を stdout に出力（agent は spawn しない、item は detected のまま）
+radar research <item-id> --emit-payload
+
+# 2. ホストセッションが payload の手順に従い outputPath にレポートを書く
+
+# 3. commit: 外部生成 report を検証し detected → researched に遷移
+radar research --commit <path>
+```
+
+| サブコマンド | 説明 |
+|---|---|
+| `--emit-payload` | item ロード + テンプレ解決 + `outputPath` 確定 + `<untrusted_item>` ラップ済みコンテンツを含む payload を **stdout に出力**する。agent は spawn しない。出力は「人間可読プロンプト + 末尾に機械可読 JSON フェンス」のハイブリッド形式 |
+| `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する） |
+
+なぜ host モード:
+
+- **二重クォータ消費の解消**: ホストセッションが手順を実行するため、nested な spawn が不要になる
+- **透明性・ステアリング性**: 推論過程を見ながら途中で方向修正できる（spawn された headless agent は事後 `--verbose` でしか見えない）
+- **コールドスタート削減**: warm な既存セッションを使うため、プロセス起動 + SKILL 再読込のオーバーヘッドが消える
+
+セキュリティと運用の注意:
+
+- **CI / headless では使わない**: host モードは **interactive 専用**。spawn では untrusted item content が使い捨ての headless サブプロセスに閉じるのに対し、host モードでは untrusted content がユーザーの対話セッション本体（広い tool 権限・standing approval を持つ）に入るため、prompt injection 成立時の blast radius が大きい。CI / headless では adapter spawn を SSoT として使い、CI parity を維持する（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §Consequences）。なお `--emit-payload` の payload には `<untrusted_item>` ラップ（M1c）が含まれ、SKILL の M2a / M2b / M3b guidance も host 実行時に継続適用される
+- **prepare→commit 間に同一 workspace の cron を重ねない**: host モードは `researching` ロック status を持たない。`outputPath` は決定論的で、既存の「already exists」衝突ガードが backstop になるが、prepare→commit 間に同一 item へ無人 cron（`research --batch` 等）を向けない運用にする
+- **cross-agent review が要る場合は従来の spawn を使う**: research=copilot / review=claude のようなクロス運用は単一ホストセッションでは成立しない（[上記](#クロスエージェント運用推奨)）。host モードは「ホストと同じ agent で十分な場合」の最適化であり、cross-agent が要るケースは従来の `--agent <spawn>` を使う（両立・共存）
+
+triage / review / update への展開方針は [ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針 を参照（research が PoC、review / update は同型、triage は別契約）。
+
 ### `radar update <research-id> [--agent <agent-id>] [--template <id>]`
 
 既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history、[ADR-0003](./adr/0003-output-format-and-versioning.md)）。
@@ -2305,6 +2340,7 @@ scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triag
 - **`triaged_unsure` は terminal 状態ではなく、人間のレビュー待ちキュー**。workflow 末尾の Slack 通知 step がキュー深度をアラートする。`radar items list --status triaged_unsure` で残量を確認 → 個別に `/research` / `/dismiss` / `radar triage feedback` で対処する
 - **`triaged_digest` は `triage.group` フィールドで分類される**。同 group は `radar research --digest` で 1 本のレポートに集約される（ADR-0011 の digest mode を triage 結果に再利用）
 - **`detected` → `triaged_*` 以外への直接遷移は CLI が拒否**する（[ADR-0008](./adr/0008-status-state-machine.md) の status state machine を triage 用 3 status で拡張、ADR-0018 §S2）
+- **このセクションの無人 cron ワークフローと [host-agent (in-session) モード](#host-agent-in-session-モード-opt-in) は別物**である。host モードは interactive 専用（CI / headless では adapter spawn を SSoT として使う）であり、無人 cron では従来どおり spawn される（[ADR-0019](./adr/0019-host-agent-execution-mode.md)）
 
 ### policy 書き方ガイド
 
