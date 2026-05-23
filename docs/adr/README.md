@@ -37,6 +37,7 @@ FeedRadar プロジェクト**内部の**設計判断を記録する。OzzyLabs 
 | [0014](./0014-workflow-generate-and-auto-research-safety.md) | Workflow Generate (後追い生成) と自動 research セーフティ方針 | Accepted |
 | [0015](./0015-progress-reporting-ux.md) | Progress Reporting UX | Accepted |
 | [0017](./0017-facet-sweep-recipe-extension.md) | Facet Sweep Recipe Extension for `kind: json-api` | Accepted |
+| [0018](./0018-triage-extension.md) | LLM-based Triage Extension for Scheduled Workflows | Accepted |
 
 ## 新規 ADR の追加
 
