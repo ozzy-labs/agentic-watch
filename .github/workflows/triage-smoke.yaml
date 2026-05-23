@@ -1,0 +1,141 @@
+name: triage-smoke
+
+# Weekly liveness signal for the triage channel (ADR-0018 PR-6 / #243).
+#
+# Unlike `recipes-smoke` (which only validates that bundled recipes still parse
+# upstream JSON), this job exercises the *triage agent* end-to-end:
+#
+#   bundled recipe → live page-0 fetch → real agent CLI invocation → JSON
+#   decision → schema-validated against TriageDecisionSchema.
+#
+# Triage is uniquely sensitive to upstream drift the unit suite cannot catch:
+#   - agent CLI breaking changes (flag renames, output format shifts)
+#   - model retirement / silent prompt-format changes from the provider
+#   - bundled `triagePolicy.rules` becoming stale relative to the current
+#     site taxonomy
+#
+# Because real agent calls cost money (and rate limits), the cadence is
+# weekly, not per-PR. The job is `continue-on-error` and posts only
+# `::warning::` annotations so a single bad-day model run never blocks the
+# release pipeline (same contract as recipes-smoke per ADR-0012 §D3).
+
+on:
+  schedule:
+    # Monday 12:00 UTC — sits 4 h after `recipes-smoke` (Mon 08:00 UTC) so the
+    # two smoke signals do not compete for the same agent-CLI quota window if
+    # someone happens to schedule manual runs nearby.
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: triage-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Needed by the failure-handling step to file an auto-issue on smoke
+  # breakage so a regression is visible even when nobody watches the
+  # Actions tab.
+  issues: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # Bound total wallclock above the per-step timeout so a hung CLI or
+    # runaway model invocation cannot stall the whole job.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Same exclusions as the `ci` / `recipes-smoke` jobs.
+          MISE_DISABLE_TOOLS: trivy,pnpm,uv
+
+      - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6.0.5
+        with:
+          version: 11
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (compile dist/ so the smoke script can import schemas)
+        run: pnpm run build
+
+      # gemini-cli is the required minimum (cheap-model channel ADR-0018 §W4).
+      # `@anthropic-ai/claude-code` is installed best-effort: when the
+      # ANTHROPIC_API_KEY secret is configured the smoke runs both agents,
+      # otherwise it falls back to gemini-only.
+      #
+      # We `npm i -g` the package the script will spawn rather than using the
+      # locally-built `node dist/index.js` because the script invokes `radar`
+      # via shell (matching how users hit the published CLI).
+      - name: Install radar + agent CLIs
+        run: |
+          npm install -g \
+            "$(pnpm pack | tail -n1)" \
+            @google/gemini-cli \
+            @anthropic-ai/claude-code || \
+            npm install -g \
+              "$(pnpm pack | tail -n1)" \
+              @google/gemini-cli
+
+      - name: Run triage smoke
+        # `continue-on-error: true` keeps the workflow run green even on
+        # script crash; the script itself emits ::warning::/::error::
+        # annotations and the if:failure() step below files an issue.
+        continue-on-error: true
+        id: smoke
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Pin the agent the smoke spawns. Singular: the script triages
+          # against one agent per run. Default in the script is also
+          # `gemini-cli`; setting it explicitly here documents the choice
+          # and lets a `workflow_dispatch` operator override via the env.
+          RADAR_TRIAGE_SMOKE_AGENT: gemini-cli
+        run: node scripts/triage-smoke.mjs
+
+      # File a tracking issue when the smoke fails. The body embeds the
+      # captured JSON / table so a triage maintainer has the failure context
+      # without having to re-run the workflow.
+      - name: File issue on smoke failure
+        if: failure() || steps.smoke.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          BODY_FILE=$(mktemp)
+          {
+            echo "Weekly triage-smoke run failed."
+            echo ""
+            echo "Run: $RUN_URL"
+            echo ""
+            echo "Likely causes (per ADR-0018 §W4):"
+            echo "- agent CLI breaking change (flag rename, output format shift)"
+            echo "- model retirement / silent prompt-format drift from the provider"
+            echo "- bundled triagePolicy.rules drift vs current upstream taxonomy"
+            echo "- rate-limit exhaustion (transient)"
+            echo ""
+            echo "<details><summary>triage-result.json</summary>"
+            echo ""
+            echo '```json'
+            if [ -f triage-result.json ]; then
+              cat triage-result.json
+            else
+              echo "(no triage-result.json captured — script crashed before write)"
+            fi
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > "$BODY_FILE"
+          gh issue create \
+            --title "triage-smoke fail ($(date -u +%Y-%m-%d))" \
+            --body-file "$BODY_FILE" \
+            --label "ci-smoke" || true

@@ -1426,6 +1426,25 @@ radar triage stats --since 30d --json | jq '.perSource[] | select(.humanOverride
 
 `triage.feedback` が空の item は overrides としては数えない（=人間レビュー未実施として扱う）。集計の正規化母数は「triage 済み item の総数」なので、feedback を一切付けていない月は decision breakdown だけが意味のある値になる。
 
+### triage-smoke job の運用
+
+`radar` リポジトリ側で **週次の `triage-smoke` GitHub Actions** ([`.github/workflows/triage-smoke.yaml`](https://github.com/ozzy-labs/feedradar/blob/main/.github/workflows/triage-smoke.yaml)) が走り、bundled recipe + 実 agent CLI の組合せが「site / agent CLI / model の breaking change」で壊れていないかを継続検知する（[ADR-0018](./adr/0018-triage-extension.md) §W4 / [#243](https://github.com/ozzy-labs/feedradar/issues/243)）。
+
+ユーザー側で追加設定は不要だが、自分のフォーク / 自前 workspace で同等の smoke を回したい場合は以下を理解しておくと良い:
+
+- **目的**: 週次（毎週月曜 12:00 UTC）で `dev-to` recipe を取得 → 数件の item を `gemini-cli` に triage させ、返ってきた decision が `TriageDecisionSchema` を満たすかを assert する。`recipes-smoke` が「recipe parse の生死」だけ見るのに対し、`triage-smoke` は **agent CLI の生死 + prompt の効きやすさ** を見る相補的 signal。
+- **Secrets**: GitHub repo settings → Secrets and variables → Actions で以下を登録する:
+  - `GEMINI_API_KEY`（必須 — `gemini-cli` の認証用）
+  - `ANTHROPIC_API_KEY`（任意 — 設定があれば `claude-code` 経由でも追加 smoke できる）
+- **手動 trigger**: `gh workflow run triage-smoke.yaml` で即時実行可能。手動 trigger 時も Secrets は同じものを参照する。
+- **失敗時の挙動**:
+  - 全 item が `unsure` を返した場合は **soft fail**（`::warning::` のみ、exit 0）— prompt drift / model retirement の早期 signal として扱う
+  - schema 違反 / agent CLI crash / 0 件 triage の場合は **hard fail**（exit 1）→ workflow 側の `if: failure()` ステップが自動で issue を起票（label: `ci-smoke`、`triage-result.json` 添付）
+- **コスト**: cheap-model channel（`gemini-2.5-flash-lite`）+ `--max-items 5` で 1 run あたり $0.01 未満を想定。週次なら年間 < $1。
+- **回避策**: API キーを持たない fork で workflow を無効にしたい場合は `.github/workflows/triage-smoke.yaml` を削除するか、`on:` 節から `schedule:` を外して `workflow_dispatch:` のみに留める。
+
+`triage-smoke` の primary 目的は「main CI を flaky にせずに triage の生死を継続観測する」ことなので、smoke 失敗が即座に release を blocking することはない。issue 起票で気づいたら人間が原因（agent 側 vs prompt 側 vs 上流サイト側）を切り分ける運用。
+
 ### `radar items list [filters] [output options]`
 
 `items/<sourceId>/*.yaml` を読み込み、フィルタ条件にマッチする item を一覧表示する。
