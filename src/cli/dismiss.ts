@@ -1,12 +1,13 @@
-import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { loadItems, saveItems } from "../core/items.js";
-import type { Item } from "../schemas/index.js";
+import { allowedTransitions, isValidTransition } from "../core/transitions.js";
+import type { Item, ItemStatus } from "../schemas/index.js";
 import type { Command } from "./index.js";
 
 /** Sinks for the dismiss command's user-facing output. Tests inject capturing sinks. */
 export interface DismissIO {
   log?: (message: string) => void;
+  warn?: (message: string) => void;
   error?: (message: string) => void;
 }
 
@@ -15,82 +16,313 @@ export interface DismissCommandOptions {
   io?: DismissIO;
 }
 
+/**
+ * Default hard-cap for `radar dismiss --batch`.
+ *
+ * Mirrors `RESEARCH_BATCH_DEFAULT_MAX_ITEMS` / `REVIEW_BATCH_DEFAULT_MAX_ITEMS`
+ * (ADR-0014 D3a). dismiss is agent-free so cost is not the driver, but pinning
+ * the same literal keeps the batch surface symmetric across commands: a user
+ * who learned `--max-items 10` from `research --batch` gets the same default
+ * here. A runaway `--backfill` that floods `detected` cannot be cleared in a
+ * single unbounded pass — the cap forces an explicit `--max-items` bump.
+ */
+export const DISMISS_BATCH_DEFAULT_MAX_ITEMS = 10;
+
+/**
+ * Whitelist of `Item.status` values accepted by `radar dismiss --batch
+ * --status <status>` and by the single/multi-id path.
+ *
+ * Derived from the ADR-0008 / ADR-0018 state machine: an item may transition
+ * to `dismissed` only from `detected` or `triaged_unsure`
+ * (`isValidTransition(<status>, "dismissed")`). The two `triaged_research` /
+ * `triaged_digest` statuses are NOT dismissible — they flow to `researched`
+ * (a triage decision already promoted them), so dismissing them would
+ * contradict the classifier; the human path for those is `radar triage --redo`
+ * back to `detected` first.
+ *
+ * Constraining `--batch --status` to this same set means a typo in scheduled
+ * YAML fails loud with an explicit allow-list message instead of silently
+ * matching zero items (mirrors research/review #250).
+ */
+export const DISMISS_ALLOWED_STATUSES = [
+  "detected",
+  "triaged_unsure",
+] as const satisfies readonly ItemStatus[];
+type DismissAllowedStatus = (typeof DISMISS_ALLOWED_STATUSES)[number];
+
 interface DismissArgs {
-  itemId?: string;
+  itemIds: string[];
   help?: boolean;
+  /** Batch mode: dismiss every item matching --status (and --filter-tags). */
+  batch?: boolean;
+  /** Restrict batch mode to items with this status (default: `detected`). */
+  status?: string;
+  /** Hard-cap on items processed in batch mode (default: DISMISS_BATCH_DEFAULT_MAX_ITEMS). */
+  maxItems?: string;
+  /** Comma-separated allow-list matched against each item's `matchedKeywords`. */
+  filterTags?: string;
 }
 
 function parseArgs(args: string[]): DismissArgs {
-  const out: DismissArgs = {};
+  const out: DismissArgs = { itemIds: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-h" || a === "--help") {
       out.help = true;
       continue;
     }
+    if (a === "--batch") {
+      out.batch = true;
+      continue;
+    }
+    if (a === "--status") {
+      out.status = args[++i];
+      continue;
+    }
+    if (a === "--max-items") {
+      out.maxItems = args[++i];
+      continue;
+    }
+    if (a === "--filter-tags") {
+      out.filterTags = args[++i];
+      continue;
+    }
     if (a?.startsWith("--")) {
       throw new Error(`unknown option: ${a}`);
     }
-    if (!out.itemId) {
-      out.itemId = a;
-      continue;
+    if (a !== undefined) {
+      out.itemIds.push(a);
     }
-    throw new Error(`unexpected positional argument: ${a}`);
   }
   return out;
 }
 
 function printHelp(log: (m: string) => void): void {
-  log("Usage: radar dismiss <item-id>");
+  log("Usage:");
+  log("  radar dismiss <item-id> [<item-id> ...]");
+  log("  radar dismiss --batch [--status <status>] [--max-items N] [--filter-tags <list>]");
   log("");
   log("Arguments:");
   log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
+  log("                        Pass 2 or more ids to dismiss them in one call.");
+  log("                        Omit positional ids with --batch — items are discovered.");
   log("");
-  log("Transitions the item's status from `detected` to `dismissed` (ADR-0008).");
-  log("Items already in `researched`, `reviewed`, or `dismissed` cannot be dismissed.");
+  log("Options:");
+  log("  --batch               Dismiss every item matching --status (and --filter-tags)");
+  log(
+    `                        respecting the --max-items hard-cap (default: ${DISMISS_BATCH_DEFAULT_MAX_ITEMS}).`,
+  );
+  log("  --status <status>     Batch-mode filter: detected | triaged_unsure (default: detected).");
+  log("                        Only these two statuses can transition to `dismissed`");
+  log("                        per the ADR-0008 / ADR-0018 state machine; other values");
+  log("                        are rejected.");
+  log(
+    `  --max-items N         Batch-mode hard-cap on processed items (default: ${DISMISS_BATCH_DEFAULT_MAX_ITEMS}).`,
+  );
+  log("                        Excess items are dropped and announced via warn() so a runaway");
+  log("                        --backfill cannot blow the cap from inside a workflow.");
+  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
+  log("                        each item's matchedKeywords (case-insensitive). Default: all.");
+  log("");
+  log("Transitions the item's status to `dismissed` (ADR-0008). Valid from `detected`");
+  log("or `triaged_unsure`; items in `researched` / `reviewed` / `dismissed` /");
+  log("`triaged_research` / `triaged_digest` cannot be dismissed.");
   log("");
   log("Inverse: `radar undismiss <item-id> [--force]` (ADR-0018 §W6).");
 }
 
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Locate `items/<sourceId>/<item-id>.yaml` across all source directories.
+ * Locate `items/<sourceId>/<item-id>.yaml` files for the given ids across all
+ * source directories. `loadItems` walks every source subdir, so the caller
+ * only needs `<item-id>` (sourceId is inferred from the loaded item).
  *
- * Mirrors the lookup strategy used by `research`: `loadItems` walks every
- * source subdir and we match by id, so the caller only needs `<item-id>`
- * (sourceId is inferred from the loaded item).
+ * Returns the matched items in the requested order, or `{ missing }` for the
+ * first id that has no matching file.
  */
-async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | null> {
+async function findItems(
+  cwd: string,
+  itemIds: string[],
+): Promise<{ items: Item[] } | { missing: string }> {
   const itemsDir = join(cwd, "items");
-  if (!(await pathExists(itemsDir))) return null;
-  const items = await loadItems(itemsDir);
-  const match = items.find((i) => i.id === itemId);
-  if (!match) return null;
-  return { item: match };
+  const all = await loadItems(itemsDir);
+  const byId = new Map(all.map((i) => [i.id, i]));
+  const matched: Item[] = [];
+  for (const id of itemIds) {
+    const m = byId.get(id);
+    if (!m) return { missing: id };
+    matched.push(m);
+  }
+  return { items: matched };
+}
+
+function parseMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+  if (raw === undefined) return DISMISS_BATCH_DEFAULT_MAX_ITEMS;
+  if (!/^[0-9]+$/.test(raw)) {
+    error(`dismiss: invalid --max-items '${raw}' (expected positive integer)`);
+    return null;
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    error(`dismiss: invalid --max-items '${raw}' (must be > 0)`);
+    return null;
+  }
+  return n;
+}
+
+function parseFilterTags(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0),
+    ),
+  ];
 }
 
 /**
- * Implementation of `radar dismiss <item-id>`.
+ * Transition a resolved set of items to `dismissed` and persist them.
  *
- * Triggers the `detected → dismissed` state transition (ADR-0008). The command
- * is intentionally agent-free: it only mutates `items/<sourceId>/<item-id>.yaml`
- * so users can prune noise from `watch run` output without spending agent
+ * Each item is re-checked against `isValidTransition(status, "dismissed")` —
+ * the ADR-0008 / ADR-0018 state machine SSoT — so a stale id (e.g. an item that
+ * moved past `detected` between discovery and write) is rejected with a
+ * user-friendly message rather than corrupted. The whole batch is validated
+ * before any write, so a single offending id fails the call without leaving a
+ * partial mutation behind.
+ */
+async function dismissItems(
+  cwd: string,
+  items: Item[],
+  log: (m: string) => void,
+  error: (m: string) => void,
+): Promise<number> {
+  const offenders = items.filter((i) => !isValidTransition(i.status, "dismissed"));
+  if (offenders.length > 0) {
+    for (const item of offenders) {
+      error(
+        `dismiss: item '${item.id}' is in status '${item.status}', expected one of ${DISMISS_ALLOWED_STATUSES.join(" | ")} (dismiss transitions to 'dismissed' only from these; ADR-0008 / ADR-0018). Valid next statuses for '${item.status}': ${allowedTransitions(item.status).join(", ") || "(none)"}`,
+      );
+    }
+    return 1;
+  }
+
+  const updated: Item[] = items.map((item) => ({ ...item, status: "dismissed" as ItemStatus }));
+  try {
+    await saveItems(join(cwd, "items"), updated);
+  } catch (e) {
+    error(`dismiss: failed to update item status: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  for (const item of updated) {
+    log(`dismiss: items/${item.sourceId}/${item.id}.yaml status -> dismissed`);
+  }
+  return 0;
+}
+
+/**
+ * Implementation of `radar dismiss --batch` (#259).
+ *
+ * Mirrors `research --batch` shape:
+ *   1. Validate `--status` against `DISMISS_ALLOWED_STATUSES`.
+ *   2. Load items, keep those whose status matches.
+ *   3. Apply `--filter-tags` allow-list (case-insensitive) against
+ *      `matchedKeywords`.
+ *   4. Cap at `--max-items` (drops excess + warns).
+ *   5. Transition the selected items to `dismissed` in one write.
+ *
+ * Designed to absorb the large `detected` backlog produced by
+ * `radar watch run --backfill` without the user shelling out a per-id loop.
+ */
+async function runDismissBatch(
+  parsed: DismissArgs,
+  cwd: string,
+  log: (m: string) => void,
+  warn: (m: string) => void,
+  error: (m: string) => void,
+): Promise<number> {
+  if (parsed.itemIds.length > 0) {
+    error(
+      `dismiss: --batch is incompatible with positional <item-id> arguments (got ${parsed.itemIds.length})`,
+    );
+    return 2;
+  }
+
+  const rawStatus = parsed.status ?? "detected";
+  if (!(DISMISS_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
+    error(
+      `dismiss: invalid --status '${rawStatus}' (expected: ${DISMISS_ALLOWED_STATUSES.join(" | ")})`,
+    );
+    return 2;
+  }
+  const status: DismissAllowedStatus = rawStatus as DismissAllowedStatus;
+
+  const maxItems = parseMaxItems(parsed.maxItems, error);
+  if (maxItems === null) return 2;
+  const filterTags = parseFilterTags(parsed.filterTags);
+
+  const itemsDir = join(cwd, "items");
+  const all = await loadItems(itemsDir);
+  const matches = all
+    .filter((it) => it.status === status)
+    .filter((it) => {
+      if (filterTags.length === 0) return true;
+      const haystack = new Set(it.matchedKeywords.map((k) => k.toLowerCase()));
+      return filterTags.some((t) => haystack.has(t));
+    })
+    .sort((a, b) => {
+      const ap = a.publishedAt ?? a.fetchedAt;
+      const bp = b.publishedAt ?? b.fetchedAt;
+      if (ap !== bp) return ap < bp ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+
+  if (matches.length === 0) {
+    log(
+      `dismiss: no items matched --batch filters (status=${status}${
+        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+      })`,
+    );
+    return 0;
+  }
+
+  let selected = matches;
+  if (matches.length > maxItems) {
+    const dropped = matches.length - maxItems;
+    warn(
+      `dismiss: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matches.length})`,
+    );
+    selected = matches.slice(0, maxItems);
+  }
+
+  log(
+    `dismiss: --batch will process ${selected.length} item(s) (status=${status}${
+      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+    }, cap=${maxItems})`,
+  );
+
+  const code = await dismissItems(cwd, selected, log, error);
+  if (code !== 0) return code;
+  log(`dismiss: --batch completed ${selected.length} item(s)`);
+  return 0;
+}
+
+/**
+ * Implementation of `radar dismiss <item-id> [<item-id> ...]` and
+ * `radar dismiss --batch` (#259).
+ *
+ * Triggers the `detected | triaged_unsure → dismissed` state transition
+ * (ADR-0008 / ADR-0018). The command is intentionally agent-free: it only
+ * mutates `items/<sourceId>/<item-id>.yaml` so users can prune noise from
+ * `watch run` output (including a `--backfill` backlog) without spending agent
  * tokens.
  *
  * Flow:
  *   1. Parse + validate args.
- *   2. Locate `items/<sourceId>/<item-id>.yaml`.
- *   3. Reject if the item is not in `detected` (terminal/researched states
- *      cannot be dismissed; `dismissed` itself is reversed via `radar
- *      undismiss` — ADR-0018 §W6).
+ *   2. `--batch`: discover items by `--status` / `--filter-tags`.
+ *      Otherwise: resolve the positional `<item-id>` arguments.
+ *   3. Reject any item not in a dismissible status (state-machine guard).
  *   4. Write back with `status: dismissed`.
  */
 export async function runDismiss(
@@ -99,6 +331,7 @@ export async function runDismiss(
 ): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
+  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
   let parsed: DismissArgs;
@@ -112,42 +345,42 @@ export async function runDismiss(
     printHelp(log);
     return 0;
   }
-  if (!parsed.itemId) {
+  if (parsed.batch) {
+    return runDismissBatch(parsed, cwd, log, warn, error);
+  }
+  // Surface the batch-only flags when used outside `--batch`; matches
+  // research/review's "no silent ignore" stance so a typo does not become a
+  // no-op.
+  if (parsed.status !== undefined) {
+    error("dismiss: --status requires --batch");
+    return 2;
+  }
+  if (parsed.maxItems !== undefined) {
+    error("dismiss: --max-items requires --batch");
+    return 2;
+  }
+  if (parsed.filterTags !== undefined) {
+    error("dismiss: --filter-tags requires --batch");
+    return 2;
+  }
+  if (parsed.itemIds.length === 0) {
     error("dismiss: missing <item-id>");
     printHelp(error);
     return 2;
   }
 
-  const found = await findItem(cwd, parsed.itemId);
-  if (!found) {
-    error(`dismiss: item '${parsed.itemId}' not found under items/`);
+  // De-dupe positional ids so `radar dismiss a a` does not double-process.
+  const uniqueIds = [...new Set(parsed.itemIds)];
+  const found = await findItems(cwd, uniqueIds);
+  if ("missing" in found) {
+    error(`dismiss: item '${found.missing}' not found under items/`);
     return 1;
   }
-  const { item } = found;
-
-  if (item.status !== "detected") {
-    error(
-      `dismiss: item '${item.id}' is in status '${item.status}', expected 'detected' (dismiss is only valid from the detected state; ADR-0008)`,
-    );
-    return 1;
-  }
-
-  const updated: Item = { ...item, status: "dismissed" };
-  try {
-    // saveItems writes by sourceId+id, so it overwrites the existing file in
-    // place. The status transition is the entire effect of the command.
-    await saveItems(join(cwd, "items"), [updated]);
-  } catch (e) {
-    error(`dismiss: failed to update item status: ${e instanceof Error ? e.message : String(e)}`);
-    return 1;
-  }
-
-  log(`dismiss: items/${item.sourceId}/${item.id}.yaml status -> dismissed`);
-  return 0;
+  return dismissItems(cwd, found.items, log, error);
 }
 
 export const dismissCommand: Command = {
   name: "dismiss",
-  summary: "Mark a detected item as dismissed (no research/review)",
+  summary: "Mark detected items as dismissed (single id, multiple ids, or --batch)",
   run: (args) => runDismiss(args),
 };

@@ -70,7 +70,8 @@ radar research <item-id>
 radar source list             # list sources
 radar source test <id>        # dry-run preview a source (no state/items mutation)
 radar research --digest <id1> <id2> ...  # bundle multiple items into one digest report (ADR-0011)
-radar dismiss <item-id>       # move an item to dismissed (no LLM)
+radar dismiss <item-id> ...   # move one or more items to dismissed (no LLM)
+radar dismiss --batch         # bulk-dismiss detected/triaged_unsure items (--status/--filter-tags/--max-items)
 radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)
 radar doctor                  # check workspace / agent CLI / Playwright / proxy / TLS health

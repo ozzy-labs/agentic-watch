@@ -1259,22 +1259,59 @@ radar research --batch --agent codex-cli
 - 既に同日 `<YYYYMMDD>_<slug>_v1.md` が存在する item は上書きせずエラーで halt する (通常モードと同じ挙動、再 research は `radar update` 経由)
 - 各 item の処理成功時に status を `detected → researched` に遷移する
 
-### `radar dismiss <item-id>`
+### `radar dismiss <item-id> [<item-id> ...]` / `radar dismiss --batch`
 
-検出 (`detected`) 状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。
+`detected`（または `triaged_unsure`）状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。単数・複数 id・`--batch` 一括選別の 3 通りで呼べる。
 
 | 引数 | 説明 |
 |---|---|
-| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド |
+| `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。2 つ以上渡すと一括 dismiss |
 
 挙動:
 
-- 対象 item を `items/` 配下から探索し、`status` を `detected → dismissed` に更新する
-- `status` が `detected` 以外（`researched` / `reviewed` / `dismissed`）の item に対してはエラーで終了する（dismiss は detected からのみ有効。ADR-0008）
+- 対象 item を `items/` 配下から探索し、`status` を `dismissed` に更新する
+- dismiss 可能なのは `detected` / `triaged_unsure` のみ（ADR-0008 / ADR-0018 の state machine で `dismissed` への遷移が許可されている status）。`researched` / `reviewed` / `dismissed` / `triaged_research` / `triaged_digest` の item を渡すとエラーで終了する。`triaged_research` / `triaged_digest` は triage が research 行きと判定済みのため dismiss 不可で、戻したい場合は先に `detected` に戻す
+- 複数 id 指定時は、1 つでも非 dismissible / not-found があると **何も書かずに** エラー終了する（部分適用しない）
 - item が見つからない場合は exit code `1` で user-friendly なエラーを返す
 - agent を起動しないため、tokens は消費しない
 
-復元は [`radar undismiss <item-id>`](#radar-undismiss-item-id---force) で行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
+復元は [`radar undismiss <item-id>`](#radar-undismiss-item-id---force) で行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。
+
+#### `radar dismiss --batch` (バッチモード)
+
+`--batch` を付けると、`items/` 配下から status 条件にマッチする item を自動的に選別し、`--max-items` のハードキャップ内で一括 dismiss する。`research --batch` / `review --batch` / `triage` と同じ語彙（`--status` / `--filter-tags` / `--max-items`）で揃えてある。`watch run --backfill` で大量に出た `detected` バックログを 1 コマンドで捌く用途を想定（shell ループ不要）。
+
+```bash
+# detected を全件 dismiss（既定 --max-items 10 まで）
+radar dismiss --batch
+
+# triaged_unsure のうち security タグのものだけ dismiss
+radar dismiss --batch --status triaged_unsure --filter-tags security
+
+# 上限を引き上げて backfill バックログを一気に捌く
+radar dismiss --batch --max-items 200
+```
+
+| フラグ | 既定 | 説明 |
+|---|---|---|
+| `--status <status>` | `detected` | 対象 item の status (`detected` または `triaged_unsure`)。state machine 上 `dismissed` へ遷移可能なのはこの 2 つのみで、それ以外の値は明示エラーで reject される |
+| `--max-items N` | `10` | 1 実行で dismiss する item 数のハードキャップ。N を超える match があると、超過分は **dropped** され warn() に件数が出力される（次回実行で続きを処理） |
+| `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各 item の `matchedKeywords` と大小無視で照合し、いずれか 1 つでも一致すれば対象。未指定なら全 match item が対象 |
+
+- match を `publishedAt`（なければ `fetchedAt`）昇順でソートしてから先頭 `--max-items` 件を処理する（古い順）
+- `--batch` と positional `<item-id>` は同時指定不可（exit code 2）
+- `--status` / `--max-items` / `--filter-tags` は `--batch` なしで使うと exit code 2（typo を no-op で握り潰さない）
+
+#### backfill → 一括 dismiss フロー
+
+`watch run --backfill` で過去履歴を全件取り込むと大量の `detected` が出る。不要分をまとめて落とすには:
+
+```bash
+radar watch run --source aws-whats-new --backfill   # 過去全件を detected で取り込み
+radar dismiss --batch --max-items 500               # 不要分を一括 dismiss（タグで絞る場合は --filter-tags）
+```
+
+research に回したいものだけ残して dismiss でノイズを落とす、というシード運用に使える。
 
 ### `radar undismiss <item-id> [--force]`
 
