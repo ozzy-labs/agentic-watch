@@ -214,6 +214,65 @@ M4 (`Source.trustLevel`) は **schema レベルの基盤**として上記スタ�
 
 実装は採択時の sub-issue 分割 (schema → core → agents → skills) に従って段階的に shipped され、Phase 5 終了時点で 7 個別策が出揃った。本 ADR の **判定そのものは不変** — 状態 callout は実装側の trace 用記録。
 
+## Amendment: M1c boundary delivery — argv → stdin (2026-05-24, #270 / #272)
+
+### 背景
+
+agent CLI への prompt 受け渡しが OS の **単一引数長上限 `MAX_ARG_STRLEN` (Linux 128KB)** に抵触する事象が判明した。`getconf ARG_MAX` (~2MB) とは別に、引数 **1 本あたり** 128KB の制限がある。
+
+- `#270` (triage channel): 全 item を 1 プロンプトに連結し `gemini -p "<prompt>"` 等の **単一 argv 引数**として渡していたため、backfill 直後の大量 item (例: 45 件 × ~3KB ≒ 135KB) で `execve()` が `spawn E2BIG` で即死、全件 `unsure` に倒れた。**stdin 移送で修正済み** (`#273`、`src/core/triage/adapter.ts`)。
+- `#272` (research / review / update channel): 同根。`src/agents/{gemini,claude-code,codex,copilot}-cli.ts` の `buildXxxPrompt` が `renderItemsForPrompt(items)` / `wrapUntrusted(researchBody)` の出力 (= **M1c 境界マーカーで wrap した untrusted content**) を argv prompt に埋め込む。大きな item バッチ / 大きな research body で同じ `spawn E2BIG` を踏み得る (潜在)。
+
+問題の核心は、**M1c の `<untrusted_item>` 境界マーカーが argv prompt 側で付与されている**点にある。bulk を argv から外すと、この最重要 layer-1 防御のテキスト境界が prompt から失われる。一方 `src/skills/{research,review,update}/SKILL.md` の「§1 入力の確認」は、データの正本を **stdin JSON payload の `items`** から取り出す契約になっており、argv の rendered content とは二層構造になっている。
+
+### 決定
+
+**M1c 境界マーカーの判定 (Decision 表の "Adopt") は不変。適用 (delivery) チャネルのみ argv prompt → stdin payload に移す。**
+
+具体的には、spawn 経路の stdin を **host-agent モード (ADR-0019) の payload と同形式に統一**する。すなわち `src/agents/_boundary.ts` の `renderResearchPayloadBlock` / `renderReviewPayloadBlock` / `renderUpdatePayloadBlock` が既に確立している「`<untrusted_item>` 境界付き本文 + 末尾 machine-readable JSON fence」形式を、spawn 経路の stdin payload としても再利用する。argv は agent を stdin payload に誘導する **thin invocation** に縮小する (triage `#273` の `STDIN_INVOCATION` と同型)。
+
+```text
+Before (spawn):
+  argv:  <skill 起動文 + renderItemsForPrompt(items) [<untrusted_item> 包み] + constraints>   ← E2BIG 源
+  stdin: JSON.stringify({agent, templateId, templateBody, items[raw], outputPath})
+
+After (spawn、本改訂):
+  argv:  <thin invocation: "request は stdin payload にある。SKILL を実行せよ">
+  stdin: renderXxxPayloadBlock(...)  ← <untrusted_item> 境界保持 + 末尾 JSON fence
+```
+
+これにより:
+
+- **M1c のテキスト境界マーカーを保持**したまま (防御の後退なし) argv のサイズ制限を回避する。
+- spawn / host-agent の payload 形式が **統一**され、`renderXxxPayloadBlock` を SSoT として両経路で共用できる (現状の argv prompt builder と host payload builder の二重メンテを解消)。
+- triage (`#273`) の「thin argv + bulk on stdin」と方向性が一致する。
+
+### 検討した代替案
+
+| 案 | 内容 | 却下理由 |
+|---|---|---|
+| **A: 構造境界 + directive** | テキストマーカーを廃止し、stdin JSON の `items[*]` 構造 + SKILL directive を M1c とする | 最重要 layer-1 防御の**テキストマーカーを廃止**する判断になり、ADR-0009 の "Adopt" 判定の実質的な後退。防御層を弱める変更を E2BIG 回避のついでに行うべきでない |
+| **C: JSON 値内に wrap した string field** | stdin JSON 内に `untrustedContent: "<untrusted_item>...</untrusted_item>"` を持たせる | マーカーは保持できるが JSON 値内タグが不自然で、host-mode payload との形式統一の利得が得られない |
+
+### 実装計画 (本改訂採択後の sub-issue: `#272`)
+
+| 対象 | 変更 |
+|---|---|
+| `src/agents/{gemini,claude-code,codex,copilot}-cli.ts` | `buildXxxPrompt` を thin invocation に縮小、stdin を `renderXxxPayloadBlock(...)` 出力に変更 (4 ファイル) |
+| `src/agents/_boundary.ts` | spawn / host で payload renderer を共用化。finalize 文言の差分 (spawn は CLI が commit、host は `radar … --commit` 案内) はパラメータ化 |
+| `src/skills/{research,review,update}/SKILL.md` | stdin 契約を host-mode payload 形式に統合 (「§入力 (stdin JSON)」と「--emit-payload output」を 1 つの payload 契約に集約) |
+| tests | prompt-builder の byte-pin (#140 の単一 item レイアウト regression guard 含む) を更新。e2e fake を stdin 読みに (triage `#273` で実績あり) |
+
+### 検証の限界
+
+モデルが **stdin 経由**で渡された `<untrusted_item>` を確実に untrusted data として扱うかは、実 agent CLI なしには完全検証できない (LLM の素直さ依存、prompt-injection.md レイヤー 1 の「過信禁物」前提は不変)。ただし host-agent モード (ADR-0019) と triage (`#273`) が既に同形式を採用しており前例がある。e2e fake では「stdin への配送 + `<untrusted_item>` マーカーの存在」までは機械検証できる。
+
+### 関連 (本改訂)
+
+- `#270` (triage E2BIG、stdin 移送で修正済み `#273`) / `#272` (本改訂の実装 sub-issue)
+- [ADR-0019 Host-agent Execution Mode](./0019-host-agent-execution-mode.md) (payload 形式の出所、本改訂で spawn 経路と統一)
+- [ADR-0001 Agent Adapter Interface](./0001-agent-adapter-interface.md) (adapter ↔ SKILL の stdin 契約)
+
 ## Consequences
 
 ### 良い面
