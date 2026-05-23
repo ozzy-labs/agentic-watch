@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SourceJsOptionsSchema, SourceSchema } from "../../src/schemas/source.js";
+import {
+  SourceJsOptionsSchema,
+  SourceSchema,
+  SourceTriagePolicySchema,
+} from "../../src/schemas/source.js";
 
 describe("schemas/source - trustLevel (ADR-0009 M4)", () => {
   it("defaults trustLevel to 'untrusted' when the field is omitted", () => {
@@ -381,6 +385,100 @@ describe("schemas/source - facets (ADR-0017)", () => {
           param: "category",
           template: "{}",
         },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("schemas/source - SourceTriagePolicySchema (ADR-0018 §W3)", () => {
+  const MIN_POLICY = {
+    agent: "gemini-cli" as const,
+    rules: "AWS service GA → research. リージョン拡張 → dismiss.",
+  };
+
+  it("parses a minimal policy and defaults confidenceThreshold to 0.7", () => {
+    // 0.7 is the ADR-0018-recommended cheap-model threshold; the default
+    // belongs to the schema so unspecified policies do not silently degrade
+    // to "every decision sticks regardless of confidence" (= threshold 0).
+    const result = SourceTriagePolicySchema.parse(MIN_POLICY);
+    expect(result.agent).toBe("gemini-cli");
+    expect(result.confidenceThreshold).toBe(0.7);
+    expect(result.rules).toContain("research");
+  });
+
+  it("accepts every AgentIdSchema value", () => {
+    for (const agent of ["claude-code", "codex-cli", "gemini-cli", "copilot"] as const) {
+      const result = SourceTriagePolicySchema.safeParse({ ...MIN_POLICY, agent });
+      expect(result.success, `agent=${agent} should parse`).toBe(true);
+    }
+  });
+
+  it("accepts explicit confidenceThreshold in [0, 1]", () => {
+    const low = SourceTriagePolicySchema.parse({ ...MIN_POLICY, confidenceThreshold: 0 });
+    expect(low.confidenceThreshold).toBe(0);
+    const high = SourceTriagePolicySchema.parse({ ...MIN_POLICY, confidenceThreshold: 1 });
+    expect(high.confidenceThreshold).toBe(1);
+  });
+
+  it("rejects confidenceThreshold outside [0, 1]", () => {
+    expect(
+      SourceTriagePolicySchema.safeParse({ ...MIN_POLICY, confidenceThreshold: -0.1 }).success,
+    ).toBe(false);
+    expect(
+      SourceTriagePolicySchema.safeParse({ ...MIN_POLICY, confidenceThreshold: 1.1 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects empty rules (= no signal for the triage agent)", () => {
+    // An empty policy would let the agent free-associate, defeating the
+    // whole per-source SSoT decision (ADR-0018 §W3). Better to fail fast at
+    // schema parse than ship a no-op policy to production.
+    const result = SourceTriagePolicySchema.safeParse({ ...MIN_POLICY, rules: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown agent value", () => {
+    const result = SourceTriagePolicySchema.safeParse({ ...MIN_POLICY, agent: "ollama" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("schemas/source - triagePolicy field on SourceSchema (ADR-0018)", () => {
+  it("makes triagePolicy optional (existing source YAMLs validate unchanged)", () => {
+    // Sources written before ADR-0018 omit `triagePolicy:` entirely. The
+    // schema must accept that shape so the new field is truly additive.
+    const result = SourceSchema.parse({
+      id: "anthropic-news",
+      kind: "rss",
+      url: "https://anthropic.com/news/rss.xml",
+    });
+    expect(result.triagePolicy).toBeUndefined();
+  });
+
+  it("accepts a SourceSchema with an explicit triagePolicy", () => {
+    const result = SourceSchema.parse({
+      id: "aws-whats-new",
+      kind: "rss",
+      url: "https://aws.amazon.com/about-aws/whats-new/recent/feed/",
+      triagePolicy: {
+        agent: "gemini-cli",
+        confidenceThreshold: 0.8,
+        rules: "新サービス GA は research。リージョン拡張は dismiss。",
+      },
+    });
+    expect(result.triagePolicy?.agent).toBe("gemini-cli");
+    expect(result.triagePolicy?.confidenceThreshold).toBe(0.8);
+  });
+
+  it("rejects a SourceSchema with a malformed triagePolicy (= surfaces config error early)", () => {
+    const result = SourceSchema.safeParse({
+      id: "aws-whats-new",
+      kind: "rss",
+      url: "https://aws.amazon.com/about-aws/whats-new/recent/feed/",
+      triagePolicy: {
+        agent: "gemini-cli",
+        rules: "", // empty
       },
     });
     expect(result.success).toBe(false);

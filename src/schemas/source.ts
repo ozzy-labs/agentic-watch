@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentIdSchema } from "./research.js";
 
 export const SourceKindSchema = z.enum([
   "rss",
@@ -41,6 +42,35 @@ export type MatchField = z.infer<typeof MatchFieldSchema>;
  */
 export const TrustLevelSchema = z.enum(["trusted", "untrusted"]);
 export type TrustLevel = z.infer<typeof TrustLevelSchema>;
+
+/**
+ * Per-source triage policy (ADR-0018 §W3).
+ *
+ * Drives `radar triage` for items emitted from this source. Optional on
+ * `SourceSchema`: existing source YAMLs (which omit `triagePolicy:` entirely)
+ * remain valid and `radar triage` simply skips them.
+ *
+ * - `agent`: which adapter runs the triage call. Reuses `AgentIdSchema` so
+ *   the same enum gates both research and triage agents (a workspace can
+ *   only triage with an adapter it has wired up). The adapter is free to
+ *   route the triage channel to a cheaper model than the research channel
+ *   (e.g. `gemini-2.5-flash-lite` vs `gemini-2.5-pro`), but that mapping is
+ *   adapter-internal and not schema-modeled here.
+ * - `confidenceThreshold`: minimum confidence for a non-`unsure` decision to
+ *   stick. Decisions below the threshold are demoted to `unsure` regardless
+ *   of what the agent returned. Default `0.7` reflects ADR-0018's
+ *   recommendation for cheap-model triage.
+ * - `rules`: free-form markdown describing how this source should be
+ *   classified ("AWS GA は research、リージョン拡張は dismiss" 等). Wrapped
+ *   in a `<policy>` boundary marker at prompt time per ADR-0018 §W-A; never
+ *   parsed by the schema beyond non-empty.
+ */
+export const SourceTriagePolicySchema = z.object({
+  agent: AgentIdSchema,
+  confidenceThreshold: z.number().min(0).max(1).default(0.7),
+  rules: z.string().min(1),
+});
+export type SourceTriagePolicy = z.infer<typeof SourceTriagePolicySchema>;
 
 export const SourceFiltersSchema = z.object({
   keywords: z.array(z.string()).default([]),
@@ -392,6 +422,12 @@ export const SourceSchema = z
     // this is schema-only; policy branches that read `trustLevel` arrive in a
     // separate sub-issue.
     trustLevel: TrustLevelSchema.default("untrusted"),
+    // `triagePolicy` is the per-source triage configuration introduced by
+    // ADR-0018. Optional: existing source YAMLs without the block remain
+    // valid and `radar triage` (PR-3) skips sources missing a policy. PR-1
+    // is schema-only — the adapter (PR-2) and CLI (PR-3) consume this in
+    // later PRs.
+    triagePolicy: SourceTriagePolicySchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (value.kind !== "npm-registry" && !isValidHttpUrl(value.url)) {
