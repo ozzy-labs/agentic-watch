@@ -307,6 +307,48 @@ describe("schemas/source - facets (ADR-0017)", () => {
     expect(result.facets?.year?.type).toBe("range");
   });
 
+  it("accepts a range facet with a `current-year` sentinel upper bound (#257)", () => {
+    // The end element may be the literal "current-year" instead of a number;
+    // the adapter resolves it to the current calendar year at fetch time so
+    // year-axis recipes do not silently drop new items at year boundaries.
+    const result = SourceSchema.parse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    expect(result.facets?.year?.type).toBe("range");
+    const year = result.facets?.year;
+    if (year?.type === "range") {
+      expect(year.range[1]).toBe("current-year");
+    }
+  });
+
+  it("rejects a range facet with an unknown sentinel upper bound", () => {
+    // Only the exact "current-year" sentinel is accepted; arbitrary strings
+    // (e.g. typos like "current_year") must fail-fast at parse time rather
+    // than silently being treated as 0 items.
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, "current_year"],
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("accepts a valid enum facet", () => {
     const result = SourceSchema.parse({
       ...baseJsonApi,

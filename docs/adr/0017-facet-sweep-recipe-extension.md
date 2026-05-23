@@ -90,8 +90,10 @@ facets:
 
 | field | type | 説明 |
 |---|---|---|
-| `range` | `[number, number]` | inclusive な start / end |
+| `range` | `[number, number \| "current-year"]` | inclusive な start / end。end は数値 or `current-year` sentinel ([#257](https://github.com/ozzy-labs/feedradar/issues/257) follow-up) |
 | `step` | `number` (default 1) | 正の整数 |
+
+> **Follow-up ([#257](https://github.com/ozzy-labs/feedradar/issues/257)):** range の上端を数値ハードコードにすると、年 (時刻) 軸 facet が年境界で新着をサイレントに取りこぼす (例: 2027 年に `…#year#2027` を一度もクエリしない)。上端に `current-year` sentinel を許容し、fetch 時 (`generateFacetValues`) に現在のカレンダー年へ解決することで、手動 bump 不要で範囲が wall-clock に追随する。既存の数値タプルは後方互換でそのまま動作する。
 
 #### `type: enum` 固有
 

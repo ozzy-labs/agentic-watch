@@ -59,10 +59,16 @@ pagination:
 # the AWS-side limit. Range covers 2004 (AWS's first announcement year)
 # through the current year; out-of-range years simply return 0 items and
 # the inner loop terminates immediately.
+#
+# The upper bound uses the `current-year` sentinel (#257) so the swept range
+# auto-extends at the year boundary. A hardcoded number here would silently
+# stop querying `…#year#<next-year>` once the new year arrived, dropping every
+# new announcement with no error. The sentinel resolves to the current
+# calendar year at fetch time, so no manual bump is needed.
 facets:
   year:
     type: range
-    range: [2004, 2026]
+    range: [2004, current-year]
     step: 1
     param: tags.id
     template: "whats-new-v2#year#{}"

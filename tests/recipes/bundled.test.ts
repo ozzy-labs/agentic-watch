@@ -164,6 +164,14 @@ describe("bundled recipes :: documented bundle (Phase 1 set)", () => {
     // rejected otherwise, but pin the contract here too).
     expect(year?.template).toContain("{}");
     expect(year?.param).toBe("tags.id");
+    // The upper bound uses the `current-year` sentinel (#257) so the swept
+    // range auto-extends at the year boundary instead of silently capping at
+    // a hardcoded year. Pinning this guards against an accidental revert to a
+    // numeric literal that would re-introduce the silent drop.
+    if (year?.type === "range") {
+      expect(year.range[0]).toBe(2004);
+      expect(year.range[1]).toBe("current-year");
+    }
   });
 
   it("dev-to relies on the default selector chain (no jsonSelectors block)", async () => {
