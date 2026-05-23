@@ -83,6 +83,7 @@ radar research <item-id> --agent claude-code
 - **`templates/default.md`** と **`templates/digest.md`** を bundled からコピー。`default.md` は単体 research の fallback 構造 (要約 / 詳細 / 出典) を、`digest.md` は digest research の構造 (各 item の要点 / 共通テーマ / 差分・対立点 / 推奨アクション / 出典、[ADR-0011](./adr/0011-digest-research-output.md)) を持つ Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
 - **`FEEDRADAR.md`** (workspace root) を bundled からコピー。**人間向け** の workspace ガイドで、AI エージェントへの自然言語指示や slash command による使い方を主、CLI 直叩きを副として説明する。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) とは別レイヤー。`--no-feedradar-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
+- **アップグレード時の注意:** engine SKILL (`.agents/skills/{research,review,update}/SKILL.md`) は adapter との間で **stdin payload 契約**を共有する。feedradar 本体を更新して契約が変わった場合（例: [#272](https://github.com/ozzy-labs/feedradar/issues/272) で agent への入力を argv → stdin payload block に移行）、workspace の SKILL は `init` の既存ファイル保護で**自動更新されない**。更新後は `radar init --force` で `.agents/skills/` を再同期すること（編集を加えている場合は事前に `git diff` で差分確認）
 
 #### AGENTS.md について
 
