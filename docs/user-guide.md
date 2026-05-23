@@ -1266,7 +1266,175 @@ radar research --batch --agent codex-cli
 - item が見つからない場合は exit code `1` で user-friendly なエラーを返す
 - agent を起動しないため、tokens は消費しない
 
-復元 (`undismiss`) や 1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
+復元は [`radar undismiss <item-id>`](#radar-undismiss-item-id---force) で行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。1 source 全件 dismiss (`--source <id>`) は現状未対応（要望次第で別 issue）。
+
+### `radar undismiss <item-id> [--force]`
+
+`dismissed → detected` の **逆遷移** を行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。dismiss の出所に応じて挙動が変わる:
+
+| `dismissedBy` | 挙動 |
+|---|---|
+| `triage_<agent>` | 警告なしで `detected` に復帰（`--force` 不要） |
+| `human` | 警告 + `--force` 必須（誤って AI が人間判断を上書きしないためのセーフティ） |
+| `undefined`（legacy item） | `human` 扱い（より安全なデフォルト） |
+
+挙動の要点:
+
+- 復帰時に `dismissedBy` フィールドは削除される（次回の lifecycle はクリーンに開始）
+- `status` が `dismissed` 以外の item を渡すとエラー（undismiss は dismiss の逆遷移のみ）
+- agent を起動しないため、tokens は消費しない
+
+`dismiss` の逆操作。triage 由来の誤判定を取り消す場合に使う:
+
+```bash
+radar undismiss region-expansion         # triage_claude-code 由来 → 静かに復帰
+radar undismiss sdk-bump --force         # human 由来 → 警告 + 復帰
+```
+
+### `radar triage [--dry-run | --apply | --interactive]`
+
+LLM-based triage 機能（[ADR-0018](./adr/0018-triage-extension.md)）。`detected` 状態の item を per-source `triagePolicy` に基づき 4 つの decision (`research` / `digest` / `dismiss` / `unsure`) に自動分類する。cheap-model channel（`gemini-2.5-flash-lite` / `claude-haiku` 等）を triage 専用 agent として使うことを推奨する。
+
+#### モード
+
+| Flag | 動作 |
+|---|---|
+| `--dry-run`（既定） | 判定結果を stdout に表示、items 未変更 |
+| `--apply` | 判定を `items/<id>.yaml` に書き込み、`status` を `triaged_*` / `dismissed` に遷移 |
+| `--interactive` | `--dry-run` 出力を `$EDITOR` で開き、確認 prompt → apply |
+
+#### オプション
+
+| Option | 説明 |
+|---|---|
+| `--source <id>` | source 絞り込み（省略時は全 source） |
+| `--filter-tags <a,b>` | `matchedKeywords` allow-list（カンマ区切り） |
+| `--triage-agent <id>` | `policy.agent` を上書き（`claude-code` / `codex-cli` / `gemini-cli` / `copilot`） |
+| `--policy <path>` | per-source policy を file override（1-shot） |
+| `--max-items N` | 1 回の run で triage する item 数の hard cap |
+| `--audit-log <path>` | triage 呼び出しごとに request / response / decisions を JSONL で append（[ADR-0018 §W-E-3](./adr/0018-triage-extension.md)） |
+| `--verbose` / `--quiet` | progress reporter のレベル（[ADR-0015](./adr/0015-progress-reporting-ux.md)） |
+
+#### 使用例 (triage)
+
+```bash
+# 全 source を dry-run（既定）
+radar triage
+
+# 1 source だけ apply
+radar triage --apply --source aws-whats-new
+
+# matchedKeywords が "Amazon Quick" を含む item だけ
+radar triage --dry-run --source aws-whats-new --filter-tags "Amazon Quick"
+
+# cheap-model（gemini-flash-lite）に上書きして apply
+radar triage --apply --triage-agent gemini-cli
+
+# 自前 policy YAML で 1-shot 試行
+radar triage --dry-run --policy ./tmp-policy.yaml --source aws-whats-new
+```
+
+#### status 遷移
+
+triage の各 decision は `items/<id>.yaml > status` を次のように遷移させる:
+
+| `decision` | `status` 遷移 | 補足 |
+|---|---|---|
+| `research` | `detected → triaged_research` | `radar research <item-id>` で `researched` に進む |
+| `digest` | `detected → triaged_digest` | `triage.group: "<slug>"` を保持。`radar research --digest --triage-group <slug>` で集約 |
+| `dismiss` | `detected → dismissed` | `dismissedBy: triage_<agent>` を stamp。`radar undismiss <item-id>` で取り消し可（`--force` 不要） |
+| `unsure` | `detected → triaged_unsure` | confidence threshold 未達。人間判断で `research` / `dismiss` に進む |
+
+#### `triagePolicy:` schema
+
+sources/&lt;id&gt;.yaml に以下のブロックを追加する:
+
+```yaml
+triagePolicy:
+  agent: claude-code              # AgentIdSchema (claude-code | codex-cli | gemini-cli | copilot)
+  confidenceThreshold: 0.7        # 0.0 〜 1.0、既定 0.7
+  rules: |                         # 自由記述（Markdown 推奨）。<policy> boundary marker で囲まれる
+    AWS の新サービス GA・価格改定・リブランドは research。
+    リージョン拡張・SDK minor bump・ドキュメント表記修正は dismiss。
+    UI 改修は digest（group: ui-features）。
+    判断に迷うものは unsure。
+```
+
+各フィールド:
+
+| Field | Type | 既定値 | 説明 |
+|---|---|---|---|
+| `agent` | `AgentId` enum | — | triage 呼び出しに使う agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) |
+| `confidenceThreshold` | `number` (0-1) | `0.7` | 非 `unsure` decision を採用する最低信頼度。下回ると `unsure` に降格 |
+| `rules` | `string` | — | 分類軸の自由記述。`<policy>` boundary marker で wrap される（[ADR-0018 §W-A](./adr/0018-triage-extension.md)） |
+
+source YAML に `triagePolicy:` が存在しない場合、`radar triage` はその source を **silently skip**（warn を表示）する。policy なしの source は triage 対象外。bundled recipe に `triagePolicy:` を含めて配布することも可能（[ADR-0018 §W3](./adr/0018-triage-extension.md)）。
+
+#### 失敗時の挙動
+
+- **rate-limited（429 / 503）**: 指数バックオフで最大 3 回 retry（[ADR-0018 §W-E-2](./adr/0018-triage-extension.md)）。それでも失敗した場合は対象 item を `triaged_unsure` に降格し、`reason: "rate-limited"` を stamp
+- **agent CLI down**: 全 item を `triaged_unsure` (`reason: "agent CLI failure"`) に降格、`fallback: true`
+- **response parse failure**: 全 item を `triaged_unsure` (`reason: "response parse failure"`) に降格、`fallback: true`
+
+いずれの場合も次回 run で再実行できる（`triaged_unsure` の item を改めて triage / 人間判断する）。
+
+### `radar triage feedback <item-id> --correct | --wrong [--reason "<text>"]`
+
+事後に triage 判定の正誤を human が記録する（[ADR-0018](./adr/0018-triage-extension.md) §W5）。`items/<id>.yaml > triage.feedback` に書き込まれ、`radar triage stats`（[#242](https://github.com/ozzy-labs/feedradar/issues/242)）で policy tuning の根拠として集計される。
+
+| Option | 説明 |
+|---|---|
+| `--correct` | triage 判定が正しかった |
+| `--wrong` | triage 判定が間違っていた（`--reason` 推奨） |
+| `--reason "<text>"` | 任意の理由テキスト |
+
+書き込み semantic は **overwrite**: 既存の feedback を上書きする（人間の「現在の verdict」を 1 つ保持する設計）。schema 上は array なので、将来 multi-reviewer CLI に拡張する余地は残っている。
+
+```bash
+radar triage feedback region-expansion --wrong --reason "actually important"
+```
+
+事前に triage 判定が存在しない item に対してはエラー（`triage:` フィールドがない）。
+
+### `radar items list [filters] [output options]`
+
+`items/<sourceId>/*.yaml` を読み込み、フィルタ条件にマッチする item を一覧表示する。
+
+#### Filters
+
+| Option | 説明 |
+|---|---|
+| `--status <status>` | `detected` / `triaged_research` / `triaged_digest` / `triaged_unsure` / `researched` / `reviewed` / `dismissed` のいずれか（exact match） |
+| `--source <id>` | source 絞り込み |
+| `--triage-group <name>` | `triage.group == <name>` の item（digest workflow 用） |
+| `--since <duration>` | `Ns` / `Nm` / `Nh` / `Nd` 形式（例 `7d`）。`publishedAt ?? fetchedAt` の cutoff |
+| `--limit N` | 結果件数の cap |
+
+#### Output options
+
+| Option | 説明 |
+|---|---|
+| 既定 | 固定幅テーブル（ID / STATUS / SOURCE / PUBLISHED / MATCHED / TRIAGE） |
+| `--json` | JSON 配列（pretty-printed）。pipe して `jq` で加工しやすい |
+| `--field <expr>` | item の 1 フィールドを 1 行ずつ出力（nested dot path 可、例 `triage.decision`） |
+
+#### 使用例 (items list)
+
+```bash
+# triage 後の人間判断待ち
+radar items list --status triaged_unsure
+
+# digest workflow の入力候補
+radar items list --triage-group quick-ui-features --json
+
+# 直近 7 日の dismiss 状況
+radar items list --status dismissed --since 7d
+
+# id 一覧を取り出して pipe
+radar items list --status triaged_research --field id
+```
+
+並び順は `publishedAt desc`（`fetchedAt` fallback、`id` tie-breaker）。`--limit` はソート後に適用される。
 
 ### `radar review <research-id> [--agent <agent-id>] [--template <id>]`
 

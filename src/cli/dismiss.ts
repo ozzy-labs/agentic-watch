@@ -48,6 +48,8 @@ function printHelp(log: (m: string) => void): void {
   log("");
   log("Transitions the item's status from `detected` to `dismissed` (ADR-0008).");
   log("Items already in `researched`, `reviewed`, or `dismissed` cannot be dismissed.");
+  log("");
+  log("Inverse: `radar undismiss <item-id> [--force]` (ADR-0018 §W6).");
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -87,7 +89,8 @@ async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | n
  *   1. Parse + validate args.
  *   2. Locate `items/<sourceId>/<item-id>.yaml`.
  *   3. Reject if the item is not in `detected` (terminal/researched states
- *      cannot be dismissed; there is no `undismiss`).
+ *      cannot be dismissed; `dismissed` itself is reversed via `radar
+ *      undismiss` — ADR-0018 §W6).
  *   4. Write back with `status: dismissed`.
  */
 export async function runDismiss(

@@ -4,9 +4,12 @@ import { fileURLToPath } from "node:url";
 import { dismissCommand } from "./dismiss.js";
 import { doctorCommand } from "./doctor.js";
 import { initCommand } from "./init.js";
+import { itemsCommand } from "./items.js";
 import { researchCommand } from "./research.js";
 import { reviewCommand } from "./review.js";
 import { sourceCommand } from "./source.js";
+import { triageCommand } from "./triage.js";
+import { undismissCommand } from "./undismiss.js";
 import { updateCommand } from "./update.js";
 import { watchCommand } from "./watch.js";
 import { workflowCommand } from "./workflow.js";
@@ -22,7 +25,10 @@ const commands: Command[] = [
   sourceCommand,
   watchCommand,
   researchCommand,
+  triageCommand,
   dismissCommand,
+  undismissCommand,
+  itemsCommand,
   reviewCommand,
   updateCommand,
   doctorCommand,
@@ -44,7 +50,7 @@ function printHelp(): void {
   console.log("");
   console.log("Commands:");
   for (const c of commands) {
-    console.log(`  ${c.name.padEnd(10)} ${c.summary}`);
+    console.log(`  ${c.name.padEnd(12)} ${c.summary}`);
   }
   console.log("");
   console.log("Options:");
