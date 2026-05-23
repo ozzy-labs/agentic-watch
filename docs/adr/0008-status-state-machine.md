@@ -94,3 +94,15 @@ session で言及した `triaged` は**明示状態として持たない**。理
 - 実装: [`src/schemas/item.ts`](../../src/schemas/item.ts) の `status` フィールド（Phase 1）
 - 詳細仕様: [`docs/design/skill-design.md`](../design/skill-design.md) §1 / §7 / §8（`research` / `review` / `update` 各 skill による status 遷移の駆動、`update` の `items.status` 不変ポリシー）
 - architecture.md の「状態遷移（Item）」セクションを本 ADR で正式化
+
+## Update 2026-05-23: ADR-0018 (triage extension) で state 拡張
+
+本 ADR の status set に、scheduled context 向けの triage extension で 3 つの中間状態が追加された:
+
+- `triaged_research` — triage が research-worthy と判定
+- `triaged_digest` — triage が digest 候補と判定（group key 保持）
+- `triaged_unsure` — triage が confidence 不足で判断保留
+
+`triaged_dismiss` は独立 status として追加せず、既存 `dismissed` に `dismissedBy: human | triage_<agent>` sub-field を加えて出所を区別する形に統合された（state 数: 4 → 6）。詳細・trade-off は [ADR-0018](./0018-triage-extension.md) §Decision W2 / §W-B 参照。
+
+> 本 ADR の Decision 本文は immutable に保ち、上記拡張は ADR-0018 を SSoT とする。
