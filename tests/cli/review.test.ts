@@ -551,4 +551,320 @@ describe("cli/review", () => {
     // Adapter should not have been invoked since the pre-check failed.
     expect(calls).toHaveLength(0);
   });
+
+  describe("batch mode (--batch, #250)", () => {
+    /**
+     * Seed `n` un-reviewed research files paired with linked items in the
+     * given `itemStatus`. Mirrors the structure of `setupWorkspace` but
+     * scaled out so batch mode has something to walk. Each pair carries a
+     * unique source id so `loadItems` partitions them deterministically.
+     */
+    async function setupBatchWorkspace(
+      n: number,
+      itemStatus: Item["status"] = "researched",
+    ): Promise<{
+      workdir: string;
+      pairs: Array<{ researchId: string; itemId: string; sourceId: string }>;
+    }> {
+      const workdir = await mkdtemp(join(tmpdir(), "feedradar-review-batch-"));
+      const pairs: Array<{ researchId: string; itemId: string; sourceId: string }> = [];
+      for (let i = 0; i < n; i++) {
+        const sourceId = `src-${i}`;
+        const itemId = `item-${i}-${"a".repeat(8)}`;
+        const researchId = `2026051${i}_src-${i}-claude_v1`;
+        const createdAt = `2026-05-1${i}T00:00:00.000Z`;
+        const item: Item = ItemSchema.parse({
+          id: itemId,
+          sourceId,
+          title: `Item ${i}`,
+          url: `https://example.com/${i}`,
+          publishedAt: createdAt,
+          fetchedAt: createdAt,
+          matchedKeywords: ["claude-code", `tag-${i}`],
+          status: itemStatus,
+        });
+        await mkdir(join(workdir, "items", sourceId), { recursive: true });
+        await writeFile(
+          join(workdir, "items", sourceId, `${itemId}.yaml`),
+          stringifyYaml(item),
+          "utf8",
+        );
+        await mkdir(join(workdir, "research"), { recursive: true });
+        const fm: ResearchFrontmatter = {
+          id: researchId,
+          itemIds: [itemId],
+          agent: "claude-code",
+          templateId: "default",
+          createdAt,
+          updatedAt: null,
+          reviewedAt: null,
+          reviewedBy: null,
+        };
+        await writeFile(
+          join(workdir, "research", `${researchId}.md`),
+          buildResearchFileContent(fm),
+          "utf8",
+        );
+        pairs.push({ researchId, itemId, sourceId });
+      }
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      return { workdir, pairs };
+    }
+
+    it("walks researched items and transitions them to reviewed (#250)", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(3);
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch", "--status", "researched"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(3);
+      // Each linked item transitioned researched → reviewed (ADR-0008).
+      for (const { itemId, sourceId } of pairs) {
+        const raw = await readFile(join(workdir, "items", sourceId, `${itemId}.yaml`), "utf8");
+        expect(parseYaml(raw).status).toBe("reviewed");
+      }
+      // Batch summary surfaces.
+      expect(captured.log.some((m) => m.includes("--batch will process 3"))).toBe(true);
+      expect(captured.log.some((m) => m.includes("--batch completed 3"))).toBe(true);
+    });
+
+    it("defaults --status to researched", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(1);
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runReview(["--batch"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(1);
+      const raw = await readFile(
+        join(workdir, "items", pairs[0].sourceId, `${pairs[0].itemId}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(raw).status).toBe("reviewed");
+    });
+
+    it("rejects --status values other than researched", async () => {
+      const { workdir } = await setupBatchWorkspace(1);
+      for (const bogus of ["detected", "reviewed", "dismissed", "triaged_research"]) {
+        const { io, captured } = captureIo();
+        const code = await runReview(["--batch", "--status", bogus], { cwd: workdir, io });
+        expect(code, `--status ${bogus} should be rejected`).toBe(2);
+        expect(
+          captured.error.some((m) => m.includes("invalid --status") && m.includes(bogus)),
+        ).toBe(true);
+      }
+    });
+
+    it("respects --max-items cap and announces dropped excess", async () => {
+      const { workdir } = await setupBatchWorkspace(5);
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch", "--max-items", "2"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(2);
+      expect(
+        captured.warn.some(
+          (m) => m.includes("--max-items 2 cap reached") && m.includes("dropping 3"),
+        ),
+      ).toBe(true);
+    });
+
+    it("filters by --filter-tags against linked items' matchedKeywords", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(3);
+      // Override item 1 to drop the shared `claude-code` tag.
+      const rewritten: Item = ItemSchema.parse({
+        id: pairs[1].itemId,
+        sourceId: pairs[1].sourceId,
+        title: `Item 1`,
+        url: `https://example.com/1`,
+        publishedAt: "2026-05-11T00:00:00.000Z",
+        fetchedAt: "2026-05-11T00:00:00.000Z",
+        matchedKeywords: ["other-topic"],
+        status: "researched",
+      });
+      await writeFile(
+        join(workdir, "items", pairs[1].sourceId, `${pairs[1].itemId}.yaml`),
+        stringifyYaml(rewritten),
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runReview(["--batch", "--filter-tags", "claude-code"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(0);
+      // Only pairs[0] and pairs[2] match the filter.
+      expect(calls).toHaveLength(2);
+    });
+
+    it("skips research files whose linked items are not in --status researched", async () => {
+      // 2 researched pairs, plus 1 pair stuck at detected. The latter must
+      // be skipped (would otherwise trip the single-review path's status
+      // check after the agent had already run).
+      const { workdir, pairs } = await setupBatchWorkspace(2);
+      const stuckSource = "src-stuck";
+      const stuckItem = "stuck-item-aaaaaaaa";
+      const stuckResearch = "20260520_stuck_v1";
+      await mkdir(join(workdir, "items", stuckSource), { recursive: true });
+      await writeFile(
+        join(workdir, "items", stuckSource, `${stuckItem}.yaml`),
+        stringifyYaml(
+          ItemSchema.parse({
+            id: stuckItem,
+            sourceId: stuckSource,
+            title: "Stuck",
+            url: "https://example.com/stuck",
+            publishedAt: "2026-05-20T00:00:00.000Z",
+            fetchedAt: "2026-05-20T00:00:00.000Z",
+            matchedKeywords: ["x"],
+            status: "detected",
+          }),
+        ),
+        "utf8",
+      );
+      const stuckFm: ResearchFrontmatter = {
+        id: stuckResearch,
+        itemIds: [stuckItem],
+        agent: "claude-code",
+        templateId: "default",
+        createdAt: "2026-05-20T00:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      };
+      await writeFile(
+        join(workdir, "research", `${stuckResearch}.md`),
+        buildResearchFileContent(stuckFm),
+        "utf8",
+      );
+
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runReview(["--batch", "--status", "researched"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      // Only the 2 properly-researched pairs were reviewed; the stuck one
+      // stayed untouched.
+      expect(calls).toHaveLength(2);
+      for (const { itemId, sourceId } of pairs) {
+        const raw = await readFile(join(workdir, "items", sourceId, `${itemId}.yaml`), "utf8");
+        expect(parseYaml(raw).status).toBe("reviewed");
+      }
+      const stuckRaw = await readFile(
+        join(workdir, "items", stuckSource, `${stuckItem}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(stuckRaw).status).toBe("detected");
+    });
+
+    it("skips already-reviewed research files (idempotent)", async () => {
+      const { workdir } = await setupBatchWorkspace(2);
+      // Stamp one research file as already reviewed.
+      const reviewedFm: ResearchFrontmatter = {
+        id: "20260510_src-0-claude_v1",
+        itemIds: ["item-0-aaaaaaaa"],
+        agent: "claude-code",
+        templateId: "default",
+        createdAt: "2026-05-10T00:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: "2026-05-11T00:00:00.000Z",
+        reviewedBy: "claude-code",
+      };
+      await writeFile(
+        join(workdir, "research", "20260510_src-0-claude_v1.md"),
+        buildResearchFileContent(reviewedFm),
+        "utf8",
+      );
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+      const { io } = captureIo();
+      const code = await runReview(["--batch"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      // Only the un-reviewed pair was processed.
+      expect(calls).toHaveLength(1);
+    });
+
+    it("emits a no-match log when zero research files satisfy the filter", async () => {
+      const { workdir } = await setupBatchWorkspace(2);
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch", "--filter-tags", "nonexistent-tag"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(0);
+      expect(
+        captured.log.some((m) => m.includes("--batch matched 0") && m.includes("nonexistent-tag")),
+      ).toBe(true);
+    });
+
+    it("rejects --batch combined with positional <research-id>", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(1);
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch", pairs[0].researchId], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with positional"))).toBe(true);
+    });
+
+    it("rejects --status / --max-items / --filter-tags outside of --batch", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(1);
+      for (const [flags, expectedSub] of [
+        [["--status", "researched"], "--status requires --batch"],
+        [["--max-items", "2"], "--max-items requires --batch"],
+        [["--filter-tags", "a"], "--filter-tags requires --batch"],
+      ] as const) {
+        const { io, captured } = captureIo();
+        const code = await runReview([pairs[0].researchId, ...flags], { cwd: workdir, io });
+        expect(code, `${flags.join(" ")} should be rejected`).toBe(2);
+        expect(captured.error.some((m) => m.includes(expectedSub))).toBe(true);
+      }
+    });
+
+    it("halts the batch when an inner review invocation fails", async () => {
+      const { workdir, pairs } = await setupBatchWorkspace(3);
+      let invocations = 0;
+      const { adapter } = buildMockAdapter({
+        writer: async (req) => {
+          invocations += 1;
+          if (invocations === 2) {
+            throw new Error("simulated adapter crash on the 2nd item");
+          }
+          await wellBehavedWriter()(req);
+        },
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch"], { cwd: workdir, io });
+      expect(code).toBe(1);
+      // First call succeeded; second crashed (rolled back to researched);
+      // third never reached.
+      expect(invocations).toBe(2);
+      expect(captured.error.some((m) => m.includes("--batch halted on research"))).toBe(true);
+      // First pair already transitioned to reviewed before the crash; the
+      // crashed pair stayed researched per the single-review rollback path.
+      const first = await readFile(
+        join(workdir, "items", pairs[0].sourceId, `${pairs[0].itemId}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(first).status).toBe("reviewed");
+      const second = await readFile(
+        join(workdir, "items", pairs[1].sourceId, `${pairs[1].itemId}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(second).status).toBe("researched");
+    });
+  });
 });
