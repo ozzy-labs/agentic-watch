@@ -260,13 +260,22 @@ recipe の `http.headers` で `Authorization: "Bearer ${GITHUB_TOKEN}"` のよ�
 
 既存 M1c (boundary marker `<untrusted_item>...</untrusted_item>`) と M1a (regex pre-filter) でカバーする。JSON body は parse 後に item content として通常経路に乗るため、`kind: json-api` 固有の追加防御は不要。
 
-#### D5e. bundled recipe の `maxPages` cap
+#### D5e. bundled recipe の `maxPages` cap (ADR-0017 で再定義)
 
-bundled recipe (`recipes/*.yaml`) は `tests/recipes/bundled.test.ts` で `pagination.maxPages` の上限を一律キャップする (D5 の defense-in-depth: 万一 malformed な `maxPages: 9999` が混入しても 1 recipe あたりの request 数を予測可能な範囲に抑える)。現状の上限は **250 ページ** (= 25,000 items at `pageSize: 100`)。
+> **2026-05-23 update**: 本サブセクションは [ADR-0017](./0017-facet-sweep-recipe-extension.md) (facet sweep extension) によって context が再定義された。PR [#232](https://github.com/ozzy-labs/feedradar/pull/232) で導入された「cap 250」rationale は、PR [#233](https://github.com/ozzy-labs/feedradar/pull/233) (ADR-0017) で実装された facet sweep + AWS dirs API の絶対 offset cap 発見によって superseded されている。以下は最新の文脈に書き換えた内容。詳細経緯は末尾「Update 2026-05-23 (facet sweep)」を参照。
 
-- **なぜ 250 か**: 最大コンシューマである AWS What's New (`whats-new-v2`, totalHits ~21,834) を完全に backfill しつつ、AWS が観測上 ~2,500 announcements/year で増えるペースに対し約 1 年分のヘッドルームを残す数値 (250 × 100 − 21,834 ≈ 3,166 items)。historic transition: 200 → 250 は issue [#230](https://github.com/ozzy-labs/feedradar/issues/230) で実施 (200 では totalHits 21,834 に対して最古 ~1,800 件が `--backfill` で取りこぼされる問題があった)
-- **fetch 時間の見積もり**: 250 requests × ~45 ms/page ≈ **11 秒**。CI `recipes-smoke` job は page 0 のみ fetch する設計のため、cap 引き上げは smoke の time budget に影響しない (`scripts/recipes-smoke.mjs` は `dryRun: true` で adapter を page 0 に限定する)
-- **拡張ポリシー**: 250 で収まらない site が現れた場合、(1) 一律 cap の更なる引き上げ、(2) per-recipe whitelist 化 (`bundled.test.ts` を override 可能に)、(3) `totalPath` 由来の dynamic cap、のいずれかを別 ADR / issue で再評価する
+bundled recipe (`recipes/*.yaml`) は `tests/recipes/bundled.test.ts` で `pagination.maxPages` の上限を一律キャップする (D5 の defense-in-depth: 万一 malformed な `maxPages: 9999` が混入しても 1 recipe あたりの request 数を予測可能な範囲に抑える)。現状の上限は **100 ページ** (= 10,000 items at `pageSize: 100`、AWS dirs API の絶対 offset cap に一致)。
+
+- **なぜ 100 か**: ADR-0017 D2 で発見した AWS dirs API の絶対 offset cap `(page + 1) × size ≤ 10000` に揃えた数値。経験的に curl で probing したところ、`pageSize` を 100 / 200 / 500 / 1000 と変えても、`(page + 1) × size` が 10,000 を超えた瞬間に items が空配列で返る挙動が確認された (offset cap は API 側で実装された hard limit)。`pageSize: 100` を bundled recipe の標準とする以上、cap = 100 ページが意味のある上限となる。**100 ページを超えて fetch しようとしても API 側で打ち切られるため、それ以上 cap を上げても無意味**。historic transition: 200 → 250 → 100 (200 は PR #229 で `whats-new-v2` 移行時に不足、250 は issue [#230](https://github.com/ozzy-labs/feedradar/issues/230) で引き上げたが実効的に無意味だったことが判明、100 は issue [#234](https://github.com/ozzy-labs/feedradar/issues/234) / ADR-0017 で再定義)
+- **facet sweep recipe vs single-URL recipe**:
+  - **facet sweep を採用する recipe** (例: `aws-whats-new` = year facet で 23 値 × 各 ≤24 ページ): cap は **per-facet inner cap** として機能する。outer の facet sweep 軸 (ADR-0017 D1) は cap の対象外で、facet 値の総数 × inner cap が実効上の最大 request 数となる
+  - **facet sweep を採用しない recipe** (例: `dev-to`): cap は従来通り **単一 URL の page 数上限**として機能する。pagination の `maxPages` を直接律する
+- **fetch 時間の見積もり**: 100 requests × ~45 ms/page ≈ **4.5 秒** (single-URL recipe の場合)。facet sweep recipe は外側に facet 値数の倍率が乗るが、各 facet 値の totalHits が cap より十分小さい設計のため、page 0 dry-run の時間は 1 facet 値分のみで線形には増えない。CI `recipes-smoke` job は page 0 のみ fetch する設計のため、cap の数値変更は smoke の time budget に影響しない (`scripts/recipes-smoke.mjs` は `dryRun: true` で adapter を page 0 に限定する)
+- **拡張ポリシー**: 100 ページ cap で収まらないニーズが現れる典型例は「1 facet 値内で >10,000 件」のシナリオである。この場合の選択肢を別 ADR / issue で再評価する:
+  - (1) より細かい facet 軸の追加 (例: year → month / region / category) で 1 facet 値あたりの件数を 10,000 件未満に下げる
+  - (2) per-recipe whitelist 化 (`bundled.test.ts` を override 可能に)。ただし API 側の絶対 cap (10,000 件 offset) を超えると意味がないため、(1) より優先度は低い
+  - (3) 別 API endpoint / 別 sort_order の組み合わせ (例: `desc` + `asc` で 10,000 × 2 を取得し dedupe する) を recipe schema で表現できるよう拡張する
+  - (4) facet sweep を multi-facet に拡張する (ADR-0017 §Scope の future work)
 
 ### D6. ADR-0009 信頼境界表の更新
 
@@ -448,3 +457,42 @@ ADR 採択直後、bundled `aws-whats-new` recipe で full backfill しても `A
 
 - 公式 JSON endpoint が突然 frozen / 404 になった場合、サイトのレンダリング済み HTML / CSP header / SPA bundle 内の文字列を grep すると **後継 endpoint の identifier (directoryId, GraphQL operation name, REST path) が発掘できる**ことが多い。今回は CSP の `connect-src` 列挙と SPA HTML 内の data-attribute から `whats-new-v2` を再発見した
 - bundled recipe の url は「API endpoint の identifier + クエリ」で構成されており、identifier 部分だけ差し替えれば schema 互換なまま現役 endpoint に追従できるケースがある
+
+## Update 2026-05-23 (facet sweep)
+
+前節で「issue [#230](https://github.com/ozzy-labs/feedradar/issues/230) (PR [#232](https://github.com/ozzy-labs/feedradar/pull/232)) で bundled recipe の cap を 200 → 250 に引き上げ、`whats-new-v2` の totalHits 21,834 が完全に backfill 可能になった」と記録したが、その直後の追加 probing でこの「解消」は **誤った理解だった**ことが判明した。本セクションで補正する。
+
+### 1. AWS dirs API の絶対 offset cap (実測)
+
+PR #232 merge 後、`curl` で endpoint を直接叩いて挙動を再確認したところ、AWS dirs API が `(page + 1) × size ≤ 10000` の **絶対 offset cap** を実装していることが判明した:
+
+| `page` × `size` | レスポンス |
+|---|---|
+| `page=99, size=100` (offset 9,900) | `items: [100件]` (正常) |
+| `page=100, size=100` (offset 10,000) | `items: []` (空) |
+| `page=0, size=500` × `page=20` (offset 10,000) | `items: []` (空) |
+| `page=0, size=1000` × `page=10` (offset 10,000) | `items: []` (空) |
+| `pageSize` を変えても境界は 10,000 で一定 | |
+
+つまり PR #232 で `maxPages: 250` に引き上げても、AWS 側が **page 100 で必ず打ち切る** ため、効果は無かった。`sort_order=desc` / `asc` を両方走らせても 10,000 + 10,000 = 20,000 件にしかならず、中間の ~11 ヶ月分 ~1,834 件 (2021-08-17 から 2022-07-26 付近) は依然取りこぼされる。前節の「→ 解消」は **事実誤認だった**。
+
+### 2. year facet の発見
+
+`https://aws.amazon.com/new/` のレンダリング済み HTML を `grep` すると、front-end SPA が year-filter chip 表示用に持つ `data-facet="whats-new-v2#year"` 属性が見つかる。同じ string format `<directoryId>#year#<YYYY>` を API の `tags.id` クエリパラメタに渡すと、各年の totalHits は 10,000 件の cap を大幅に下回る (最大の 2020 年でも 2,294 件)。年単位で sweep すれば、2004 年〜現在の 21,834 件すべてを欠落なく取得できる。
+
+### 3. ADR-0017 と recipe 移行
+
+facet sweep は AWS 固有の workaround ではなく、archive / news 系の page-based JSON API で広く見込まれる構造的問題のため、[ADR-0017](./0017-facet-sweep-recipe-extension.md) として独立 ADR 化した (PR [#233](https://github.com/ozzy-labs/feedradar/pull/233)):
+
+- `kind: json-api` の source / recipe schema に top-level `facets:` セクションを追加 (`pagination:` とは独立した outer "data slice" 軸)
+- `recipes/aws-whats-new.yaml` を facet sweep に移行: `facets.year` (range `[2004, 2026]`) × `maxPages: 30` (per-facet inner cap; 各年 ≤2,345 件 / 100 件 per page = ≤24 ページに対し約 25% のヘッドルームを残す数値)
+- `tests/recipes/bundled.test.ts` の hard cap を 250 → 100 に引き下げ (facet sweep が標準になった以上、単一 URL recipe で 100 を超える bundled recipe は当面想定しない)
+
+### 4. §D5e の更新
+
+本 ADR §D5e (PR #232 で新設) も「cap 250」rationale が ADR-0017 の文脈に整合しなくなったため、issue [#234](https://github.com/ozzy-labs/feedradar/issues/234) で書き換えた (本 ADR §D5e の見出し直下の `> **2026-05-23 update**` ブロックを参照)。
+
+### 5. 一般化された知見 (追加)
+
+- **API の絶対 cap は totalHits と独立に存在しうる**: PR #232 の `maxPages: 250` のように client 側で hard limit を緩めても、server 側が `(page + 1) × size ≤ 10000` のような cap を実装していると無意味になる。公開ドキュメントには載っていないことが多い (今回も Documentation には記載なし、実測のみで判明)
+- **probing による検証の必要性**: 「totalHits をカバーする数値に cap を上げた」だけでは backfill が成功する保証にならない。recipe 追加 / cap 引き上げの際は、cap 境界付近の page を実際に curl で叩いて空配列が返らないことを確認すべき。`pageSize` を変えた combinations (100 / 500 / 1000 等) も併せて probe すると、サーバ側が page-based ではなく offset-based で cap を実装しているかが判別できる
