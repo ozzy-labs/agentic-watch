@@ -25,6 +25,7 @@ import { loadItems, saveItems } from "../core/items.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
+import { isValidTransition } from "../core/transitions.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import {
@@ -467,34 +468,22 @@ async function processResearchInvocation(params: {
     await writeFile(outputPath, rewritten, "utf8");
   }
 
-  // `detected` (legacy / interactive path), `triaged_research` (triage
-  // promoted a single-item research target, ADR-0018 §W-B), and
-  // `triaged_digest` (triage grouped items for a combined digest report)
-  // are all valid pre-research statuses and transition to `researched` on
-  // success. The state machine in `src/core/transitions.ts` enumerates
-  // exactly these edges into `researched`; mirroring that whitelist here
-  // keeps the CLI in sync with `isValidTransition()` without re-deriving
-  // the rule.
+  // Defer the "which prior statuses can transition into `researched`"
+  // decision to `isValidTransition()` (src/core/transitions.ts). That
+  // module enumerates the ADR-0008 / ADR-0018 state machine edges in one
+  // place; re-deriving the rule here would risk drift the next time the
+  // matrix changes (e.g. a future `triaged_*` status).
   //
-  // The `triaged_digest → researched` transition is exercised by the
-  // `radar research --digest` path that the generated workflow YAML
-  // (PR #249) walks per triage group; without it the digest items would
-  // stay stuck in `triaged_digest` even after a successful digest report
-  // landed on disk (issue #250).
-  //
-  // Items in any other status (already researched, dismissed, terminal
-  // reviewed, etc.) are passed through unchanged — the batch filter
-  // upstream is what enforces input selection; this guard is defense in
-  // depth for the single-item path where a user invokes
+  // Today this resolves to {detected, triaged_research, triaged_digest} →
+  // researched. Items in any other status (already researched, dismissed,
+  // terminal reviewed, etc.) are passed through unchanged: the batch
+  // filter upstream enforces input selection, and this guard is defense
+  // in depth for the single-item path where a user invokes
   // `radar research <item-id>` against an item already past the
   // pre-research stage.
   const transitions = new Map<string, ItemStatus>();
   const updated: Item[] = items.map((item) => {
-    if (
-      item.status === "detected" ||
-      item.status === "triaged_research" ||
-      item.status === "triaged_digest"
-    ) {
+    if (isValidTransition(item.status, "researched")) {
       transitions.set(item.id, item.status);
       return { ...item, status: "researched" as ItemStatus };
     }

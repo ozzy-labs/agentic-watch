@@ -1229,7 +1229,7 @@ radar research --batch --agent codex-cli
 
 | フラグ | 既定 | 説明 |
 |---|---|---|
-| `--status <status>` | `detected` | 対象 item の status (`detected` / `researched` / `reviewed` / `dismissed`)。通常は `detected` のまま使う |
+| `--status <status>` | `detected` | 対象 item の status (`detected` または `triaged_research`)。`detected` は legacy / 手動 path、`triaged_research` は triage adapter が振り分けた item を吸う (ADR-0018 §W-B)。それ以外の値は明示エラーで reject される (#250) |
 | `--max-items N` | `10` | 1 実行で処理する item 数のハードキャップ。N を超える match があると、超過分は **dropped** され warn() に件数が出力される (次回 cron で続きを処理) |
 | `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各 item の `matchedKeywords` と大小無視で照合し、いずれか 1 つでも一致すれば対象。未指定なら全 match item が対象 |
 | `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
@@ -1520,6 +1520,26 @@ rollback 自体が失敗した場合（同じファイルシステム障害が�
 同一 research 版に対する再レビューは拒否する（`reviewedAt != null` を CLI が検知）。レビューが古くなった場合は `radar update` で `_v2.md` を作成してから review し直す。
 
 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが review に対応する。
+
+#### バッチモード `radar review --batch` (#250)
+
+scheduled workflow から呼ばれることを想定したバッチモード。`research/` をスキャンして未 review のレポートを発見し、リンクされた item が `--status` に合致する場合のみ単一 review path に dispatch する。
+
+```bash
+radar review --batch                                           # 既定: status=researched, cap=10
+radar review --batch --status researched --max-items 5
+radar review --batch --filter-tags claude-code,model-context-protocol
+radar review --batch --agent codex-cli                         # cross-agent review (ADR-0001)
+```
+
+| フラグ | 既定 | 説明 |
+|---|---|---|
+| `--status <status>` | `researched` | 受け付ける値は `researched` のみ (ADR-0008 `researched → reviewed`)。それ以外は明示エラーで reject |
+| `--max-items N` | `10` | 1 実行で処理する研究レポート数のハードキャップ。超過分は warn() に件数が出力され、次回 cron で続きを処理 |
+| `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各リンク item の `matchedKeywords` と大小無視で照合 |
+| `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
+
+`radar workflow generate combined-with-triage` (PR #249) が生成する workflow YAML はこのバッチモードを driving しており、`radar research --batch --status triaged_research → radar review --batch --status researched` で 1 cycle が完結する。
 
 #### クロスエージェント運用（推奨）
 
