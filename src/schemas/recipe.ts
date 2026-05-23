@@ -8,6 +8,7 @@ import {
   SourceKindSchema,
   SourcePaginationSchema,
   SourceSelectorsSchema,
+  SourceTriagePolicySchema,
   TrustLevelSchema,
 } from "./source.js";
 
@@ -64,6 +65,15 @@ export const RecipeFileSchema = z.object({
   // without `facets:` keep working unchanged.
   facets: SourceFacetsSchema.optional(),
   trustLevel: TrustLevelSchema.default("untrusted"),
+  /**
+   * Default triage policy bundled with the recipe (ADR-0018 §W3). When
+   * `radar source add --recipe <name>` materializes a source from this
+   * recipe, the policy propagates onto `sources/<id>.yaml > triagePolicy:`
+   * so the user gets a sensible default without authoring rules by hand.
+   * Optional: existing bundled recipes (PR #229 / #232) ship without
+   * `triagePolicy:` and continue to validate.
+   */
+  triagePolicy: SourceTriagePolicySchema.optional(),
 });
 
 export type RecipeFile = z.infer<typeof RecipeFileSchema>;
