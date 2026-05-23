@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.7](https://github.com/ozzy-labs/feedradar/compare/v0.1.6...v0.1.7) (2026-05-23)
+
+
+### Features
+
+* **agents,core:** triage adapter — cheap-model channel + boundary marker (PR-2) ([#247](https://github.com/ozzy-labs/feedradar/issues/247)) ([3a886c2](https://github.com/ozzy-labs/feedradar/commit/3a886c2db520e6084ffe80d0cb24de211ccb195b))
+* **cli,recipes:** workflow generate combined-with-triage + bundled recipe triagePolicy + docs (PR-4 [#241](https://github.com/ozzy-labs/feedradar/issues/241)) ([#249](https://github.com/ozzy-labs/feedradar/issues/249)) ([aeaa17f](https://github.com/ozzy-labs/feedradar/commit/aeaa17ff6d00234098b06e4ff111769d1f0d63f5))
+* **cli:** radar triage / triage feedback / undismiss + items list 拡張 (PR-3) ([#248](https://github.com/ozzy-labs/feedradar/issues/248)) ([df26486](https://github.com/ozzy-labs/feedradar/commit/df26486abb00d710accc8ec82fd87bd7ecc82887))
+* **cli:** radar triage stats + policy tuning workflow guide (closes [#242](https://github.com/ozzy-labs/feedradar/issues/242)) ([#251](https://github.com/ozzy-labs/feedradar/issues/251)) ([8fc8d24](https://github.com/ozzy-labs/feedradar/commit/8fc8d245fd1aa8e4f4e923011d32f66508fcfbe7))
+* **schemas:** triagePolicy / triageDecision schema + 3 new triaged_* statuses ([#245](https://github.com/ozzy-labs/feedradar/issues/245)) ([8b71ce2](https://github.com/ozzy-labs/feedradar/commit/8b71ce2ab029202e7eea4139fb5c5e341805f493))
+
+
+### Bug Fixes
+
+* **cli:** research/review --batch が triaged_* status を入力として受け付ける (closes [#250](https://github.com/ozzy-labs/feedradar/issues/250)) ([#253](https://github.com/ozzy-labs/feedradar/issues/253)) ([c6033ab](https://github.com/ozzy-labs/feedradar/commit/c6033ab265c7b8352d43893b2f054782ce5e0af6))
+
 ## [0.1.6](https://github.com/ozzy-labs/feedradar/compare/v0.1.5...v0.1.6) (2026-05-23)
 
 
