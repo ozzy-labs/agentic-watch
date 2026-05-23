@@ -3,14 +3,17 @@ import { join } from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { renderReviewPayloadBlock } from "../agents/_boundary.js";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
-import type { AgentId, Item } from "../schemas/index.js";
+import { isValidTransition } from "../core/transitions.js";
+import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import { resolveCommitPathInside } from "./_commit-path.js";
 import {
   buildAgentProgressCallback,
   buildReporter,
@@ -68,6 +71,21 @@ interface ReviewArgs {
   status?: string;
   maxItems?: string;
   filterTags?: string;
+  /**
+   * Host-agent mode (#254 / ADR-0019): emit the review payload to stdout
+   * without spawning an agent. The host (interactive) session runs the SKILL
+   * procedure itself (reviews the research file in place), then finalizes via
+   * `--commit`.
+   */
+  emitPayload?: boolean;
+  /**
+   * Host-agent mode (#254 / ADR-0019): finalize an externally-reviewed report.
+   * Holds the path to the research file the host session stamped. The CLI
+   * validates it against `ResearchFrontmatterSchema`, asserts the host stamped
+   * `reviewedAt` / `reviewedBy`, and applies the `researched → reviewed`
+   * transition for the linked items.
+   */
+  commit?: string;
 }
 
 function parseArgs(args: string[]): ReviewArgs {
@@ -100,6 +118,14 @@ function parseArgs(args: string[]): ReviewArgs {
     }
     if (a === "--filter-tags") {
       out.filterTags = args[++i];
+      continue;
+    }
+    if (a === "--emit-payload") {
+      out.emitPayload = true;
+      continue;
+    }
+    if (a === "--commit") {
+      out.commit = args[++i];
       continue;
     }
     if (a?.startsWith("--")) {
@@ -146,6 +172,8 @@ function printHelp(log: (m: string) => void): void {
   log(
     `  radar review --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
   );
+  log("  radar review <research-id> --emit-payload [--agent <id>] [--template <id>]");
+  log("  radar review --commit <path>");
   log("");
   log("Arguments:");
   log("  <research-id>         Research id (basename of research/<id>.md without .md)");
@@ -167,6 +195,17 @@ function printHelp(log: (m: string) => void): void {
   );
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each linked item's matchedKeywords (case-insensitive).");
+  log("  --emit-payload        Host-agent mode (ADR-0019): print the review payload to");
+  log("                        stdout and DO NOT spawn an agent. The interactive host");
+  log("                        session reviews the research file in place itself, then");
+  log("                        finalizes with `radar review --commit <path>`.");
+  log("                        Interactive/opt-in only — CI/headless must use the");
+  log("                        default spawn path.");
+  log("  --commit <path>       Host-agent mode (ADR-0019): validate an externally-");
+  log("                        reviewed report (under <cwd>/research/) against");
+  log("                        ResearchFrontmatterSchema, assert the host stamped");
+  log("                        reviewedAt / reviewedBy, and apply the researched →");
+  log("                        reviewed transition for the linked items.");
   log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
@@ -255,6 +294,126 @@ async function restoreSnapshot(snapshot: AtomicSnapshot): Promise<Error[]> {
     errors.push(e instanceof Error ? e : new Error(String(e)));
   }
   return errors;
+}
+
+/**
+ * Host-agent commit path (#254 / ADR-0019): finalize a research file the host
+ * session reviewed in place (stamped `reviewedAt` / `reviewedBy`, appended a
+ * review block). Independent of agent / template resolution — the report is
+ * self-describing via its `itemIds` frontmatter, which this reverse-looks-up
+ * against `items/`.
+ *
+ * Unlike `research --commit`, the CLI does not write the report here (the host
+ * already did). The CLI's remaining responsibilities are the ones it must keep
+ * owning (ADR-0019): schema validation, asserting the host actually stamped the
+ * review, and the `researched → reviewed` state-machine transition.
+ *
+ * The path is constrained to `<cwd>/research/` first (M3b enforced in code) so
+ * a host misled by injected content into committing an arbitrary path is
+ * rejected at the CLI boundary.
+ */
+async function runReviewCommit(params: {
+  cwd: string;
+  commitPath: string;
+  log: (m: string) => void;
+  error: (m: string) => void;
+  progress: ProgressReporter;
+}): Promise<number> {
+  const { cwd, commitPath, log, error, progress } = params;
+  const guard = await resolveCommitPathInside(cwd, "research", commitPath);
+  if ("error" in guard) {
+    error(`review: ${guard.error}`);
+    return 2;
+  }
+  const researchPath = guard.resolved;
+
+  if (!(await pathExists(researchPath))) {
+    error(`review: research file not found: ${researchPath}`);
+    return 1;
+  }
+  let body: string;
+  try {
+    body = await readFile(researchPath, "utf8");
+  } catch (e) {
+    error(`review: failed to read research file: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  let frontmatter: unknown;
+  try {
+    frontmatter = matter(body, matterOptions).data;
+  } catch (e) {
+    error(`review: failed to parse frontmatter: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  const fmResult = ResearchFrontmatterSchema.safeParse(frontmatter);
+  if (!fmResult.success) {
+    error(`review: research frontmatter does not match ResearchFrontmatterSchema:`);
+    for (const issue of fmResult.error.issues) {
+      error(`  - ${issue.path.join(".") || "<root>"}: ${issue.message}`);
+    }
+    return 1;
+  }
+  const fm = fmResult.data;
+  progress.phase("Frontmatter validated");
+
+  // The host session is responsible for stamping the review (the CLI no longer
+  // spawns an agent in this path). If the stamp is missing the host did not run
+  // the review procedure, so refuse to transition the items rather than mark
+  // them reviewed against an un-reviewed report.
+  if (fm.reviewedAt === null || fm.reviewedBy === null) {
+    error(
+      `review: --commit report '${fm.id}' is not stamped (reviewedAt=${fm.reviewedAt}, reviewedBy=${fm.reviewedBy}); the host session must stamp the review before committing`,
+    );
+    return 1;
+  }
+
+  // Reverse-lookup the linked items from the report's `itemIds` frontmatter
+  // (mirrors research --commit / finalizeResearch). The report is
+  // self-describing, so we do not need a positional <research-id>.
+  const all = await loadItems(join(cwd, "items"));
+  const byId = new Map(all.map((i) => [i.id, i]));
+  const targetItems: Item[] = [];
+  for (const id of fm.itemIds) {
+    const match = byId.get(id);
+    if (!match) {
+      error(
+        `review: --commit report references unknown item id '${id}' (no items/*/${id}.yaml under ${cwd})`,
+      );
+      return 1;
+    }
+    targetItems.push(match);
+  }
+
+  // Defer the legal-transition decision to `isValidTransition()` (the ADR-0008
+  // / ADR-0018 state machine SSoT). Only items currently in `researched`
+  // transition to `reviewed`; any other status is passed through unchanged
+  // (defense in depth — a host that committed against a stale items set does
+  // not corrupt non-researched items).
+  const transitions = new Map<string, ItemStatus>();
+  const updated: Item[] = targetItems.map((item) => {
+    if (isValidTransition(item.status, "reviewed")) {
+      transitions.set(item.id, item.status);
+      return { ...item, status: "reviewed" as ItemStatus };
+    }
+    return item;
+  });
+  try {
+    await saveItems(join(cwd, "items"), updated);
+  } catch (e) {
+    error(`review: failed to update item status: ${e instanceof Error ? e.message : String(e)}`);
+    error(`  (research file was reviewed: ${researchPath})`);
+    return 1;
+  }
+
+  log(`review: wrote ${researchPath}`);
+  for (const item of updated) {
+    const from = transitions.get(item.id);
+    if (from !== undefined && item.status === "reviewed") {
+      progress.phase(`Status: ${from} → reviewed`, `items/${item.sourceId}/${item.id}.yaml`);
+      log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
+    }
+  }
+  return 0;
 }
 
 function parseBatchMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
@@ -557,6 +716,30 @@ export async function runReview(
     printHelp(log);
     return 0;
   }
+  // Host-agent commit (#254 / ADR-0019). Independent of agent / template
+  // resolution: the report is self-describing via its `itemIds` frontmatter.
+  // Handled before the other modes since it takes a path, not a <research-id>.
+  if (parsed.commit !== undefined) {
+    if (parsed.batch) {
+      error("review: --commit is incompatible with --batch");
+      return 2;
+    }
+    if (parsed.emitPayload) {
+      error("review: --commit is incompatible with --emit-payload");
+      return 2;
+    }
+    if (parsed.researchId !== undefined) {
+      error(
+        `review: --commit takes a <path>, not a <research-id> argument (got '${parsed.researchId}')`,
+      );
+      return 2;
+    }
+    return runReviewCommit({ cwd, commitPath: parsed.commit, log, error, progress });
+  }
+  if (parsed.emitPayload && parsed.batch) {
+    error("review: --emit-payload is incompatible with --batch");
+    return 2;
+  }
   if (parsed.batch) {
     return runReviewBatch(parsed, cwd, options, log, warn, error, progress);
   }
@@ -720,6 +903,25 @@ export async function runReview(
     return 1;
   }
   progress.phase(`Loaded template: ${templateId}.md`);
+
+  // Host-agent emit (#254 / ADR-0019): same research / item / template
+  // resolution and pre-review guards as the spawn path (reviewedAt===null,
+  // linked items researched), but print the payload instead of spawning. No
+  // snapshot / rollback is needed because nothing is written here — the host
+  // session does the in-place edit and finalizes via `radar review --commit`.
+  if (parsed.emitPayload) {
+    log(
+      renderReviewPayloadBlock({
+        agent,
+        templateId,
+        templateBody: template.body,
+        researchPath,
+        researchFrontmatter: preFm,
+        researchBody,
+      }),
+    );
+    return 0;
+  }
 
   // Snapshot for atomic rollback.
   const itemsDir = join(cwd, "items");

@@ -867,4 +867,208 @@ describe("cli/review", () => {
       expect(parseYaml(second).status).toBe("researched");
     });
   });
+
+  describe("host-agent mode --emit-payload (#254 / ADR-0019)", () => {
+    it("prints the review payload to stdout and does NOT spawn an agent", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // No agent spawned.
+      expect(calls).toHaveLength(0);
+
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("FEEDRADAR REVIEW PAYLOAD (host-agent mode)");
+      expect(payload).toContain(researchPath);
+      expect(payload).toContain(`radar review --commit ${researchPath}`);
+      // Untrusted-content boundary wraps the predecessor research body.
+      expect(payload).toContain("<untrusted_item>");
+    });
+
+    it("leaves the item status unchanged (no transition on emit)", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      const raw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(raw).status).toBe("researched");
+    });
+
+    it("leaves the research file unchanged (no in-place edit on emit)", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      const before = await readFile(researchPath, "utf8");
+      const { io } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(await readFile(researchPath, "utf8")).toBe(before);
+    });
+
+    it("refuses to emit a payload for an already-reviewed research file", async () => {
+      const { workdir } = await setupWorkspace({
+        preReviewedAt: "2026-05-11T00:00:00.000Z",
+        itemStatus: "reviewed",
+      });
+      const { io, captured } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("already reviewed"))).toBe(true);
+    });
+
+    it("is rejected together with --batch", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview(["--batch", "--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(
+        captured.error.some((m) => m.includes("--emit-payload is incompatible with --batch")),
+      ).toBe(true);
+    });
+
+    it("requires a <research-id>", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview(["--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("missing <research-id>"))).toBe(true);
+    });
+  });
+
+  describe("host-agent mode --commit (#254 / ADR-0019)", () => {
+    /**
+     * Stamp the research file in place the way a well-behaved host session
+     * would: set reviewedAt / reviewedBy and append a review block, WITHOUT
+     * touching items/*.yaml (the CLI owns that transition).
+     */
+    async function hostStampReview(
+      researchPath: string,
+      reviewedAt = "2026-05-11T01:00:00.000Z",
+      agent: ResearchFrontmatter["reviewedBy"] = "codex-cli",
+    ): Promise<void> {
+      const body = await readFile(researchPath, "utf8");
+      const fm = matter(body).data as ResearchFrontmatter;
+      const stamped: ResearchFrontmatter = { ...fm, reviewedAt, reviewedBy: agent };
+      const reviewBlock = `\n\n## レビュー (${agent}, ${reviewedAt})\n\n### 事実関係\n\n- ok\n`;
+      await writeFile(
+        researchPath,
+        matter.stringify(`${PRE_BODY_MARKDOWN}${reviewBlock}`, stamped),
+        "utf8",
+      );
+    }
+
+    it("finalizes a host-stamped report: transitions researched → reviewed", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      await hostStampReview(researchPath);
+
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // No agent spawned in the commit path.
+      expect(calls).toHaveLength(0);
+
+      const raw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(raw).status).toBe("reviewed");
+      expect(captured.log.some((m) => m.includes("status -> reviewed"))).toBe(true);
+      expect(captured.log.some((m) => m.includes(`review: wrote ${researchPath}`))).toBe(true);
+    });
+
+    it("rejects a report the host did not stamp (reviewedAt still null)", async () => {
+      // setupWorkspace writes reviewedAt: null; do NOT host-stamp it.
+      const { workdir, researchPath } = await setupWorkspace();
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath], { cwd: workdir, io });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("is not stamped"))).toBe(true);
+
+      // Item status unchanged.
+      const raw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(raw).status).toBe("researched");
+    });
+
+    it("rejects a report with frontmatter that violates the schema", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      await writeFile(researchPath, matter.stringify("body\n", { id: RESEARCH_ID }), "utf8");
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath], { cwd: workdir, io });
+      expect(code).toBe(1);
+      expect(
+        captured.error.some((m) =>
+          m.includes("research frontmatter does not match ResearchFrontmatterSchema"),
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects a report referencing an unknown item id", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      // Stamp + point itemIds at a ghost item.
+      const stamped: ResearchFrontmatter = {
+        ...PRE_FRONTMATTER,
+        itemIds: ["ghost-item-id"],
+        reviewedAt: "2026-05-11T01:00:00.000Z",
+        reviewedBy: "codex-cli",
+      };
+      await writeFile(researchPath, buildResearchFileContent(stamped), "utf8");
+
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath], { cwd: workdir, io });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("unknown item id"))).toBe(true);
+    });
+
+    it("rejects a --commit path that escapes research/ (path traversal)", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", "../../etc/passwd"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
+    });
+
+    it("is rejected together with --batch", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath, "--batch"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--commit is incompatible with --batch"))).toBe(
+        true,
+      );
+    });
+
+    it("is rejected together with --emit-payload", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview(["--commit", researchPath, "--emit-payload"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(
+        captured.error.some((m) => m.includes("--commit is incompatible with --emit-payload")),
+      ).toBe(true);
+    });
+
+    it("is rejected together with a positional <research-id>", async () => {
+      const { workdir, researchPath } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--commit", researchPath], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--commit takes a <path>"))).toBe(true);
+    });
+  });
 });

@@ -118,12 +118,13 @@ host モードと spawn モードでは untrusted item content の **blast radiu
 
 ## triage / review / update への展開方針
 
-本 PoC は **research のみ**を対象とする。他コマンドへの展開方針:
+本 ADR は **research を PoC** として固定したが、その後の follow-up で **review / update も同型として shipped** 済み。各コマンドの展開状況:
 
-- **review / update**: research と **同型** (Markdown レポート生成 → finalize)。同じ prepare/commit 契約 (`--emit-payload` / `--commit`) がそのまま効く。finalize は `review` の atomic dual-update ([ADR-0003](./0003-output-format-and-versioning.md) / [`docs/design/skill-design.md`](../design/skill-design.md) §7.2) や `update` の v+1 invariants (§8.3) を共有プリミティブ化すれば展開できる
-- **triage**: per-item の `TriageDecision` を書く **別形** (レポートファイルが無い、[ADR-0018](./0018-triage-extension.md))。payload / commit 契約が research とは別物になり、優先度は低い
+- **research** (PoC, #260): prepare/commit 2-call (`--emit-payload` / `--commit`) を確立。`prepareResearch` / `finalizeResearch` 抽出、spawn・emit・commit が単一 finalize を共有。
+- **review / update** (follow-up): research と **同型** (Markdown レポート生成 → finalize)。同じ prepare/commit 契約をそのまま適用。`review` は in-place 改変 (`reviewedAt` / `reviewedBy` stamp + review block 追記 → `researched → reviewed`)、`update` は v+1 ファイル生成 (supersedes / createdAt / itemIds drift 検証、items.yaml status 不変 per [ADR-0008](./0008-status-state-machine.md))。いずれも spawn パスと finalize を共有し、`--commit` path は `resolveCommitPathInside` で `<cwd>/research/` に制約 (literal prefix + symlink realpath、M3b をコードで担保)。
+- **triage**: per-item の `TriageDecision` を書く **別形** (レポートファイルが無い、[ADR-0018](./0018-triage-extension.md))。payload / commit 契約が research とは別物になり、**優先度は低い (依然 deferred)**。
 
-review / update / triage の host モード化は本 ADR の scope 外とし、research PoC の知見を踏まえて follow-up で判断する。
+triage の host モード化は引き続き本 ADR の scope 外とし、必要になった時点で別途判断する。
 
 ## Alternatives
 

@@ -564,4 +564,287 @@ describe("cli/update", () => {
     expect(code).toBe(2);
     expect(captured.error.some((m) => m.includes("radar.config.yaml schema violation"))).toBe(true);
   });
+
+  describe("emit-payload mode (--emit-payload, #254)", () => {
+    function v2OutputPath(workdir: string): string {
+      return join(workdir, "research", `${V2_ID}.md`);
+    }
+
+    it("emits a payload to stdout and does NOT spawn the adapter", async () => {
+      const { workdir } = await setupWorkspace();
+      const { adapter, calls } = buildMockAdapter({ writer: wellBehavedWriter() });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate([V1_ID, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      // The model-call step never runs in host mode.
+      expect(calls).toHaveLength(0);
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("FEEDRADAR UPDATE PAYLOAD");
+      // The deterministic v+1 output path and the commit hint are both present.
+      expect(payload).toContain(v2OutputPath(workdir));
+      expect(payload).toContain(`radar update --commit ${v2OutputPath(workdir)}`);
+      // The supersedes wiring (predecessor id) is surfaced for the host.
+      expect(payload).toContain(`supersedes: ${V1_ID}`);
+      // No v2 file is written by the emit step.
+      expect(await pathExists(v2OutputPath(workdir))).toBe(false);
+    });
+
+    it("wraps untrusted item + predecessor content in <untrusted_item> markers", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate([V1_ID, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      const payload = captured.log.join("\n");
+      expect(payload).toContain("<untrusted_item>");
+      expect(payload).toContain("</untrusted_item>");
+      // The feed title (untrusted) appears inside the boundary.
+      expect(payload).toContain(SAMPLE_ITEM.title);
+    });
+
+    it("includes a schema-compatible JSON fence in the payload", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      await runUpdate([V1_ID, "--emit-payload"], { cwd: workdir, io });
+
+      const payload = captured.log.join("\n");
+      const match = payload.match(/```json\n([\s\S]*?)\n```/);
+      expect(match).not.toBeNull();
+      const parsed = JSON.parse((match as RegExpMatchArray)[1]);
+      expect(parsed.agent).toBe("claude-code");
+      expect(parsed.outputPath).toBe(v2OutputPath(workdir));
+      expect(parsed.prevResearch.frontmatter.id).toBe(V1_ID);
+      expect(parsed.items.map((i: { id: string }) => i.id)).toEqual([SAMPLE_ITEM.id]);
+    });
+
+    it("does NOT change items.yaml status when emitting (ADR-0008)", async () => {
+      const { workdir } = await setupWorkspace({ itemStatus: "researched" });
+      const { io } = captureIo();
+      await runUpdate([V1_ID, "--emit-payload"], { cwd: workdir, io });
+
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+    });
+
+    it("refuses to emit when the v+1 output file already exists", async () => {
+      const v2Fm: ResearchFrontmatter = { ...V1_FRONTMATTER, id: V2_ID, supersedes: V1_ID };
+      const { workdir } = await setupWorkspace({ extraFiles: [{ id: V2_ID, frontmatter: v2Fm }] });
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate([V1_ID, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("already exists"))).toBe(true);
+    });
+
+    it("requires a <research-id> with --emit-payload", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("missing <research-id>"))).toBe(true);
+    });
+  });
+
+  describe("commit mode (--commit, #254)", () => {
+    /** Build a well-formed v2 frontmatter (supersedes v1) for the committed file. */
+    function v2Frontmatter(overrides: Partial<ResearchFrontmatter> = {}): ResearchFrontmatter {
+      return {
+        id: V2_ID,
+        itemIds: [SAMPLE_ITEM.id],
+        agent: "claude-code",
+        templateId: "default",
+        createdAt: V1_FRONTMATTER.createdAt,
+        updatedAt: "2026-06-12T00:00:00.000Z",
+        reviewedAt: null,
+        reviewedBy: null,
+        supersedes: V1_ID,
+        ...overrides,
+      };
+    }
+
+    async function writeV2(
+      workdir: string,
+      fm: ResearchFrontmatter,
+      body = "# host-written v2\n\n## v2 での変更点\n\n- updated\n\n## 要約\n\nupdated.\n",
+    ): Promise<string> {
+      const reportPath = join(workdir, "research", `${V2_ID}.md`);
+      await writeFile(reportPath, matter.stringify(body, fm), "utf8");
+      return reportPath;
+    }
+
+    it("validates an externally written v2 and leaves items.yaml unchanged (ADR-0008)", async () => {
+      const { workdir } = await setupWorkspace({ itemStatus: "researched" });
+      const reportPath = await writeV2(workdir, v2Frontmatter());
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      const v2Fm = matter(await readFile(reportPath, "utf8")).data;
+      expect(v2Fm.id).toBe(V2_ID);
+      expect(v2Fm.supersedes).toBe(V1_ID);
+      // items.yaml status is invariant under update.
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+      expect(captured.log.some((m) => m.includes("wrote"))).toBe(true);
+      expect(captured.log.some((m) => m.includes(`supersedes ${V1_ID}`))).toBe(true);
+    });
+
+    it("rejects a committed report that skips versions (v9 superseding v1)", async () => {
+      const { workdir } = await setupWorkspace({ itemStatus: "researched" });
+      // A host (possibly misled by injected content) names the file v9 while
+      // superseding v1. The spawn path would have produced v2; commit must
+      // enforce the same single-version increment.
+      const skipId = `${BASE}_v9`;
+      const reportPath = join(workdir, "research", `${skipId}.md`);
+      await writeFile(
+        reportPath,
+        matter.stringify("# skip\n\n## 要約\n\nx.\n", v2Frontmatter({ id: skipId })),
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(
+        captured.error.some(
+          (m) => m.includes("single version increment") || m.includes(`must be '${V2_ID}'`),
+        ),
+      ).toBe(true);
+      // items.yaml untouched (no transition on a rejected commit).
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+    });
+
+    it("auto-corrects supersedes / createdAt / reviewedAt drift against the predecessor", async () => {
+      const { workdir } = await setupWorkspace();
+      // Host wrote drift: wrong createdAt, leaked review fields, but a valid
+      // supersedes pointing at v1 (needed to recover the predecessor).
+      const reportPath = await writeV2(
+        workdir,
+        v2Frontmatter({
+          createdAt: "2099-01-01T00:00:00.000Z",
+          reviewedAt: "2026-05-11T01:00:00.000Z",
+          reviewedBy: "gemini-cli",
+        }),
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      expect(captured.warn.some((m) => m.includes("auto-correcting"))).toBe(true);
+      // Parse with the yaml v2 engine so the ISO createdAt stays a string
+      // (default js-yaml coerces it to a Date — see src/cli/update.ts rationale).
+      const v2Fm = matter(await readFile(reportPath, "utf8"), {
+        engines: {
+          yaml: {
+            parse: (s: string) => parseYaml(s) as object,
+            stringify: (data: object) => stringifyYaml(data),
+          },
+        },
+      }).data;
+      // createdAt restored from v1, review fields reset to null.
+      expect(v2Fm.createdAt).toBe(V1_FRONTMATTER.createdAt);
+      expect(v2Fm.reviewedAt).toBeNull();
+      expect(v2Fm.reviewedBy).toBeNull();
+      expect(v2Fm.supersedes).toBe(V1_ID);
+    });
+
+    it("rejects a committed report with supersedes: null", async () => {
+      const { workdir } = await setupWorkspace();
+      const reportPath = await writeV2(workdir, v2Frontmatter({ supersedes: null }));
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("supersedes: null"))).toBe(true);
+    });
+
+    it("errors when the predecessor named by supersedes is missing", async () => {
+      const { workdir } = await setupWorkspace();
+      const reportPath = await writeV2(
+        workdir,
+        v2Frontmatter({ supersedes: "20260510_does-not-exist_v1" }),
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("named by supersedes) not found"))).toBe(true);
+    });
+
+    it("rejects a committed report that violates ResearchFrontmatterSchema", async () => {
+      const { workdir } = await setupWorkspace();
+      const reportPath = join(workdir, "research", `${V2_ID}.md`);
+      await writeFile(
+        reportPath,
+        matter.stringify("# bad\n", { id: V2_ID, status: "researched" }),
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(
+        captured.error.some((m) => m.includes("does not match ResearchFrontmatterSchema")),
+      ).toBe(true);
+    });
+
+    it("rejects a --commit path outside <cwd>/research/ (path traversal, M3b)", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", "../escape.md"], { cwd: workdir, io });
+
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
+    });
+
+    it("errors when the committed report file does not exist", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", join(workdir, "research", "missing.md")], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(1);
+      expect(captured.error.some((m) => m.includes("did not write"))).toBe(true);
+    });
+
+    it("rejects --commit combined with --emit-payload", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", "research/x.md", "--emit-payload"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("incompatible with --emit-payload"))).toBe(true);
+    });
+
+    it("rejects --commit combined with a positional research id", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", "research/x.md", V1_ID], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("takes a <path>"))).toBe(true);
+    });
+  });
 });
