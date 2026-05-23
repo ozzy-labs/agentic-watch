@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.8](https://github.com/ozzy-labs/feedradar/compare/v0.1.7...v0.1.8) (2026-05-23)
+
+
+### Features
+
+* **cli:** add --output-mode direct-commit to combined-with-triage generator ([#267](https://github.com/ozzy-labs/feedradar/issues/267)) ([8b71b7b](https://github.com/ozzy-labs/feedradar/commit/8b71b7b205e0c3db79e1b84d3d54a94266dac983))
+* **cli:** host-agent in-session research via --emit-payload / --commit (closes [#254](https://github.com/ozzy-labs/feedradar/issues/254)) ([#260](https://github.com/ozzy-labs/feedradar/issues/260)) ([30dfd9a](https://github.com/ozzy-labs/feedradar/commit/30dfd9aad02c03ced30f762fff87c2b555d5f00d))
+* **cli:** host-agent mode for review/update + symlink-hardened --commit (ADR-0019 follow-up) ([#262](https://github.com/ozzy-labs/feedradar/issues/262)) ([c22dfdf](https://github.com/ozzy-labs/feedradar/commit/c22dfdf318d52767c4142393e1603721c43d77e6))
+* **cli:** radar dismiss batch support (multiple ids / --batch / --status / --filter-tags) ([#265](https://github.com/ozzy-labs/feedradar/issues/265)) ([d26a277](https://github.com/ozzy-labs/feedradar/commit/d26a277131ce7266dade741d6ab021f1353d3dce))
+
+
+### Bug Fixes
+
+* **cli:** derive digest slug from triage.group to avoid same-day collision ([#264](https://github.com/ozzy-labs/feedradar/issues/264)) ([53581f5](https://github.com/ozzy-labs/feedradar/commit/53581f5c6a1459d536b6df634938d08187bdea6b))
+* **cli:** source test probes range facet upper bound and warns which value tested ([#266](https://github.com/ozzy-labs/feedradar/issues/266)) ([f3990cf](https://github.com/ozzy-labs/feedradar/commit/f3990cfe7688339c48b562e95eaa5b64bd216fad))
+
 ## [0.1.7](https://github.com/ozzy-labs/feedradar/compare/v0.1.6...v0.1.7) (2026-05-23)
 
 
