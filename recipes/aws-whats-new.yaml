@@ -37,13 +37,15 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  # 200 pages * 100 items/page = 20,000 items. `whats-new-v2` reports
-  # `totalHits: ~21,834` (2026-05 observation), so a full `--backfill` at
-  # the bundled cap leaves the oldest ~1,800 posts unindexed. Lifting the
-  # cap requires also widening the bundled-recipe ceiling in
-  # `tests/recipes/bundled.test.ts` (defense-in-depth, ADR-0012 §D5);
-  # tracked as a follow-up. `--backfill --max-pages N` can narrow further.
-  maxPages: 200
+  # 250 pages * 100 items/page = 25,000 items. `whats-new-v2` reports
+  # `totalHits: ~21,834` (2026-05 observation), so a full `--backfill`
+  # completes well within the cap with ~3,166 items / ~1.2 years of
+  # headroom at AWS's observed ~2,500 announcements/year rate. The
+  # bundled-recipe ceiling in `tests/recipes/bundled.test.ts` was lifted
+  # to 250 in lockstep (defense-in-depth, ADR-0012 §D5). Issue #230
+  # raised the cap from the previous 200 because that left the oldest
+  # ~1,800 posts unindexed. `--backfill --max-pages N` can narrow further.
+  maxPages: 250
   # `metadata.totalHits` is the AWS-reported total; the adapter uses it to
   # short-circuit backfill once `ceil(totalHits / pageSize)` pages have been
   # walked (ADR-0012 §D2 backfill early-stop hint).

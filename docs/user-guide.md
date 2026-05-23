@@ -571,7 +571,7 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  maxPages: 200      # ≈ 20,000 件まで遡れるキャップ（--backfill 用）
+  maxPages: 250      # ≈ 25,000 件まで遡れるキャップ（--backfill 用、whats-new-v2 totalHits ~21,834 を完全カバー）
   totalPath: "$.metadata.totalHits"   # backfill 早期停止のヒント
 jsonSelectors:
   items: "$.items[*].item"
@@ -620,7 +620,7 @@ radar source add aws-whats-new \
   --pagination-start 0 \
   --page-size 100 \
   --page-size-param size \
-  --max-pages 200 \
+  --max-pages 250 \
   --total-path "$.metadata.totalHits"
 
 # 生成された sources/aws-whats-new.yaml を編集して jsonSelectors を追記
@@ -702,7 +702,7 @@ interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c
 
 ```bash
 # AWS What's New の過去 21,000+ 件を取り込む
-radar watch run --source aws-whats-new --backfill --max-pages 200
+radar watch run --source aws-whats-new --backfill --max-pages 250
 
 # default の maxPages（recipe 値）で backfill
 radar watch run --source aws-whats-new --backfill
@@ -836,7 +836,7 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 | recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
 |---|---|---|---|---|---|
-| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の 21,000+ 件を取り込み可能（cap 200 ページで最古 ~1,800 件は欠ける）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=250`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の 21,000+ 件 (cap 250 ページ = 25,000 件まで対応、totalHits 21,834 を完全カバー + 約 1 年分のヘッドルーム) を取り込み可能。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
 | `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
 
 > **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。
@@ -876,7 +876,7 @@ recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とす
 radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Quick"
 
 # 直後に過去全件を取り込む
-radar watch run --source aws-watch --backfill --max-pages 200
+radar watch run --source aws-watch --backfill --max-pages 250
 ```
 
 `--recipe` を指定すると、`--kind` / `--url` / `--selector-*` / `--pagination-*` は **明示的に拒否される**（recipe author が責任を持つ structural フィールドだから）。上書き可能な flag は以下のみ:
