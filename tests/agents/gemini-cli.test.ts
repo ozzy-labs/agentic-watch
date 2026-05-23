@@ -107,6 +107,18 @@ function buildMockRunner(opts: MockRunnerOptions = {}): {
   return { runner, calls };
 }
 
+/**
+ * Extract + parse the trailing ```json fence``` from a FEEDRADAR payload block
+ * (#272). The adapter now streams the payload block on stdin; structured
+ * fields live in the fence, while the <untrusted_item> boundary (ADR-0009 M1c)
+ * wraps the upstream content in the block body above it.
+ */
+function payloadJson(stdin: string): unknown {
+  const m = stdin.match(/```json\n([\s\S]*?)\n```/);
+  if (!m) throw new Error(`no JSON fence found in payload:\n${stdin}`);
+  return JSON.parse(m[1]);
+}
+
 describe("agents/gemini-cli", () => {
   describe("research", () => {
     it("invokes the runner with a SKILL prompt and JSON stdin", async () => {
@@ -116,29 +128,28 @@ describe("agents/gemini-cli", () => {
 
       expect(calls).toHaveLength(1);
       const call = calls[0];
-      // Prompt must point Gemini at the research SKILL and re-state the
-      // outputPath / itemId. We don't pin exact wording — the SKILL contract
-      // lives in `.agents/skills/research/SKILL.md`, not here.
+      // The thin argv prompt points Gemini at the research SKILL; the request
+      // body (ids, outputPath, untrusted item content) rides on stdin (#272).
       expect(call.prompt).toContain(".agents/skills/research/SKILL.md");
-      expect(call.prompt).toContain(SAMPLE_ITEM.id);
-      expect(call.prompt).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
+      expect(call.stdin).toContain(SAMPLE_ITEM.id);
+      expect(call.stdin).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
 
       // Item title / summary / raw must sit inside the boundary marker pair
       // (ADR-0009 M1c) so the LLM treats the upstream-sourced content as data.
-      expect(call.prompt).toContain("<untrusted_item>");
-      expect(call.prompt).toContain("</untrusted_item>");
-      expect(call.prompt).toContain(SAMPLE_ITEM.title);
+      expect(call.stdin).toContain("<untrusted_item>");
+      expect(call.stdin).toContain("</untrusted_item>");
+      expect(call.stdin).toContain(SAMPLE_ITEM.title);
 
       // The cwd is forwarded so the spawned CLI sees workspace-relative paths.
       expect(call.cwd).toBe("/tmp/feedradar");
     });
 
-    it("forwards the structured payload as JSON on stdin", async () => {
+    it("forwards the structured payload in the stdin JSON fence", async () => {
       const { runner, calls } = buildMockRunner();
       const adapter = createGeminiCliAdapter({ run: runner });
       await adapter.research(buildResearchRequest());
 
-      const payload = JSON.parse(calls[0].stdin);
+      const payload = payloadJson(calls[0].stdin);
       expect(payload).toEqual({
         agent: "gemini-cli",
         templateId: "default",
@@ -202,24 +213,24 @@ describe("agents/gemini-cli", () => {
       expect(calls).toHaveLength(1);
       const call = calls[0];
       expect(call.prompt).toContain(".agents/skills/review/SKILL.md");
-      expect(call.prompt).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
-      expect(call.prompt).toContain("gemini-cli");
+      expect(call.stdin).toContain("/tmp/feedradar/research/20260510_demo_v1.md");
+      expect(call.stdin).toContain("gemini-cli");
       // The review prompt should NOT re-trigger the research SKILL.
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
 
       // The predecessor research body (untrusted, upstream-derived) is wrapped
-      // in the boundary marker pair (ADR-0009 M1c).
-      expect(call.prompt).toContain("<untrusted_item>");
-      expect(call.prompt).toContain("</untrusted_item>");
-      expect(call.prompt).toContain("---\nid: demo\n---\n\n# body\n");
+      // in the boundary marker pair (ADR-0009 M1c) on stdin.
+      expect(call.stdin).toContain("<untrusted_item>");
+      expect(call.stdin).toContain("</untrusted_item>");
+      expect(call.stdin).toContain("---\nid: demo\n---\n\n# body\n");
     });
 
-    it("forwards the full review payload as JSON on stdin", async () => {
+    it("forwards the full review payload in the stdin JSON fence", async () => {
       const { runner, calls } = buildMockRunner();
       const adapter = createGeminiCliAdapter({ run: runner });
       await adapter.review(buildReviewRequest());
 
-      const payload = JSON.parse(calls[0].stdin);
+      const payload = payloadJson(calls[0].stdin);
       expect(payload).toEqual({
         agent: "gemini-cli",
         templateId: "default",
@@ -271,9 +282,9 @@ describe("agents/gemini-cli", () => {
       expect(calls).toHaveLength(1);
       const call = calls[0];
       expect(call.prompt).toContain(".agents/skills/update/SKILL.md");
-      expect(call.prompt).toContain(SAMPLE_FRONTMATTER.id);
-      expect(call.prompt).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
-      expect(call.prompt).toContain(
+      expect(call.stdin).toContain(SAMPLE_FRONTMATTER.id);
+      expect(call.stdin).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
+      expect(call.stdin).toContain(
         "/tmp/feedradar/research/20260510_anthropic-news-claude-code-shiny_v2.md",
       );
       expect(call.cwd).toBe("/tmp/feedradar");
@@ -281,19 +292,19 @@ describe("agents/gemini-cli", () => {
       expect(call.prompt).not.toContain(".agents/skills/research/SKILL.md");
 
       // Both the predecessor research body and per-item title/summary/raw
-      // must sit inside the boundary marker pair (ADR-0009 M1c).
-      expect(call.prompt).toContain("<untrusted_item>");
-      expect(call.prompt).toContain("</untrusted_item>");
-      expect(call.prompt).toContain("---\nid: demo\n---\n\n# v1 body\n");
-      expect(call.prompt).toContain(SAMPLE_ITEM.title);
+      // must sit inside the boundary marker pair (ADR-0009 M1c) on stdin.
+      expect(call.stdin).toContain("<untrusted_item>");
+      expect(call.stdin).toContain("</untrusted_item>");
+      expect(call.stdin).toContain("---\nid: demo\n---\n\n# v1 body\n");
+      expect(call.stdin).toContain(SAMPLE_ITEM.title);
     });
 
-    it("forwards prevResearch + items + outputPath as JSON on stdin", async () => {
+    it("forwards prevResearch + items + outputPath in the stdin JSON fence", async () => {
       const { runner, calls } = buildMockRunner();
       const adapter = createGeminiCliAdapter({ run: runner });
       await adapter.update(buildUpdateRequest());
 
-      const payload = JSON.parse(calls[0].stdin);
+      const payload = payloadJson(calls[0].stdin);
       expect(payload).toEqual({
         agent: "gemini-cli",
         templateId: "default",
@@ -367,16 +378,16 @@ describe("agents/gemini-cli", () => {
 
       const call = calls[0];
       for (const item of items) {
-        expect(call.prompt).toContain(item.id);
-        expect(call.prompt).toContain(item.url);
-        expect(call.prompt).toContain(item.title);
+        expect(call.stdin).toContain(item.id);
+        expect(call.stdin).toContain(item.url);
+        expect(call.stdin).toContain(item.title);
         if (item.summary !== undefined) {
-          expect(call.prompt).toContain(item.summary);
+          expect(call.stdin).toContain(item.summary);
         }
       }
-      expect(call.prompt).toContain(items.map((i) => i.id).join(", "));
+      expect(call.stdin).toContain(items.map((i) => i.id).join(", "));
 
-      const stdinJson = JSON.parse(call.stdin);
+      const stdinJson = payloadJson(call.stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
 
@@ -386,25 +397,28 @@ describe("agents/gemini-cli", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
       await adapter.research(buildMultiItemResearchRequest(items));
 
-      const prompt = calls[0].prompt;
-      expect(prompt).toContain("### Item 1 of 3");
-      expect(prompt).toContain("### Item 2 of 3");
-      expect(prompt).toContain("### Item 3 of 3");
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      const closeCount = (prompt.match(/<\/untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
-      expect(closeCount).toBe(3);
+      const block = calls[0].stdin;
+      expect(block).toContain("### Item 1 of 3");
+      expect(block).toContain("### Item 2 of 3");
+      expect(block).toContain("### Item 3 of 3");
+      // Count complete pairs via the closing tag: the payload block also
+      // mentions the literal "<untrusted_item>" once in its M2a guidance line
+      // (no closing tag), so only closing tags reliably count wrapped items.
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
     });
 
-    it("emits the same prompt for a single-item array as before #140 (regression guard)", async () => {
+    it("emits the same item block for a single-item array as before #140 (regression guard)", async () => {
       const { runner, calls } = buildMockRunner();
       const adapter = createGeminiCliAdapter({ run: runner });
       await adapter.research(buildResearchRequest());
 
-      const prompt = calls[0].prompt;
-      expect(prompt).not.toContain("### Item 1 of 1");
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(1);
+      const block = calls[0].stdin;
+      expect(block).not.toContain("### Item 1 of 1");
+      // Closing-tag count = wrapped-item count (the M2a guidance line mentions
+      // "<untrusted_item>" once without a closing tag).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(1);
     });
   });
 
@@ -427,16 +441,17 @@ describe("agents/gemini-cli", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM];
       await adapter.update({ ...buildUpdateRequest(), items });
 
-      const prompt = calls[0].prompt;
-      expect(prompt).toContain("### Item 1 of 2");
-      expect(prompt).toContain("### Item 2 of 2");
-      expect(prompt).toContain(SAMPLE_ITEM.id);
-      expect(prompt).toContain(SECOND_ITEM.id);
-      // Predecessor body + 2 items = 3 boundary marker pairs total.
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
+      const block = calls[0].stdin;
+      expect(block).toContain("### Item 1 of 2");
+      expect(block).toContain("### Item 2 of 2");
+      expect(block).toContain(SAMPLE_ITEM.id);
+      expect(block).toContain(SECOND_ITEM.id);
+      // Predecessor body + 2 items = 3 boundary marker pairs (counted via the
+      // closing tag; the M2a guidance line mentions the open tag once more).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
 
-      const stdinJson = JSON.parse(calls[0].stdin);
+      const stdinJson = payloadJson(calls[0].stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
   });

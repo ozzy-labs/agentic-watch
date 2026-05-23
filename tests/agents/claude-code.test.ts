@@ -20,6 +20,18 @@ import { ItemSchema } from "../../src/schemas/index.js";
  * error.)
  */
 
+/**
+ * Extract + parse the trailing ```json fence``` from a FEEDRADAR payload block
+ * (#272). The adapter now streams the payload block on stdin; structured
+ * fields live in the fence, while the <untrusted_item> boundary (ADR-0009 M1c)
+ * wraps the upstream content in the block body above it.
+ */
+function payloadJson(stdin: string): unknown {
+  const m = stdin.match(/```json\n([\s\S]*?)\n```/);
+  if (!m) throw new Error(`no JSON fence found in payload:\n${stdin}`);
+  return JSON.parse(m[1]);
+}
+
 const SAMPLE_ITEM: Item = ItemSchema.parse({
   id: "anthropic-news-2026-05-10-claude-code",
   sourceId: "anthropic-news",
@@ -97,21 +109,21 @@ describe("agents/claude-code adapter", () => {
       expect(run).toHaveBeenCalledTimes(1);
       const [prompt, options] = run.mock.calls[0];
 
-      // Prompt references the research SKILL and the outputPath / item id so
-      // Claude knows where to write and what to research.
+      // The thin argv prompt references the research SKILL; the outputPath /
+      // item id / untrusted content ride on the stdin payload block (#272).
       expect(prompt).toContain(".agents/skills/research/SKILL.md");
-      expect(prompt).toContain(req.outputPath);
-      expect(prompt).toContain(SAMPLE_ITEM.id);
+      expect(options.stdin).toContain(req.outputPath);
+      expect(options.stdin).toContain(SAMPLE_ITEM.id);
 
       // ADR-0009 M1c: item content is wrapped in the untrusted boundary marker.
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
 
       // cwd is forwarded so `claude -p` is rooted at the workspace.
       expect(options.cwd).toBe(req.cwd);
 
-      // stdin is a JSON document with the full ResearchRequest payload.
-      const stdinJson = JSON.parse(options.stdin);
+      // The stdin payload block carries the full ResearchRequest in its fence.
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "claude-code",
         templateId: "default",
@@ -128,7 +140,10 @@ describe("agents/claude-code adapter", () => {
         buildResearchRequest({ templateId: "deep-dive", templateBody: "# Deep\n" }),
       );
 
-      const parsed = JSON.parse(run.mock.calls[0][1].stdin);
+      const parsed = payloadJson(run.mock.calls[0][1].stdin) as {
+        templateId: string;
+        templateBody: string;
+      };
       expect(parsed.templateId).toBe("deep-dive");
       expect(parsed.templateBody).toBe("# Deep\n");
     });
@@ -195,19 +210,19 @@ describe("agents/claude-code adapter", () => {
       expect(run).toHaveBeenCalledTimes(1);
       const [prompt, options] = run.mock.calls[0];
       expect(prompt).toContain(".agents/skills/review/SKILL.md");
-      expect(prompt).toContain(req.researchPath);
-      // The reviewing agent id is stamped into the prompt so Claude writes
+      expect(options.stdin).toContain(req.researchPath);
+      // The reviewing agent id is stamped into the payload so Claude writes
       // the matching reviewedBy frontmatter field.
-      expect(prompt).toContain("claude-code");
+      expect(options.stdin).toContain("claude-code");
       // ADR-0009 M1c: predecessor body is wrapped in the untrusted marker.
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
       // The review prompt should NOT re-invoke the research SKILL (that would
       // generate a new v1 instead of appending a review block).
       expect(prompt).not.toContain(".agents/skills/research/SKILL.md");
       expect(options.cwd).toBe(req.cwd);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "claude-code",
         templateId: "default",
@@ -253,16 +268,16 @@ describe("agents/claude-code adapter", () => {
       const [prompt, options] = run.mock.calls[0];
 
       expect(prompt).toContain(".agents/skills/update/SKILL.md");
-      expect(prompt).toContain(req.outputPath);
+      expect(options.stdin).toContain(req.outputPath);
       // Predecessor id is the supersedes target we instruct the agent to write.
-      expect(prompt).toContain(SAMPLE_RESEARCH_FM.id);
-      expect(prompt).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
+      expect(options.stdin).toContain(SAMPLE_RESEARCH_FM.id);
+      expect(options.stdin).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
       // ADR-0009 M1c: both predecessor body and item content are wrapped.
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
       expect(options.cwd).toBe(req.cwd);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "claude-code",
         templateId: "default",
@@ -326,21 +341,22 @@ describe("agents/claude-code adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
       await adapter.research(buildResearchRequest({ items }));
 
-      const [prompt, options] = run.mock.calls[0];
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
       for (const item of items) {
-        expect(prompt).toContain(item.id);
-        expect(prompt).toContain(item.url);
-        expect(prompt).toContain(item.title);
+        expect(block).toContain(item.id);
+        expect(block).toContain(item.url);
+        expect(block).toContain(item.title);
         if (item.summary !== undefined) {
-          expect(prompt).toContain(item.summary);
+          expect(block).toContain(item.summary);
         }
       }
 
       // The `Items to research:` comma list still lists every id.
-      expect(prompt).toContain(items.map((i) => i.id).join(", "));
+      expect(block).toContain(items.map((i) => i.id).join(", "));
 
-      // stdin carries the full Item array verbatim.
-      const stdinJson = JSON.parse(options.stdin);
+      // The stdin payload fence carries the full Item array verbatim.
+      const stdinJson = payloadJson(options.stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
 
@@ -350,32 +366,32 @@ describe("agents/claude-code adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
       await adapter.research(buildResearchRequest({ items }));
 
-      const [prompt] = run.mock.calls[0];
-      expect(prompt).toContain("### Item 1 of 3");
-      expect(prompt).toContain("### Item 2 of 3");
-      expect(prompt).toContain("### Item 3 of 3");
-      // One boundary marker per item — agents cannot collapse two items into
-      // a single untrusted block.
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      const closeCount = (prompt.match(/<\/untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
-      expect(closeCount).toBe(3);
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
+      expect(block).toContain("### Item 1 of 3");
+      expect(block).toContain("### Item 2 of 3");
+      expect(block).toContain("### Item 3 of 3");
+      // Count complete pairs via the closing tag: the payload block also
+      // mentions the literal "<untrusted_item>" once in its M2a guidance line
+      // (no closing tag), so only closing tags reliably count wrapped items.
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
     });
 
-    it("emits the same prompt for a single-item array as a 1-element multi-item call (regression guard)", async () => {
+    it("emits no `### Item k of N` heading for a single-item array (regression guard)", async () => {
       const run = vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" });
       const adapter = createClaudeCodeAdapter({ run });
 
       await adapter.research(buildResearchRequest());
-      const [singlePrompt] = run.mock.calls[0];
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
 
-      // The single-item prompt MUST NOT carry an `### Item 1 of 1` heading;
-      // the multi-item branch is only active when N > 1. This keeps existing
-      // single-item snapshots and CLI flow byte-equivalent (issue #140 AC).
-      expect(singlePrompt).not.toContain("### Item 1 of 1");
-      // It also keeps exactly one boundary marker (the SAMPLE_ITEM content).
-      const openCount = (singlePrompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(1);
+      // The single-item block MUST NOT carry an `### Item 1 of 1` heading;
+      // the multi-item branch is only active when N > 1 (issue #140 AC).
+      expect(block).not.toContain("### Item 1 of 1");
+      // It keeps exactly one wrapped item (closing-tag count).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(1);
     });
   });
 
@@ -398,16 +414,18 @@ describe("agents/claude-code adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM];
       await adapter.update(buildUpdateRequest({ items }));
 
-      const [prompt, options] = run.mock.calls[0];
-      expect(prompt).toContain("### Item 1 of 2");
-      expect(prompt).toContain("### Item 2 of 2");
-      expect(prompt).toContain(SAMPLE_ITEM.id);
-      expect(prompt).toContain(SECOND_ITEM.id);
-      // Predecessor body + 2 items = 3 boundary marker pairs total.
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
+      expect(block).toContain("### Item 1 of 2");
+      expect(block).toContain("### Item 2 of 2");
+      expect(block).toContain(SAMPLE_ITEM.id);
+      expect(block).toContain(SECOND_ITEM.id);
+      // Predecessor body + 2 items = 3 boundary marker pairs (counted via the
+      // closing tag; the M2a guidance line mentions the open tag once more).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
   });

@@ -95,6 +95,18 @@ function buildCapturingRunner(result: { code: number; stdout?: string; stderr?: 
   return { runner, calls };
 }
 
+/**
+ * Extract + parse the trailing ```json fence``` from a FEEDRADAR payload block
+ * (#272). The adapter now streams the payload block on stdin; structured
+ * fields live in the fence, while the <untrusted_item> boundary (ADR-0009 M1c)
+ * wraps the upstream content in the block body above it.
+ */
+function payloadJson(stdin: string): unknown {
+  const m = stdin.match(/```json\n([\s\S]*?)\n```/);
+  if (!m) throw new Error(`no JSON fence found in payload:\n${stdin}`);
+  return JSON.parse(m[1]);
+}
+
 describe("agents/copilot research", () => {
   it("invokes the runner with a prompt referencing the research SKILL and item ids", async () => {
     const { runner, calls } = buildCapturingRunner({ code: 0 });
@@ -102,27 +114,35 @@ describe("agents/copilot research", () => {
     await adapter.research(makeResearchRequest());
 
     expect(calls).toHaveLength(1);
+    // The thin argv prompt references the research SKILL; ids / outputPath /
+    // untrusted content ride on the stdin payload block (#272).
     expect(calls[0].prompt).toContain(".agents/skills/research/SKILL.md");
-    expect(calls[0].prompt).toContain(SAMPLE_ITEM.id);
-    expect(calls[0].prompt).toContain("/tmp/research/20260510_anthropic-news_v1.md");
+    expect(calls[0].stdin).toContain(SAMPLE_ITEM.id);
+    expect(calls[0].stdin).toContain("/tmp/research/20260510_anthropic-news_v1.md");
 
     // Item title / summary / raw must sit inside the boundary marker pair
     // (ADR-0009 M1c) so the LLM treats the upstream-sourced content as data.
-    expect(calls[0].prompt).toContain("<untrusted_item>");
-    expect(calls[0].prompt).toContain("</untrusted_item>");
-    expect(calls[0].prompt).toContain(SAMPLE_ITEM.title);
+    expect(calls[0].stdin).toContain("<untrusted_item>");
+    expect(calls[0].stdin).toContain("</untrusted_item>");
+    expect(calls[0].stdin).toContain(SAMPLE_ITEM.title);
 
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
-  it("passes a single JSON document on stdin with the request fields", async () => {
+  it("carries the request fields in the stdin payload JSON fence", async () => {
     const { runner, calls } = buildCapturingRunner({ code: 0 });
     const adapter = createCopilotAdapter({ run: runner });
     await adapter.research(
       makeResearchRequest({ templateId: "deep-dive", templateBody: "# Deep\n" }),
     );
 
-    const parsed = JSON.parse(calls[0].stdin);
+    const parsed = payloadJson(calls[0].stdin) as {
+      agent: string;
+      templateId: string;
+      templateBody: string;
+      items: { id: string }[];
+      outputPath: string;
+    };
     expect(parsed.agent).toBe("copilot");
     expect(parsed.templateId).toBe("deep-dive");
     expect(parsed.templateBody).toBe("# Deep\n");
@@ -173,24 +193,31 @@ describe("agents/copilot review", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].prompt).toContain(".agents/skills/review/SKILL.md");
-    expect(calls[0].prompt).toContain("/tmp/research/20260510_anthropic-news_v1.md");
-    expect(calls[0].prompt).toContain("stamp this into reviewedBy");
+    expect(calls[0].stdin).toContain("/tmp/research/20260510_anthropic-news_v1.md");
+    expect(calls[0].stdin).toContain("stamp into reviewedBy");
 
     // The predecessor research body (untrusted, upstream-derived) is wrapped
-    // in the boundary marker pair (ADR-0009 M1c).
-    expect(calls[0].prompt).toContain("<untrusted_item>");
-    expect(calls[0].prompt).toContain("</untrusted_item>");
-    expect(calls[0].prompt).toContain("---\nid: x\n---\nbody\n");
+    // in the boundary marker pair (ADR-0009 M1c) on stdin.
+    expect(calls[0].stdin).toContain("<untrusted_item>");
+    expect(calls[0].stdin).toContain("</untrusted_item>");
+    expect(calls[0].stdin).toContain("---\nid: x\n---\nbody\n");
 
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
-  it("passes a single JSON document on stdin with the review request fields", async () => {
+  it("carries the review request fields in the stdin payload JSON fence", async () => {
     const { runner, calls } = buildCapturingRunner({ code: 0 });
     const adapter = createCopilotAdapter({ run: runner });
     await adapter.review(makeReviewRequest({ templateBody: "# Review rubric\n" }));
 
-    const parsed = JSON.parse(calls[0].stdin);
+    const parsed = payloadJson(calls[0].stdin) as {
+      agent: string;
+      templateId: string;
+      templateBody: string;
+      researchPath: string;
+      researchFrontmatter: { id: string };
+      researchBody: string;
+    };
     expect(parsed.agent).toBe("copilot");
     expect(parsed.templateId).toBe("default");
     expect(parsed.templateBody).toBe("# Review rubric\n");
@@ -233,28 +260,28 @@ describe("agents/copilot update", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].prompt).toContain(".agents/skills/update/SKILL.md");
-    expect(calls[0].prompt).toContain(SAMPLE_FRONTMATTER.id);
-    expect(calls[0].prompt).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
-    expect(calls[0].prompt).toContain(
+    expect(calls[0].stdin).toContain(SAMPLE_FRONTMATTER.id);
+    expect(calls[0].stdin).toContain(`supersedes: ${SAMPLE_FRONTMATTER.id}`);
+    expect(calls[0].stdin).toContain(
       "/tmp/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     );
 
     // Both the predecessor research body and per-item title/summary/raw
-    // must sit inside the boundary marker pair (ADR-0009 M1c).
-    expect(calls[0].prompt).toContain("<untrusted_item>");
-    expect(calls[0].prompt).toContain("</untrusted_item>");
-    expect(calls[0].prompt).toContain("---\nid: x\n---\n# v1 body\n");
-    expect(calls[0].prompt).toContain(SAMPLE_ITEM.title);
+    // must sit inside the boundary marker pair (ADR-0009 M1c) on stdin.
+    expect(calls[0].stdin).toContain("<untrusted_item>");
+    expect(calls[0].stdin).toContain("</untrusted_item>");
+    expect(calls[0].stdin).toContain("---\nid: x\n---\n# v1 body\n");
+    expect(calls[0].stdin).toContain(SAMPLE_ITEM.title);
 
     expect(calls[0].cwd).toBe("/tmp/workspace");
   });
 
-  it("passes a single JSON document on stdin with prevResearch and items", async () => {
+  it("carries prevResearch and items in the stdin payload JSON fence", async () => {
     const { runner, calls } = buildCapturingRunner({ code: 0 });
     const adapter = createCopilotAdapter({ run: runner });
     await adapter.update(makeUpdateRequest({ templateBody: "# Custom\n" }));
 
-    const parsed = JSON.parse(calls[0].stdin);
+    const parsed = payloadJson(calls[0].stdin);
     expect(parsed).toEqual({
       agent: "copilot",
       templateId: "default",
@@ -319,17 +346,18 @@ describe("agents/copilot research (multi-item digest, ADR-0011 §1)", () => {
     await adapter.research(makeResearchRequest({ items }));
 
     const call = calls[0];
+    const block = call.stdin;
     for (const item of items) {
-      expect(call.prompt).toContain(item.id);
-      expect(call.prompt).toContain(item.url);
-      expect(call.prompt).toContain(item.title);
+      expect(block).toContain(item.id);
+      expect(block).toContain(item.url);
+      expect(block).toContain(item.title);
       if (item.summary !== undefined) {
-        expect(call.prompt).toContain(item.summary);
+        expect(block).toContain(item.summary);
       }
     }
-    expect(call.prompt).toContain(items.map((i) => i.id).join(", "));
+    expect(block).toContain(items.map((i) => i.id).join(", "));
 
-    const stdinJson = JSON.parse(call.stdin);
+    const stdinJson = payloadJson(call.stdin) as { items: Item[] };
     expect(stdinJson.items).toEqual(items);
   });
 
@@ -339,25 +367,25 @@ describe("agents/copilot research (multi-item digest, ADR-0011 §1)", () => {
     const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
     await adapter.research(makeResearchRequest({ items }));
 
-    const prompt = calls[0].prompt;
-    expect(prompt).toContain("### Item 1 of 3");
-    expect(prompt).toContain("### Item 2 of 3");
-    expect(prompt).toContain("### Item 3 of 3");
-    const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-    const closeCount = (prompt.match(/<\/untrusted_item>/g) ?? []).length;
-    expect(openCount).toBe(3);
-    expect(closeCount).toBe(3);
+    const block = calls[0].stdin;
+    expect(block).toContain("### Item 1 of 3");
+    expect(block).toContain("### Item 2 of 3");
+    expect(block).toContain("### Item 3 of 3");
+    // Closing-tag count = wrapped-item count (the M2a guidance line mentions
+    // "<untrusted_item>" once without a closing tag).
+    const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+    expect(pairCount).toBe(3);
   });
 
-  it("emits the same prompt for a single-item array as before #140 (regression guard)", async () => {
+  it("emits no `### Item k of N` heading for a single-item array (regression guard)", async () => {
     const { runner, calls } = buildCapturingRunner({ code: 0 });
     const adapter = createCopilotAdapter({ run: runner });
     await adapter.research(makeResearchRequest());
 
-    const prompt = calls[0].prompt;
-    expect(prompt).not.toContain("### Item 1 of 1");
-    const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-    expect(openCount).toBe(1);
+    const block = calls[0].stdin;
+    expect(block).not.toContain("### Item 1 of 1");
+    const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+    expect(pairCount).toBe(1);
   });
 });
 
@@ -380,16 +408,17 @@ describe("agents/copilot update (multi-item digest, ADR-0011 §4)", () => {
     const items = [SAMPLE_ITEM, SECOND_ITEM];
     await adapter.update(makeUpdateRequest({ items }));
 
-    const prompt = calls[0].prompt;
-    expect(prompt).toContain("### Item 1 of 2");
-    expect(prompt).toContain("### Item 2 of 2");
-    expect(prompt).toContain(SAMPLE_ITEM.id);
-    expect(prompt).toContain(SECOND_ITEM.id);
-    // Predecessor body + 2 items = 3 boundary marker pairs total.
-    const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-    expect(openCount).toBe(3);
+    const block = calls[0].stdin;
+    expect(block).toContain("### Item 1 of 2");
+    expect(block).toContain("### Item 2 of 2");
+    expect(block).toContain(SAMPLE_ITEM.id);
+    expect(block).toContain(SECOND_ITEM.id);
+    // Predecessor body + 2 items = 3 boundary marker pairs (counted via the
+    // closing tag; the M2a guidance line mentions the open tag once more).
+    const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+    expect(pairCount).toBe(3);
 
-    const stdinJson = JSON.parse(calls[0].stdin);
+    const stdinJson = payloadJson(calls[0].stdin) as { items: Item[] };
     expect(stdinJson.items).toEqual(items);
   });
 });

@@ -89,7 +89,19 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (c) => { stdin += c; });
 process.stdin.on("end", () => {
   let req;
-  try { req = JSON.parse(stdin); } catch (e) {
+  try {
+    // Payload block (#272): structured fields live in the trailing json fence.
+    // FENCE built via charCode to avoid backtick escaping in this template.
+    const FENCE = String.fromCharCode(96, 96, 96);
+    const marker = FENCE + "json";
+    const start = stdin.indexOf(marker);
+    let jsonText = stdin;
+    if (start >= 0) {
+      const after = stdin.slice(start + marker.length);
+      jsonText = after.slice(0, after.lastIndexOf(FENCE));
+    }
+    req = JSON.parse(jsonText);
+  } catch (e) {
     console.error("fake-claude: bad stdin:", e.message);
     process.exit(2);
   }
@@ -1586,7 +1598,18 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (c) => { stdin += c; });
 process.stdin.on("end", () => {
   let req;
-  try { req = JSON.parse(stdin); } catch (e) {
+  try {
+    // Payload block (#272): structured fields live in the trailing json fence.
+    const FENCE = String.fromCharCode(96, 96, 96);
+    const marker = FENCE + "json";
+    const start = stdin.indexOf(marker);
+    let jsonText = stdin;
+    if (start >= 0) {
+      const after = stdin.slice(start + marker.length);
+      jsonText = after.slice(0, after.lastIndexOf(FENCE));
+    }
+    req = JSON.parse(jsonText);
+  } catch (e) {
     console.error("fake-claude-reviewer: bad stdin:", e.message);
     process.exit(2);
   }

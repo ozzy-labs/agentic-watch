@@ -4,6 +4,18 @@ import type { ResearchRequest, ReviewRequest, UpdateRequest } from "../../src/ag
 import type { Item, ResearchFrontmatter } from "../../src/schemas/index.js";
 import { ItemSchema } from "../../src/schemas/index.js";
 
+/**
+ * Extract + parse the trailing ```json fence``` from a FEEDRADAR payload block
+ * (#272). The adapter now streams the payload block on stdin; structured
+ * fields live in the fence, while the <untrusted_item> boundary (ADR-0009 M1c)
+ * wraps the upstream content in the block body above it.
+ */
+function payloadJson(stdin: string): unknown {
+  const m = stdin.match(/```json\n([\s\S]*?)\n```/);
+  if (!m) throw new Error(`no JSON fence found in payload:\n${stdin}`);
+  return JSON.parse(m[1]);
+}
+
 const SAMPLE_ITEM: Item = ItemSchema.parse({
   id: "anthropic-news-2026-05-10-claude-code",
   sourceId: "anthropic-news",
@@ -81,24 +93,24 @@ describe("agents/codex-cli adapter", () => {
       expect(run).toHaveBeenCalledTimes(1);
       const [prompt, options] = run.mock.calls[0];
 
-      // The prompt should reference the research SKILL and the outputPath so
-      // Codex knows where to write the report.
+      // The thin argv prompt references the research SKILL; the outputPath /
+      // item id / untrusted content ride on the stdin payload block (#272).
       expect(prompt).toContain(".agents/skills/research/SKILL.md");
-      expect(prompt).toContain(req.outputPath);
-      expect(prompt).toContain(SAMPLE_ITEM.id);
+      expect(options.stdin).toContain(req.outputPath);
+      expect(options.stdin).toContain(SAMPLE_ITEM.id);
 
       // Item title / summary / raw must be inside the boundary marker pair
       // (ADR-0009 M1c). The opening / closing tags and the upstream-sourced
       // title both have to be present.
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
-      expect(prompt).toContain(SAMPLE_ITEM.title);
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
+      expect(options.stdin).toContain(SAMPLE_ITEM.title);
 
       // cwd is forwarded so `codex exec --cd <cwd>` is rooted at the workspace.
       expect(options.cwd).toBe(req.cwd);
 
-      // stdin is a JSON document with the full ResearchRequest payload.
-      const stdinJson = JSON.parse(options.stdin);
+      // The stdin payload block carries the full ResearchRequest in its fence.
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "codex-cli",
         templateId: "default",
@@ -174,18 +186,18 @@ describe("agents/codex-cli adapter", () => {
       expect(run).toHaveBeenCalledTimes(1);
       const [prompt, options] = run.mock.calls[0];
       expect(prompt).toContain(".agents/skills/review/SKILL.md");
-      expect(prompt).toContain(req.researchPath);
-      expect(prompt).toContain("codex-cli");
+      expect(options.stdin).toContain(req.researchPath);
+      expect(options.stdin).toContain("codex-cli");
 
       // The predecessor research body (untrusted, upstream-derived) is wrapped
-      // in the boundary marker pair (ADR-0009 M1c).
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
-      expect(prompt).toContain(req.researchBody);
+      // in the boundary marker pair (ADR-0009 M1c) on stdin.
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
+      expect(options.stdin).toContain(req.researchBody);
 
       expect(options.cwd).toBe(req.cwd);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "codex-cli",
         templateId: "default",
@@ -244,21 +256,21 @@ describe("agents/codex-cli adapter", () => {
       const [prompt, options] = run.mock.calls[0];
 
       expect(prompt).toContain(".agents/skills/update/SKILL.md");
-      expect(prompt).toContain(req.outputPath);
+      expect(options.stdin).toContain(req.outputPath);
       // Predecessor id is the supersedes target we instruct the agent to write.
-      expect(prompt).toContain(SAMPLE_RESEARCH_FM.id);
-      expect(prompt).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
+      expect(options.stdin).toContain(SAMPLE_RESEARCH_FM.id);
+      expect(options.stdin).toContain(`supersedes: ${SAMPLE_RESEARCH_FM.id}`);
 
       // Both the predecessor research body and per-item title/summary/raw
-      // must sit inside the boundary marker pair (ADR-0009 M1c).
-      expect(prompt).toContain("<untrusted_item>");
-      expect(prompt).toContain("</untrusted_item>");
-      expect(prompt).toContain(req.prevResearch.body);
-      expect(prompt).toContain(SAMPLE_ITEM.title);
+      // must sit inside the boundary marker pair (ADR-0009 M1c) on stdin.
+      expect(options.stdin).toContain("<untrusted_item>");
+      expect(options.stdin).toContain("</untrusted_item>");
+      expect(options.stdin).toContain(req.prevResearch.body);
+      expect(options.stdin).toContain(SAMPLE_ITEM.title);
 
       expect(options.cwd).toBe(req.cwd);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin);
       expect(stdinJson).toEqual({
         agent: "codex-cli",
         templateId: "default",
@@ -335,18 +347,19 @@ describe("agents/codex-cli adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
       await adapter.research(buildResearchRequest({ items }));
 
-      const [prompt, options] = run.mock.calls[0];
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
       for (const item of items) {
-        expect(prompt).toContain(item.id);
-        expect(prompt).toContain(item.url);
-        expect(prompt).toContain(item.title);
+        expect(block).toContain(item.id);
+        expect(block).toContain(item.url);
+        expect(block).toContain(item.title);
         if (item.summary !== undefined) {
-          expect(prompt).toContain(item.summary);
+          expect(block).toContain(item.summary);
         }
       }
-      expect(prompt).toContain(items.map((i) => i.id).join(", "));
+      expect(block).toContain(items.map((i) => i.id).join(", "));
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
 
@@ -356,25 +369,27 @@ describe("agents/codex-cli adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM, THIRD_ITEM];
       await adapter.research(buildResearchRequest({ items }));
 
-      const [prompt] = run.mock.calls[0];
-      expect(prompt).toContain("### Item 1 of 3");
-      expect(prompt).toContain("### Item 2 of 3");
-      expect(prompt).toContain("### Item 3 of 3");
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      const closeCount = (prompt.match(/<\/untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
-      expect(closeCount).toBe(3);
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
+      expect(block).toContain("### Item 1 of 3");
+      expect(block).toContain("### Item 2 of 3");
+      expect(block).toContain("### Item 3 of 3");
+      // Closing-tag count = wrapped-item count (the M2a guidance line mentions
+      // "<untrusted_item>" once without a closing tag).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
     });
 
-    it("emits the same prompt for a single-item array as before #140 (regression guard)", async () => {
+    it("emits no `### Item k of N` heading for a single-item array (regression guard)", async () => {
       const run = vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" });
       const adapter = createCodexCliAdapter({ run });
       await adapter.research(buildResearchRequest());
 
-      const [singlePrompt] = run.mock.calls[0];
-      expect(singlePrompt).not.toContain("### Item 1 of 1");
-      const openCount = (singlePrompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(1);
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
+      expect(block).not.toContain("### Item 1 of 1");
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(1);
     });
   });
 
@@ -397,16 +412,18 @@ describe("agents/codex-cli adapter", () => {
       const items = [SAMPLE_ITEM, SECOND_ITEM];
       await adapter.update(buildUpdateRequest({ items }));
 
-      const [prompt, options] = run.mock.calls[0];
-      expect(prompt).toContain("### Item 1 of 2");
-      expect(prompt).toContain("### Item 2 of 2");
-      expect(prompt).toContain(SAMPLE_ITEM.id);
-      expect(prompt).toContain(SECOND_ITEM.id);
-      // Predecessor body + 2 items = 3 boundary marker pairs total.
-      const openCount = (prompt.match(/<untrusted_item>/g) ?? []).length;
-      expect(openCount).toBe(3);
+      const [, options] = run.mock.calls[0];
+      const block = options.stdin;
+      expect(block).toContain("### Item 1 of 2");
+      expect(block).toContain("### Item 2 of 2");
+      expect(block).toContain(SAMPLE_ITEM.id);
+      expect(block).toContain(SECOND_ITEM.id);
+      // Predecessor body + 2 items = 3 boundary marker pairs (counted via the
+      // closing tag; the M2a guidance line mentions the open tag once more).
+      const pairCount = (block.match(/<\/untrusted_item>/g) ?? []).length;
+      expect(pairCount).toBe(3);
 
-      const stdinJson = JSON.parse(options.stdin);
+      const stdinJson = payloadJson(options.stdin) as { items: Item[] };
       expect(stdinJson.items).toEqual(items);
     });
   });
