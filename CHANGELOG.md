@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6](https://github.com/ozzy-labs/feedradar/compare/v0.1.5...v0.1.6) (2026-05-23)
+
+
+### Features
+
+* **feeds,recipes:** json-api facet sweep extension (ADR-0017) ([#233](https://github.com/ozzy-labs/feedradar/issues/233)) ([7755fc2](https://github.com/ozzy-labs/feedradar/commit/7755fc25f0019a1e8776f5772fcb56e2d3a193d0))
+* **recipes:** raise bundled maxPages cap to 250 for whats-new-v2 full backfill ([#232](https://github.com/ozzy-labs/feedradar/issues/232)) ([6cfa83c](https://github.com/ozzy-labs/feedradar/commit/6cfa83c0dda39096b35985d20450a8927e8b1f8d))
+
+
+### Bug Fixes
+
+* **recipes:** switch aws-whats-new to whats-new-v2 directoryId ([#229](https://github.com/ozzy-labs/feedradar/issues/229)) ([5231021](https://github.com/ozzy-labs/feedradar/commit/523102173b77d566252ed5b2bed8903328dc2c82))
+
 ## [0.1.5](https://github.com/ozzy-labs/feedradar/compare/v0.1.4...v0.1.5) (2026-05-22)
 
 
