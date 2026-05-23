@@ -1,7 +1,11 @@
 name: AWS What's New
 description: AWS What's New announcements (page-based JSON API, full-history backfill capable)
 kind: json-api
-url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&item.locale=en_US
+# `whats-new-v2` is the active directoryId that backs the current
+# aws.amazon.com/new/ landing page. The legacy `whats-new` directoryId is
+# frozen at 2024-05-17 (16,281 items) and no longer ingests new posts. We
+# discovered v2 by grepping the rendered HTML of /new/ for `whats-new-v2`.
+url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&item.locale=en_US
 tags:
   - aws
   - cloud
@@ -33,8 +37,12 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  # 200 pages * 100 items/page = ~20,000 items, well above the ~16,281 total
-  # observed in 2026-05. `--backfill --max-pages N` can narrow further.
+  # 200 pages * 100 items/page = 20,000 items. `whats-new-v2` reports
+  # `totalHits: ~21,834` (2026-05 observation), so a full `--backfill` at
+  # the bundled cap leaves the oldest ~1,800 posts unindexed. Lifting the
+  # cap requires also widening the bundled-recipe ceiling in
+  # `tests/recipes/bundled.test.ts` (defense-in-depth, ADR-0012 §D5);
+  # tracked as a follow-up. `--backfill --max-pages N` can narrow further.
   maxPages: 200
   # `metadata.totalHits` is the AWS-reported total; the adapter uses it to
   # short-circuit backfill once `ceil(totalHits / pageSize)` pages have been

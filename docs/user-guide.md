@@ -543,7 +543,7 @@ JSON Feed は仕様で `top.next_url` による pagination を許す。adapter �
 
 | サイト | endpoint | pagination | 備考 |
 |---|---|---|---|
-| AWS What's New | `https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0&...` | `page` (page-number) | 16,000+ 件、`--backfill` の主要 use case |
+| AWS What's New | `https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&size=100&page=0&...` | `page` (page-number) | 21,000+ 件、`--backfill` の主要 use case |
 | dev.to | `https://dev.to/api/articles?per_page=30&page=1` | `page` | zero-config（default chain で動く） |
 | 任意の REST API | `Link: ...; rel="next"` 形式 | `link-header` | GitHub-style pagination |
 
@@ -555,7 +555,7 @@ JSON Feed は仕様で `top.next_url` による pagination を許す。adapter �
 # sources/aws-whats-new.yaml
 id: aws-whats-new
 kind: json-api
-url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&tags.id=whats-new%23general-products%23amazon-bedrock
+url: https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&sort_by=item.additionalFields.postDateTime&sort_order=desc&size=100&page=0&tags.id=whats-new%23general-products%23amazon-bedrock
 name: AWS What's New
 tags: ["aws", "cloud"]
 filters:
@@ -613,7 +613,7 @@ trustLevel: untrusted
 # AWS What's New: --pagination-* flag を使う
 radar source add aws-whats-new \
   --kind json-api \
-  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0" \
+  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&size=100&page=0" \
   --keywords "Bedrock,Claude" \
   --pagination-strategy page \
   --pagination-param page \
@@ -701,7 +701,7 @@ interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c
 通常 `watch run` は新着検出に最適化されており、`lastSeenIds` に当たった時点でページネーションを打ち切る。**`--backfill` モード**を使うと、recipe の `pagination.maxPages` まで全ページを辿って items を一括取り込みする（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。
 
 ```bash
-# AWS What's New の過去 16,000+ 件を取り込む
+# AWS What's New の過去 21,000+ 件を取り込む
 radar watch run --source aws-whats-new --backfill --max-pages 200
 
 # default の maxPages（recipe 値）で backfill
@@ -712,7 +712,7 @@ radar watch run --source aws-whats-new --backfill
 
 - 通常モードの early-stop（`lastSeenIds` ヒット / `pageSize` 未満 / 空ページ）が **無効化**される（`pageSize` 未満 / 空ページは引き続き termination）
 - conditional GET (`If-None-Match`) も **無効化**される（前回 `lastEtag` が stale な normal-mode の値だと 304 で early-out してしまうため）
-- `pagination.totalPath` が指定されていれば early-stop の上限を計算（例: `totalHits: 16281`, `pageSize: 100` → 163 ページで停止）
+- `pagination.totalPath` が指定されていれば early-stop の上限を計算（例: `totalHits: 21834`, `pageSize: 100` → 219 ページで停止。recipe 側 `maxPages` が小さければそちらが優先）
 - `--max-pages N` は `pagination.maxPages` と `N` の **小さい方** が effective cap（recipe の安全網は維持しつつユーザー側で更に絞れる）
 - `--bootstrap` と **mutually exclusive**（`--bootstrap` は seen 化のみで items を生成しない、`--backfill` は items を全件生成、目的が逆）。同時指定で exit code 2
 
@@ -836,7 +836,7 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 | recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
 |---|---|---|---|---|---|
-| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/about-aws/whats-new/recent/) (JSON API) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の全履歴 16,000+ 件を取り込み可能。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=200`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の 21,000+ 件を取り込み可能（cap 200 ページで最古 ~1,800 件は欠ける）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
 | `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
 
 > **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。

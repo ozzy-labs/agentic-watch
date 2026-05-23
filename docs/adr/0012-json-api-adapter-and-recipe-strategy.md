@@ -417,3 +417,25 @@ ADR-0009 §A 信頼境界表 (`Source kind` 別) に **2 行追加**する:
   - JSON Feed 仕様: [`jsonfeed.org/version/1.1`](https://jsonfeed.org/version/1.1)
 - knowledge:
   - [`ai/practice/prompt-injection`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md) (D5d の M1c boundary marker 継承)
+
+## Update 2026-05-23: `whats-new` directoryId 凍結 → `whats-new-v2` 移行
+
+ADR 採択直後、bundled `aws-whats-new` recipe で full backfill しても `Amazon Quick` (リブランド後表記) keyword が一切ヒットしない症状が報告された。`curl` で endpoint を直接叩いた結果:
+
+- `directoryId=whats-new` の最新 `postDateTime` は **2024-05-17** で凍結 (totalHits 16,281)。それ以降の announcement は API レスポンスに乗らない
+- `aws.amazon.com/about-aws/whats-new/recent/` は 301 で `/new/` にリダイレクト。`/new/` のレンダリング済み HTML を `grep` すると `whats-new-v2#year` / `whats-new-v2#marketing-marchitecture` という data-attribute が出現
+- `directoryId=whats-new-v2` で同 API を叩くと totalHits **21,834** で当日の announcement が page 0 に並ぶ (schema は v1 と完全互換)
+
+採択した修正:
+
+- `recipes/aws-whats-new.yaml` の `url` を `whats-new-v2` に差し替え。v1 が凍結された経緯は recipe コメントに残す
+- `docs/user-guide.md` の事例値 16,281 → 21,834 / 16,000+ 件 → 21,000+ 件、`src/templates/agents/AGENTS.md` の example URL も同期
+
+残課題 (follow-up):
+
+- `whats-new-v2` の totalHits 21,834 は recipe cap `maxPages: 200 × pageSize 100 = 20,000` を上回るため、最古 ~1,800 件 (~2 か月分) が `--backfill` で取り込まれない。cap 拡張は §D5 の defense-in-depth 議論と `tests/recipes/bundled.test.ts:79` の hard limit (≤200) を同時に動かす必要があり、別 issue で扱う
+
+一般化された知見 (将来の recipe 追加 / breakage 復旧時の参考):
+
+- 公式 JSON endpoint が突然 frozen / 404 になった場合、サイトのレンダリング済み HTML / CSP header / SPA bundle 内の文字列を grep すると **後継 endpoint の identifier (directoryId, GraphQL operation name, REST path) が発掘できる**ことが多い。今回は CSP の `connect-src` 列挙と SPA HTML 内の data-attribute から `whats-new-v2` を再発見した
+- bundled recipe の url は「API endpoint の identifier + クエリ」で構成されており、identifier 部分だけ差し替えれば schema 互換なまま現役 endpoint に追従できるケースがある
