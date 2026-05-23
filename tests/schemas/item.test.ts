@@ -7,6 +7,7 @@ import {
   TriageDecisionValueSchema,
   TriageFeedbackSchema,
 } from "../../src/schemas/item.js";
+import { AgentIdSchema } from "../../src/schemas/research.js";
 
 /**
  * Item is the on-disk payload for items/<sourceId>/<itemId>.yaml. The
@@ -231,6 +232,20 @@ describe("schemas/item — DismissedBySchema (ADR-0018 §W6)", () => {
     // tagging so `undismiss --force` can do the right thing.
     expect(DismissedBySchema.safeParse("claude-code").success).toBe(false);
     expect(DismissedBySchema.safeParse("triage_unknown").success).toBe(false);
+  });
+
+  it("stays in lockstep with AgentIdSchema (every agent has a triage_<agent> variant)", () => {
+    // DismissedBySchema is a hand-maintained mirror of AgentIdSchema with a
+    // `triage_` prefix. When a new adapter is added to AgentIdSchema, both
+    // lists must be updated. This test fails loudly if the two drift.
+    for (const agent of AgentIdSchema.options) {
+      const tagged = `triage_${agent}`;
+      const result = DismissedBySchema.safeParse(tagged);
+      expect(
+        result.success,
+        `AgentIdSchema has '${agent}' but DismissedBySchema is missing '${tagged}' — keep these in sync`,
+      ).toBe(true);
+    }
   });
 });
 

@@ -143,6 +143,13 @@ export type TriageDecision = z.infer<typeof TriageDecisionSchema>;
  * `triage_` prefix lets schema validation reject malformed values like
  * `"claude-code"` (missing prefix) that would silently collide with the
  * `human` case.
+ *
+ * Maintenance note: this enum mirrors `AgentIdSchema` (`src/schemas/research.ts`)
+ * with a `triage_` prefix. When a new agent adapter is added, both enums
+ * must be updated in lockstep. A test (`tests/schemas/item.test.ts`)
+ * iterates each `AgentIdSchema` value and asserts the corresponding
+ * `triage_<agent>` variant parses; that test will fail loudly if the two
+ * lists drift out of sync.
  */
 export const DismissedBySchema = z.enum([
   "human",
