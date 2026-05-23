@@ -779,7 +779,7 @@ facets:
 - **`--max-pages N`**: inner pagination のみに適用される。facet 軸には影響しない
 - **conditional GET (`If-None-Match`) は無効化**: 1 つの ETag で N 個の facet 値の状態を表現できないため。`lastEtag` は永続化されない (per-facet ETag tracking は future work)
 - **`lastSeenIds` は global**: facet 値を跨ぐ item ID の重複は想定しない (AWS What's New のように item.id が unique である API を前提とする)
-- **`source test` (dry-run)**: 最初の 1 facet 値のみ fetch して終了 (selector adoption preview を保ちつつコスト膨張を防ぐ)
+- **`source test` (dry-run)**: 単一の facet 値のみ fetch して終了 (selector adoption preview を保ちつつコスト膨張を防ぐ)。range facet は**上端 (最新年)** を test 対象とする ([#256](https://github.com/ozzy-labs/feedradar/issues/256))。これにより recency 系 recipe (例: `aws-whats-new` の year sweep) で、過去年ではなく最新コンテンツに対してキーワード検証ができる (`current-year` sentinel も解決される)。enum facet は「最新」概念が無いため先頭値を test する。どの値を test したかは警告として表示される: `facet sweep 有効: year=2026 のみ test 中（全 N 件の facet 値は walk しない）`。全 facet 値の確認は `radar watch run --backfill` を使う
 
 ##### Phase 1 の制限
 

@@ -50,6 +50,32 @@ export interface FeedFetchDiag {
     /** Cursor / token value extracted from `nextCursorPath`, when applicable. */
     nextCursor?: string | null;
   };
+  /**
+   * Facet-sweep summary surfaced when a `kind: json-api` source declares
+   * `facets:` (ADR-0017) and the fetch ran in dry-run mode (`source test`).
+   *
+   * A dry run walks exactly ONE facet value — the rest of the sweep is
+   * skipped to keep the preview cheap. This payload tells `source test`
+   * which value was actually probed so the CLI can warn the user that
+   * keyword verification only reflects that single slice (e.g. a year-axis
+   * recipe whose other years are not exercised). For `range` facets the
+   * probed value is the resolved upper bound (latest year, #256/#257) so
+   * recency-style recipes are tested against current content rather than
+   * the historical first year; `enum` facets use the first listed value
+   * (no "latest" concept).
+   */
+  facetSweep?: {
+    /** The facet name (the key in `source.facets`). */
+    facet: string;
+    /** The injected query parameter (`facet.param`). */
+    param: string;
+    /** The single facet value actually fetched in this dry run. */
+    testedValue: string | number;
+    /** The facet discriminator (`range` | `enum`). */
+    type: string;
+    /** Total number of facet values a real (non-dry-run) sweep would walk. */
+    totalValues: number;
+  };
 }
 
 /** Result of a single adapter fetch — the items plus the next state to persist. */

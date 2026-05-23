@@ -491,6 +491,12 @@ function printTestHelp(log: (m: string) => void): void {
   log("Page 0's `Link` header / `nextCursor` extraction is surfaced via");
   log("`--show-content` for pagination tuning without state mutation.");
   log("");
+  log("For facet-sweep recipes (ADR-0017 / #256), `source test` probes a SINGLE");
+  log("facet value: range facets use the upper bound (latest year), enum facets");
+  log("use the first listed value. A warning names which value was tested so");
+  log("keyword tuning is not silently scoped to one slice. Run `radar watch run");
+  log("--backfill` to sweep every facet value.");
+  log("");
   log("Options:");
   log("  --limit N        Maximum number of matched items to print (default 10)");
   log("  --show-content   Also print the first 200 chars of each item's body, plus");
@@ -1157,6 +1163,21 @@ export async function testSource(
   log("");
   log(`source test: ${parsed.id}`);
   log(`  fetched: ${fetched} / filtered: ${filtered} / matched: ${matched.length}`);
+
+  // Facet sweep notice (#256). A dry-run `source test` probes exactly ONE
+  // facet value, so keyword verification only reflects that single slice. We
+  // surface this as a non-fatal warning regardless of --show-content because
+  // a silent `matched: 0` on a facet recipe is the exact footgun this issue
+  // fixes: range facets now test the latest value (e.g. current year) instead
+  // of the historical first value, but the user still needs to know the other
+  // facet values were not walked.
+  const facetSweep = result.diag[parsed.id]?.facetSweep;
+  if (facetSweep) {
+    warn(
+      `source test: facet sweep 有効: ${facetSweep.facet}=${facetSweep.testedValue} のみ test 中（全 ${facetSweep.totalValues} 件の facet 値は walk しない）。` +
+        `range facet は上端（最新値）を test します。全 facet 値を確認するには \`radar watch run --backfill\` を使用してください。`,
+    );
+  }
 
   // Render the adapter diag for `kind: json-api` when --show-content is on.
   // The diag block is intentionally gated behind --show-content so the

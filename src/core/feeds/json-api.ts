@@ -600,13 +600,57 @@ function* generateFacetValues(facet: SourceFacet): Generator<string | number> {
 }
 
 /**
+ * Count the facet values a real (non-dry-run) sweep would walk.
+ *
+ * Used purely for the `source test` warning denominator ("testing 1 of N
+ * facet values") — the real sweep still iterates {@link generateFacetValues}.
+ */
+function countFacetValues(facet: SourceFacet): number {
+  if (facet.type === "range") {
+    const [start, rawEnd] = facet.range;
+    const end = resolveRangeEnd(rawEnd);
+    if (start > end) return 0;
+    return Math.floor((end - start) / facet.step) + 1;
+  }
+  return facet.values.length;
+}
+
+/**
+ * Pick the single facet value to probe in dry-run mode (`source test`).
+ *
+ * - `range`: the resolved UPPER bound (latest year via {@link resolveRangeEnd},
+ *   honouring the `"current-year"` sentinel from #257). This fixes #256 —
+ *   recency-style recipes (e.g. AWS What's New swept by year) were previously
+ *   tested against the range START (oldest year, e.g. 2004), where current
+ *   keywords can never match. Testing the latest year makes keyword tuning
+ *   meaningful. Returns `null` for a degenerate `start > end` range (no value
+ *   to probe).
+ * - `enum`: the first listed value. Enum facets have no "latest" ordering, so
+ *   we keep the historical first-value behaviour.
+ */
+function pickDryRunFacetValue(facet: SourceFacet): string | number | null {
+  if (facet.type === "range") {
+    const [start, rawEnd] = facet.range;
+    const end = resolveRangeEnd(rawEnd);
+    if (start > end) return null;
+    // Walk down from `end` by `step` to land on a value the real sweep would
+    // actually visit (the inclusive range may not include `end` itself when
+    // step > 1 and (end - start) is not a multiple of step).
+    const offset = (end - start) % facet.step;
+    return end - offset;
+  }
+  return facet.values[0] ?? null;
+}
+
+/**
  * Inner fetch — the original single-axis (pagination-only) traversal. The
  * public adapter delegates here either directly (no facets) or once per
  * facet value (facet sweep mode).
  *
  * `dryRun` is preserved (single-page fetch behaviour) but the public
- * adapter narrows it further in facet sweep mode to "first facet value
- * only" so `source test` does not walk every year.
+ * adapter narrows it further in facet sweep mode to a single facet value
+ * (the range upper bound / latest year, or the first enum value — see
+ * {@link pickDryRunFacetValue}) so `source test` does not walk every year.
  */
 async function fetchSingle(source: Source, options: FeedAdapterOptions): Promise<FeedFetchResult> {
   if (!source.pagination) {
@@ -901,8 +945,11 @@ async function fetchSingle(source: Source, options: FeedAdapterOptions): Promise
  * inside each value but never skips a facet outright (that would silently
  * miss items in a facet whose first page has not changed since last run).
  *
- * Dry-run (`source test`) iterates only the first facet value so the
- * selector adoption preview is meaningful without walking every year.
+ * Dry-run (`source test`) iterates only a single facet value so the
+ * selector adoption preview is meaningful without walking every year:
+ * range facets probe the upper bound (latest year, #256/#257) so recency
+ * recipes verify keywords against current content; enum facets probe the
+ * first value. The probed value is reported via `diag.facetSweep`.
  *
  * Phase 1 limitation: a single facet entry only. Multi-facet (e.g. year ×
  * category) requires composition rules that are out of scope here — see
@@ -924,7 +971,7 @@ export const jsonApiAdapter: FeedAdapter = {
         `json-api adapter: source '${source.id}' declares ${facetEntries.length} facets — multi-facet sweep is not supported in Phase 1 (ADR-0017 §Scope)`,
       );
     }
-    const [, facetSpec] = facetEntries[0] as [string, SourceFacet];
+    const [facetName, facetSpec] = facetEntries[0] as [string, SourceFacet];
 
     const dryRun = options.dryRun === true;
     // Aggregate items + lastSeenIds across every facet value. ETag is
@@ -937,7 +984,32 @@ export const jsonApiAdapter: FeedAdapter = {
     let aggregatedNotModified = true;
     const fetchedAt = new Date().toISOString();
 
-    for (const value of generateFacetValues(facetSpec)) {
+    // Dry-run (`source test`) probes exactly ONE facet value. For `range`
+    // facets we pick the resolved upper bound (latest year) so recency-style
+    // recipes are tested against current content — testing the range START
+    // (oldest year, e.g. 2004) made keyword verification useless (#256).
+    // `enum` facets keep first-value behaviour. The chosen value drives the
+    // single iteration below and is reported via the `facetSweep` diag so the
+    // CLI can warn that only one slice was exercised.
+    const dryRunValue = dryRun ? pickDryRunFacetValue(facetSpec) : null;
+    const facetSweepDiag: NonNullable<FeedFetchDiag["facetSweep"]> | undefined =
+      dryRun && dryRunValue !== null
+        ? {
+            facet: facetName,
+            param: facetSpec.param,
+            testedValue: dryRunValue,
+            type: facetSpec.type,
+            totalValues: countFacetValues(facetSpec),
+          }
+        : undefined;
+
+    // In dry-run mode iterate only the chosen value; otherwise walk the full
+    // sweep. A degenerate range (`start > end`, i.e. `dryRunValue === null`)
+    // yields nothing and falls through to an empty result.
+    const valuesToWalk: Iterable<string | number> =
+      dryRun && dryRunValue !== null ? [dryRunValue] : dryRun ? [] : generateFacetValues(facetSpec);
+
+    for (const value of valuesToWalk) {
       const innerUrl = applyFacetValue(source.url, facetSpec, value);
       // Build a "single-axis" view of the source: same id / pagination /
       // selectors but with the facet-stamped URL and `facets: undefined`
@@ -973,10 +1045,14 @@ export const jsonApiAdapter: FeedAdapter = {
         aggregatedItems.push(item);
         aggregatedSeen.add(item.id);
       }
+    }
 
-      // Dry-run: walk only the first facet value so `source test` stays
-      // cheap and the per-page-0 selector preview is meaningful.
-      if (dryRun) break;
+    // Fold the facet-sweep summary into the representative diag so
+    // `source test` can warn which single value it probed. We attach it even
+    // when the inner fetch produced no diag of its own (e.g. a degenerate
+    // range yields no fetch at all but the sweep metadata is still useful).
+    if (facetSweepDiag) {
+      aggregatedDiag = { ...(aggregatedDiag ?? {}), facetSweep: facetSweepDiag };
     }
 
     return {

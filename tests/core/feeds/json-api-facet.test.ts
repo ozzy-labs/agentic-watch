@@ -215,9 +215,11 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
     expect(calls[1]).toContain("category=storage");
   });
 
-  it("walks only the first facet value in dry-run mode", async () => {
-    // `source test` is dry-run; the facet outer loop should short-circuit
-    // after the first facet value so the preview stays cheap.
+  it("walks only the range UPPER bound (latest year) in dry-run mode (#256)", async () => {
+    // `source test` is dry-run; the facet outer loop probes exactly ONE
+    // value. For range facets it must be the upper bound (latest year, 2026)
+    // — not the start (2004-era) — so recency recipes verify keywords against
+    // current content (#256). The preview still stays cheap (one fetch).
     const source = makeSource({
       facets: {
         year: {
@@ -236,15 +238,116 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
       return {
         status: 200,
         headers: { get: () => null },
-        text: async () => itemBody("y2024", 1),
+        text: async () => itemBody("y2026", 1),
       };
     };
     const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl, dryRun: true });
-    // Only the first facet value (2024) should have been fetched, even
-    // though the range covers 3 years.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("y-2026");
+    expect(result.items).toHaveLength(1);
+    // The facetSweep diag reports which single value was probed.
+    expect(result.diag?.facetSweep).toEqual({
+      facet: "year",
+      param: "tags.id",
+      testedValue: 2026,
+      type: "range",
+      totalValues: 3,
+    });
+  });
+
+  it("dry-run probes the resolved `current-year` upper bound (#256/#257)", async () => {
+    // The range upper bound may be the `current-year` sentinel; the dry-run
+    // probe must resolve it to the actual current year, not the start.
+    const currentYear = new Date().getFullYear();
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => itemBody("cur", 1),
+      };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl, dryRun: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(`y-${currentYear}`);
+    expect(result.diag?.facetSweep?.testedValue).toBe(currentYear);
+  });
+
+  it("dry-run lands on a step-aligned value when step > 1 (#256)", async () => {
+    // [2020, 2025] step 2 → real sweep visits 2020, 2022, 2024 (2025 is not a
+    // multiple of step from start). The dry-run probe must pick 2024 (the
+    // highest value the sweep actually visits), not the raw end (2025).
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: [2020, 2025],
+          step: 2,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => itemBody("step", 1),
+      };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl, dryRun: true });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("y-2024");
-    expect(result.items).toHaveLength(1);
+    expect(result.diag?.facetSweep?.testedValue).toBe(2024);
+  });
+
+  it("dry-run probes the FIRST value for enum facets (no `latest` concept)", async () => {
+    const source = makeSource({
+      facets: {
+        category: {
+          type: "enum",
+          values: ["compute", "storage", "database"],
+          param: "category",
+          template: "{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => itemBody("enum", 1),
+      };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl, dryRun: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("category=compute");
+    expect(result.diag?.facetSweep).toEqual({
+      facet: "category",
+      param: "category",
+      testedValue: "compute",
+      type: "enum",
+      totalValues: 3,
+    });
   });
 
   it("range with step > 1 skips intermediate values", async () => {

@@ -1047,6 +1047,62 @@ describe("cli/source", () => {
       expect(callCount).toBe(1);
     });
 
+    it("warns which single facet value was tested for a facet-sweep source (#256)", async () => {
+      // Facet sweep sources are recipe-only, so write the YAML directly. A
+      // dry-run `source test` probes the range UPPER bound (latest year)
+      // and must warn the user that only that one slice was walked.
+      const facetYaml = [
+        "id: aws-facet",
+        "kind: json-api",
+        "url: https://example.com/api/items?size=10",
+        "tags: []",
+        "filters:",
+        "  keywords: []",
+        "  excludeKeywords: []",
+        "  matchMode: word",
+        "  matchFields: [title, summary]",
+        "  caseSensitive: false",
+        "trustLevel: untrusted",
+        "pagination:",
+        "  type: page",
+        "  param: page",
+        "  start: 0",
+        "  pageSize: 10",
+        "  pageSizeParam: size",
+        "  maxPages: 5",
+        "facets:",
+        "  year:",
+        "    type: range",
+        "    param: tags.id",
+        "    template: y-{}",
+        "    range: [2024, 2026]",
+        "    step: 1",
+        "",
+      ].join("\n");
+      await writeFile(join(workdir, "sources", "aws-facet.yaml"), facetYaml, "utf8");
+
+      const calls: string[] = [];
+      const fetchImpl: FetchLike = async (url) => {
+        calls.push(typeof url === "string" ? url : url.toString());
+        return {
+          status: 200,
+          headers: { get: () => null },
+          text: async () => JSON.stringify({ items: [{ title: "x", url: "https://e/x" }] }),
+        };
+      };
+      const { io, captured } = captureIo();
+      const code = await testSource(["aws-facet"], { cwd: workdir, io, fetch: fetchImpl });
+      expect(code).toBe(0);
+      // Only the latest year (2026) was fetched (one slice, page 0 only).
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("y-2026");
+      // The warning names the facet, the tested value, and the total count.
+      const warning = captured.warn.join("\n");
+      expect(warning).toContain("facet sweep");
+      expect(warning).toContain("year=2026");
+      expect(warning).toContain("3");
+    });
+
     it("exits 1 for an unknown source id (no YAML on disk)", async () => {
       const { io, captured } = captureIo();
       const code = await testSource(["ghost"], { cwd: workdir, io });
