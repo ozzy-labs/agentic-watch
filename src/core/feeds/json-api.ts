@@ -1009,7 +1009,16 @@ export const jsonApiAdapter: FeedAdapter = {
     const valuesToWalk: Iterable<string | number> =
       dryRun && dryRunValue !== null ? [dryRunValue] : dryRun ? [] : generateFacetValues(facetSpec);
 
+    // Per-page progress (#269): the inner pagination loop resets its page
+    // counter on every facet value, so wrap `onPage` to stamp which value
+    // (and its 1-based position in the sweep) each page event belongs to.
+    // The CLI uses this to prefix the row with e.g. `year=2018 (15/23)`.
+    const baseOnPage = options.onPage;
+    const facetTotal = dryRun ? 1 : countFacetValues(facetSpec);
+    let facetIndex = 0;
+
     for (const value of valuesToWalk) {
+      facetIndex++;
       const innerUrl = applyFacetValue(source.url, facetSpec, value);
       // Build a "single-axis" view of the source: same id / pagination /
       // selectors but with the facet-stamped URL and `facets: undefined`
@@ -1022,6 +1031,13 @@ export const jsonApiAdapter: FeedAdapter = {
       // would silently 304-out the next slice.
       const innerOptions: FeedAdapterOptions = {
         ...options,
+        onPage: baseOnPage
+          ? (info) =>
+              baseOnPage({
+                ...info,
+                facet: { name: facetName, value, index: facetIndex, total: facetTotal },
+              })
+          : undefined,
         state: options.state
           ? {
               ...options.state,

@@ -386,6 +386,70 @@ describe("watchRun progress integration (#198)", () => {
     expect(succeed?.arg1).toContain("5 new");
   });
 
+  it("prefixes the facet value on per-page markers during a facet sweep (#269)", async () => {
+    // A `year` range facet restarts pagination per value, so the page counter
+    // resets to 1/N each year. The marker must carry the facet value + sweep
+    // position so the resets read as progress, not a glitch.
+    await writeFile(
+      join(workdir, "sources", "aws.yaml"),
+      [
+        "id: aws",
+        "kind: json-api",
+        "url: https://example.com/api",
+        "tags: []",
+        "filters:",
+        "  keywords:",
+        "    - release",
+        "pagination:",
+        "  type: page",
+        "  param: page",
+        "  start: 0",
+        "  pageSize: 2",
+        "  maxPages: 5",
+        "jsonSelectors:",
+        "  items: $.items[*]",
+        "  title: $.title",
+        "  link: $.url",
+        "  publisherId: $.id",
+        "facets:",
+        "  year:",
+        "    type: range",
+        "    param: y",
+        '    template: "{}"',
+        "    range:",
+        "      - 2024",
+        "      - 2026",
+        "    step: 1",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 5,
+      // One page of 1 item (< pageSize 2 → last page) per year × 3 years.
+      fetch: mockPagedFetch([
+        { items: 1, idStart: 1 },
+        { items: 1, idStart: 2 },
+        { items: 1, idStart: 3 },
+      ]) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+    });
+    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    const pageMarkers = phaseNames.filter((n) => n.startsWith("[aws] ") && n.includes("Page "));
+    expect(pageMarkers).toEqual([
+      "[aws] year=2024 (1/3) Page 1/5: 1 items fetched",
+      "[aws] year=2025 (2/3) Page 1/5: 1 items fetched",
+      "[aws] year=2026 (3/3) Page 1/5: 1 items fetched",
+    ]);
+  });
+
   it("no-ops when the heuristic is off (single rss source, no backfill)", async () => {
     // Single rss source ≠ html-js/json-api ≠ 3+ sources: the heuristic
     // gate must drop the reporter so the typical small workspace stays
