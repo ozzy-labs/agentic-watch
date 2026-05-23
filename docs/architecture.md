@@ -191,10 +191,11 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 | `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (初回 bootstrap) |
 | `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch を **後追い生成** (ADR-0014 D1 / D6) |
 | `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | GitHub Actions watch + 自動 research の連鎖 (ハードキャップ + rebase リトライ内蔵、ADR-0014 D2 / D3 / D4) |
+| `radar workflow generate combined-with-triage` | `.github/workflows/feedradar-daily.yaml` (既定) | GitHub Actions watch + LLM triage + 自動 research + per-group digest + cross-agent review の 5-step chain ([ADR-0018](./adr/0018-triage-extension.md) §W5) |
 
 両 scheduler は実行ごとに **fresh clone** を行うため、`sources/` / `items/` / `state/` は **git にコミット済み**である必要がある。生成された雛形は `items/` / `state/` の commit + push 手順を含んでいる（fresh clone でも前回の `lastSeenIds` を引き継げるようにするため）。
 
-雛形のうち `watch` 系 (`init --with-actions` / `workflow generate watch`) は **`watch run` のみを自動化**、`combined` は **watch + 自動 research の連鎖** を `--max-items` ハードキャップ + `--filter-tags` allow-list で安全に自動化する（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a 二重防御）。`update` は人が triage する設計（ADR-0004）。
+雛形のうち `watch` 系 (`init --with-actions` / `workflow generate watch`) は **`watch run` のみを自動化**、`combined` は **watch + 自動 research の連鎖** を `--max-items` ハードキャップ + `--filter-tags` allow-list で安全に自動化する（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a 二重防御）。`combined-with-triage` はその拡張で **LLM triage を挟んで research / digest / dismiss を 4 way 分岐**することで、attention 削減 + research cost を 5-10x 削減する（[ADR-0018](./adr/0018-triage-extension.md)、cheap-model channel）。`update` は人が triage する設計（ADR-0004）。
 
 ### 認証ポリシー
 

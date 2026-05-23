@@ -38,3 +38,27 @@ pagination:
 # `jsonSelectors` omitted intentionally: the default chain (ADR-0012 §D2 /
 # #174) handles the dev.to shape end-to-end.
 trustLevel: untrusted
+# Default triage policy bundled with this recipe (ADR-0018 §W3 / #241).
+# dev.to mixes technical deep-dives with marketing posts and "hello world"
+# tutorials, so the rules below bias toward research for framework /
+# performance / security topics, digest tutorial round-ups, and dismiss
+# personal promo / intro content. Adjust per workspace by overriding the
+# generated `sources/<id>.yaml > triagePolicy.rules:` block.
+triagePolicy:
+  agent: gemini-cli
+  confidenceThreshold: 0.7
+  rules: |
+    重要 (research):
+      - 新フレームワーク / 新ツールの紹介 / GA 発表記事
+      - performance benchmark / architecture deep-dive
+      - security 脆弱性報告 / CVE 解説
+      - メジャーアップデート (vN.0 リリース解説)
+    集約 (digest):
+      - tutorial 系の週次 round-up (関連トピック数本まとめ)
+        group: tutorial-roundup
+      - "Top N libraries for X" のようなキュレーション記事
+        group: curation
+    除外 (dismiss):
+      - 個人ブログ宣伝 / SaaS プロダクト promo
+      - 入門記事 ("hello world", "what is X" 系)
+      - "I built X in N hours" 系の体験記

@@ -144,6 +144,36 @@ radar research <item-id>      # 自動 triage は推奨しない (ユーザー�
 
 `watch run` は cron / GitHub Actions / Claude Routines から呼ぶことを想定しています。`research` / `review` / `update` / `dismiss` は人間の判断が伴うため、interactive session 経由を推奨します。
 
+### scheduled triage workflow 例 (ADR-0018 §W5)
+
+`triagePolicy:` を持つ source を登録済みの場合、scheduled GHA cron で `watch → triage → research → review` を**無人実行**できます。雛形は `radar workflow generate combined-with-triage` で生成:
+
+```bash
+radar workflow generate combined-with-triage \
+  --watch-cron "0 6 * * *" \
+  --triage-agent gemini-cli \
+  --research-agent claude-code \
+  --review-agent codex-cli \
+  --max-items 10
+# → .github/workflows/feedradar-daily.yaml
+```
+
+生成される workflow が 1 cron tick で走らせる 5 ステップ:
+
+```text
+1. radar watch run                                            # 新着 → detected
+2. radar triage --apply --triage-agent gemini-cli             # detected → triaged_research / triaged_digest / triaged_unsure / dismissed
+3. radar research --batch --status triaged_research \
+     --max-items 10 --agent claude-code                       # triaged_research → researched (1 item 1 report)
+4. radar research --digest <ids per triage.group> \
+     --agent claude-code                                      # triaged_digest → researched (group ごとに 1 report 集約)
+5. radar review --batch --status researched --agent codex-cli # researched → reviewed (cross-agent)
+```
+
+末尾には `triaged_unsure` キュー深度を Slack 通知する `if: always()` step と、`peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる step が付く。**triage の cost は research に比べて 1-2 桁安い** (cheap-model channel、`gemini-2.5-flash-lite` 想定で月数千 item でも \$0.10 未満) ため、cost gating の主防御は引き続き `--max-items` (ADR-0014 D3a)。
+
+詳細・secrets setup・policy 書き方・cost 試算・troubleshooting は `radar` リポジトリの [`docs/user-guide.md` §triage workflow](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#triage-workflow) を参照。
+
 ## エージェント選択ガイド (cross-agent review)
 
 [ADR-0001](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0001-agent-adapter-interface.md) に基づき、`research` と `review` は **別の agent** で実行することを推奨します:

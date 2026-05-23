@@ -1,0 +1,148 @@
+# `radar workflow generate combined-with-triage` template (ADR-0018 §W5).
+#
+# Chains watch run -> LLM triage -> capped research -> per-group digest ->
+# review in a single GitHub Actions job. Triage layer slashes detection
+# volume to research-worthy items only, so the LoC-heavy research/review
+# steps see ~5-15% of the raw detected count instead of the full firehose.
+#
+# Placeholders rendered by `src/cli/workflow/generate-combined-with-triage.ts`:
+#   {{watchCron}}      — schedule cron expression (default "0 6 * * *")
+#   {{maxItems}}       — `--max-items` hard cap on research --batch (default 10)
+#   {{triageAgent}}    — agent id used by `radar triage --apply`
+#   {{researchAgent}}  — agent id used by `radar research --batch`
+#   {{reviewAgent}}    — agent id used by `radar review --batch`
+#   {{envBlock}}       — combined env: block exposing every agent's API key
+#                        (10-space indented; emitted as job-level `env:` so
+#                        every step inherits without per-step duplication)
+#   {{slackWebhookExpr}} — GitHub Actions expression that resolves to the
+#                          Slack webhook URL (e.g. `${{ secrets.SLACK_WEBHOOK }}`),
+#                          or the empty string when --slack-webhook is unset.
+#                          Rendered into a shell `[ -n "..." ]` guard so the
+#                          notify step no-ops cleanly when unset.
+#
+# Hard-cap rationale (ADR-0014 D3a 二重防御): `--max-items {{maxItems}}` is
+# embedded as a YAML literal AND re-enforced by the CLI, so a hand-edited
+# workflow cannot blow the cap inside one invocation.
+
+name: feedradar-daily
+
+on:
+  schedule:
+    - cron: "{{watchCron}}"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Distinct from feedradar-watch / feedradar-combined so this can co-exist
+  # with the simpler workflows on the same branch without serializing.
+  group: feedradar-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+{{envBlock}}
+    steps:
+      - name: Checkout workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.21"
+
+      - name: Install FeedRadar
+        run: npm install -g @ozzylabs/feedradar
+
+      - name: Run watch (detect new items)
+        run: radar watch run
+
+      - name: Triage detected items (agent={{triageAgent}})
+        # ADR-0018 §W3: per-source `triagePolicy:` drives the cheap-model
+        # classification. Items without a policy are skipped and remain in
+        # `detected` so the existing untriaged-feeds workflow still picks
+        # them up.
+        run: radar triage --apply --triage-agent {{triageAgent}}
+
+      - name: Research triaged_research items (capped at {{maxItems}}, agent={{researchAgent}})
+        # `--batch --status triaged_research` consumes only items the triage
+        # step promoted, leaving `triaged_digest` for the digest step and
+        # `triaged_unsure` for the human-review queue. The hard cap protects
+        # against a triage misfire that promotes everything.
+        run: radar research --batch --status triaged_research --max-items {{maxItems}} --agent {{researchAgent}}
+
+      - name: Research digest groups (one report per triage.group)
+        # `radar items list --triage-group <g>` returns every item the triage
+        # adapter tagged with the same group hint, which `radar research
+        # --digest` then collapses into a single combined report. We walk
+        # the unique groups one at a time so each digest stays self-contained.
+        # `sort -u` dedupes since `items list --field` emits one row per
+        # matching item.
+        run: |
+          set -euo pipefail
+          GROUPS=$(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
+          if [ -z "$GROUPS" ]; then
+            echo "no triaged_digest groups to process"
+            exit 0
+          fi
+          while IFS= read -r GROUP; do
+            [ -z "$GROUP" ] && continue
+            echo "::group::digest for triage.group=$GROUP"
+            IDS=$(radar items list --triage-group "$GROUP" --status triaged_digest --field id | tr '\n' ' ')
+            # shellcheck disable=SC2086
+            radar research --digest $IDS --agent {{researchAgent}}
+            echo "::endgroup::"
+          done <<< "$GROUPS"
+
+      - name: Review researched items (agent={{reviewAgent}})
+        # Cross-agent review (ADR-0001): the review step intentionally uses
+        # a different agent than the research step so the reviewer does not
+        # inherit the same model's blind spots.
+        run: radar review --batch --status researched --agent {{reviewAgent}}
+
+      - name: Notify unsure queue
+        # `if: always()` so a triage spike still alerts even when a
+        # downstream research step failed. The Slack notification is
+        # opt-in via `--slack-webhook secrets.<NAME>`; an empty webhook
+        # collapses the curl branch into a no-op so the step still succeeds
+        # without leaking the alert.
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: {{slackWebhookExpr}}
+        run: |
+          set -euo pipefail
+          UNSURE=$(radar items list --status triaged_unsure --json | jq length)
+          echo "triaged_unsure queue depth: $UNSURE"
+          if [ "$UNSURE" -gt 0 ] && [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -X POST "$SLACK_WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -d "{\"text\":\"feedradar: $UNSURE items need human triage review\"}"
+          fi
+
+      - name: Create PR with research output
+        # `peter-evans/create-pull-request@v6` stages items/ state/ research/
+        # into a single PR per cron tick. Human reviews the PR before
+        # research/ lands on main, giving an explicit gate on auto-generated
+        # content (ADR-0014 §X5 / ADR-0018 §W5).
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(feedradar): daily watch + triage + research"
+          title: "feedradar: daily triage + research $(date -u +%Y-%m-%d)"
+          body: |
+            Automated feedradar pipeline output. Review the research/ Markdown
+            before merging — generated content is untrusted (ADR-0009).
+          branch: feedradar/daily
+          base: ${{ github.ref_name }}
+          delete-branch: true
+          add-paths: |
+            items/
+            state/
+            research/

@@ -338,6 +338,11 @@ export function mergeRecipeWithOverrides(
   if (recipe.facets !== undefined) candidate.facets = recipe.facets;
 
   candidate.trustLevel = recipe.trustLevel;
+  // ADR-0018 §W3 / #241: propagate the bundled triagePolicy so the user's
+  // `sources/<id>.yaml` carries the default policy after
+  // `radar source add --recipe`. Optional in `RecipeFileSchema`; absent
+  // when the recipe author did not author one (older bundled recipes).
+  if (recipe.triagePolicy !== undefined) candidate.triagePolicy = recipe.triagePolicy;
 
   return candidate;
 }

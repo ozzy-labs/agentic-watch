@@ -1,5 +1,6 @@
 import type { Command } from "./index.js";
 import { runGenerateCombined } from "./workflow/generate-combined.js";
+import { runGenerateCombinedWithTriage } from "./workflow/generate-combined-with-triage.js";
 import { runGenerateWatch } from "./workflow/generate-watch.js";
 
 /**
@@ -24,7 +25,7 @@ function printWorkflowHelp(log: (m: string) => void): void {
   log("");
   log("Subcommands:");
   log("  generate <type>  Generate a GitHub Actions workflow YAML");
-  log("                   Types: watch | combined (more types in future sub-issues)");
+  log("                   Types: watch | combined | combined-with-triage");
   log("");
   log("Run `radar workflow generate <type> --help` for type-specific options.");
 }
@@ -33,8 +34,15 @@ function printGenerateHelp(log: (m: string) => void): void {
   log("Usage: radar workflow generate <type> [options]");
   log("");
   log("Types:");
-  log("  watch     Periodic `radar watch run` (cron + state commit with rebase retry)");
-  log("  combined  Periodic `radar watch run` -> auto research --batch with hard cap (ADR-0014)");
+  log(
+    "  watch                  Periodic `radar watch run` (cron + state commit with rebase retry)",
+  );
+  log(
+    "  combined               Periodic `radar watch run` -> auto research --batch with hard cap (ADR-0014)",
+  );
+  log(
+    "  combined-with-triage   `watch run` -> `triage --apply` -> `research --batch` -> per-group `research --digest` -> `review --batch` in one job (ADR-0018 §W5)",
+  );
   log("");
   log("Run `radar workflow generate <type> --help` for type-specific options.");
 }
@@ -42,12 +50,13 @@ function printGenerateHelp(log: (m: string) => void): void {
 /**
  * Dispatcher for `radar workflow <subcommand>`.
  *
- * Today the supported subcommands are `generate watch` (#188) and
- * `generate combined` (this issue, #189). Additional `<type>` values
- * (`research` / `review` per #191) will land as new branches in the
- * `generate` switch without changing the surface.
+ * Supported subcommands: `generate watch` (#188), `generate combined`
+ * (#189), and `generate combined-with-triage` (#241 / ADR-0018 §W5).
+ * Additional `<type>` values (`research` / `review` per #191) will land
+ * as new branches in the `generate` switch without changing the surface.
  *
- * See ADR-0014 (workflow generate sub-command) for the full design rationale.
+ * See ADR-0014 (workflow generate sub-command) and ADR-0018 (LLM-based
+ * triage extension) for the full design rationale.
  */
 export async function runWorkflow(
   args: string[],
@@ -80,6 +89,8 @@ export async function runWorkflow(
       return runGenerateWatch(typeArgs, options.io ?? {}, cwd);
     case "combined":
       return runGenerateCombined(typeArgs, options.io ?? {}, cwd);
+    case "combined-with-triage":
+      return runGenerateCombinedWithTriage(typeArgs, options.io ?? {}, cwd);
     default:
       error(`workflow generate: unknown type '${type}'`);
       printGenerateHelp(error);

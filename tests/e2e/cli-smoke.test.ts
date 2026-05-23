@@ -1192,6 +1192,243 @@ describe("e2e/cli (binary smoke)", () => {
     });
   });
 
+  describe("scenario P: triage --apply → items list (per-group walk) → research --digest lifecycle (fake binaries, ADR-0018 §W5 / #241)", () => {
+    // Fixture-based 1-cycle smoke for the `combined-with-triage` workflow
+    // (PR-4 / #241). We exercise the runtime contract the generated YAML
+    // depends on:
+    //
+    //   1. `radar triage --apply` partitions `detected` items into
+    //      `triaged_research` / `triaged_digest` / `triaged_unsure` /
+    //      `dismissed` per the per-source `triagePolicy:`.
+    //   2. `radar items list --status triaged_digest --field triage.group`
+    //      enumerates the digest groups so the workflow's shell loop can
+    //      walk them.
+    //   3. `radar items list --triage-group <g> --status triaged_digest
+    //      --field id` returns the ids that should be collapsed into one
+    //      digest report.
+    //   4. `radar research --digest <ids...>` produces one digest report
+    //      per group.
+    //
+    // The generated workflow YAML itself is verified by scenarios H / I and
+    // the dedicated `workflow-generate-combined-with-triage.test.ts`; this
+    // scenario covers the *runtime* CLI contract those YAML steps invoke.
+    //
+    // We intentionally stop short of `research --batch --status
+    // triaged_research` and `review --batch --status researched`: those CLI
+    // surfaces are scheduled for a follow-up PR (the workflow generator
+    // bakes the future command surface into the YAML; running it against
+    // today's binary is the responsibility of PR-6 / #243's real-agent
+    // smoke). Verifying the *first half* of the lifecycle here is the
+    // valuable layer for PR-4: it proves the triage → items list → digest
+    // chain — which the workflow's per-group `while IFS=` loop critically
+    // depends on — actually works end-to-end through the binary boundary.
+    //
+    // NO real cron / no real agent CLI invocation here (that's PR-6 #243).
+    it("walks detected items through triage and emits one digest report per triage.group", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-triage-lifecycle-"));
+      const binDir = join(workdir, "_bin");
+      // Install both fakes on the same PATH dir: gemini for triage (the
+      // default --triage-agent in the bundled recipe), claude for the
+      // digest research step.
+      await installFakeGeminiTriage(binDir);
+      await installFakeClaude(binDir);
+
+      await runCli(["init"], { cwd: workdir });
+
+      // Seed a source with a triagePolicy so `radar triage --apply` has
+      // something to act on. We bypass `source add --recipe` and write the
+      // YAML directly: the bundled-recipe propagation path is covered by
+      // tests/recipes/bundled.test.ts; here we just need *any* policy that
+      // the CLI validates as schema-clean.
+      const sourceId = "smoke-triage-source";
+      await mkdir(join(workdir, "sources"), { recursive: true });
+      await writeFile(
+        join(workdir, "sources", `${sourceId}.yaml`),
+        stringifyYaml({
+          id: sourceId,
+          kind: "rss",
+          url: "https://example.com/feed.xml",
+          filters: {
+            keywords: [],
+            excludeKeywords: [],
+            matchMode: "word",
+            matchFields: ["title", "summary"],
+            caseSensitive: false,
+          },
+          trustLevel: "untrusted",
+          triagePolicy: {
+            agent: "gemini-cli",
+            confidenceThreshold: 0.7,
+            rules:
+              "重要 (research): GA / 価格改定\n集約 (digest): incremental updates\n  group: ui-incremental\n除外 (dismiss): SDK bump",
+          },
+        }),
+        "utf8",
+      );
+
+      // Seed 4 detected items so each triage branch (research / digest ×2 /
+      // dismiss) gets exercised. The fake triage binary keys decisions off
+      // the seeded id (stable across prompt-shape evolutions of the
+      // triage adapter).
+      const itemSeeds = [
+        { id: "smoke-triage-aaaaaaaa", title: "Bedrock GA: new model launches today" }, // → research
+        { id: "smoke-triage-bbbbbbbb", title: "Console UI incremental update batch 1" }, // → digest (ui-incremental)
+        { id: "smoke-triage-cccccccc", title: "Console UI incremental update batch 2" }, // → digest (ui-incremental)
+        { id: "smoke-triage-dddddddd", title: "SDK v3.42 bump - no functional changes" }, // → dismiss
+      ];
+      await mkdir(join(workdir, "items", sourceId), { recursive: true });
+      for (let i = 0; i < itemSeeds.length; i++) {
+        const seed = itemSeeds[i];
+        await writeFile(
+          join(workdir, "items", sourceId, `${seed.id}.yaml`),
+          stringifyYaml({
+            id: seed.id,
+            sourceId,
+            title: seed.title,
+            url: `https://example.com/smoke/${i + 1}`,
+            fetchedAt: "2026-05-15T00:00:00.000Z",
+            publishedAt: `2026-05-1${i}T00:00:00Z`,
+            matchedKeywords: ["smoke"],
+            status: "detected",
+          }),
+          "utf8",
+        );
+      }
+
+      // Step 1: triage --apply. The fake gemini binary reads the prompt
+      // off argv (`-p <prompt>`), pattern-matches the seeded ids, and
+      // emits a JSON array with the corresponding triage decision for
+      // each. We pass --triage-agent gemini-cli explicitly so the spawn
+      // matrix routes to the gemini fake.
+      const triageResult = await runCli(["triage", "--apply", "--triage-agent", "gemini-cli"], {
+        cwd: workdir,
+        extraPath: binDir,
+      });
+      expect(
+        triageResult.code,
+        `stderr: ${triageResult.stderr}\nstdout: ${triageResult.stdout}`,
+      ).toBe(0);
+
+      // Verify each item landed in the expected `triaged_*` / dismissed
+      // bucket — this is the contract the workflow's "research the
+      // triaged_research bucket / digest the triaged_digest bucket" step
+      // chain assumes.
+      const expectedAfterTriage: Record<string, string> = {
+        "smoke-triage-aaaaaaaa": "triaged_research",
+        "smoke-triage-bbbbbbbb": "triaged_digest",
+        "smoke-triage-cccccccc": "triaged_digest",
+        "smoke-triage-dddddddd": "dismissed",
+      };
+      for (const [id, expectedStatus] of Object.entries(expectedAfterTriage)) {
+        const after = parseYaml(
+          await readFile(join(workdir, "items", sourceId, `${id}.yaml`), "utf8"),
+        );
+        expect(after.status, `item ${id} should be ${expectedStatus} after triage`).toBe(
+          expectedStatus,
+        );
+      }
+
+      // Step 2: `radar items list --status triaged_digest --field
+      // triage.group` enumerates the unique group ids. The workflow's
+      // shell loop uses this exact invocation to drive the per-group
+      // digest fan-out.
+      const groupListing = await runCli(
+        ["items", "list", "--status", "triaged_digest", "--field", "triage.group"],
+        { cwd: workdir },
+      );
+      expect(
+        groupListing.code,
+        `stderr: ${groupListing.stderr}\nstdout: ${groupListing.stdout}`,
+      ).toBe(0);
+      // Both digest items belong to "ui-incremental"; the per-line field
+      // output should mention the group at least once. We assert presence
+      // rather than line count because `items list` may include other
+      // formatting (warnings about empty filters, etc.).
+      expect(groupListing.stdout).toContain("ui-incremental");
+
+      // Step 3: `radar items list --triage-group ui-incremental --status
+      // triaged_digest --field id` lists the ids inside that group. The
+      // workflow's shell loop then feeds them to `research --digest`.
+      const idListing = await runCli(
+        [
+          "items",
+          "list",
+          "--triage-group",
+          "ui-incremental",
+          "--status",
+          "triaged_digest",
+          "--field",
+          "id",
+        ],
+        { cwd: workdir },
+      );
+      expect(idListing.code, `stderr: ${idListing.stderr}\nstdout: ${idListing.stdout}`).toBe(0);
+      expect(idListing.stdout).toContain("smoke-triage-bbbbbbbb");
+      expect(idListing.stdout).toContain("smoke-triage-cccccccc");
+
+      // Step 4: `radar research --digest <ids...>` collapses the group
+      // into one digest report. This validates the final link in the
+      // workflow's chain — the digest fan-out shell loop, fed by step 3,
+      // produces one Markdown file per group.
+      const digestResult = await runCli(
+        [
+          "research",
+          "--digest",
+          "smoke-triage-bbbbbbbb",
+          "smoke-triage-cccccccc",
+          "--agent",
+          "claude-code",
+        ],
+        { cwd: workdir, extraPath: binDir },
+      );
+      expect(
+        digestResult.code,
+        `stderr: ${digestResult.stderr}\nstdout: ${digestResult.stdout}`,
+      ).toBe(0);
+
+      // Exactly one digest report should now exist in research/. The
+      // workflow's expected end-state is "one digest Markdown per
+      // triage.group", and that file existence is the contract that
+      // matters for the smoke. (Status-transition semantics for
+      // `triaged_digest → researched` are intentionally not pinned
+      // here: the legacy `radar research --digest` path only transitions
+      // `detected` items; updating the transition matrix for the new
+      // `triaged_*` statuses lands in a follow-up PR. The workflow's
+      // PR-creation step still sees the digest Markdown either way.)
+      const reports = readdirSync(join(workdir, "research")).filter((f) => f.endsWith(".md"));
+      expect(reports.length, `research/ should contain 1 digest, got: ${reports.join(", ")}`).toBe(
+        1,
+      );
+      expect(reports[0]).toContain("digest");
+
+      // The dismissed item stays dismissed (terminal), the
+      // triaged_research item still sits in its triage bucket waiting
+      // for the future `research --batch --status triaged_research`
+      // transition, and the triaged_digest items either landed at
+      // `researched` (once the transition matrix is wired) or remain
+      // `triaged_digest` (today's behaviour). We accept either so this
+      // smoke does not regress when the follow-up PR adds the
+      // transition.
+      const dismissedAfter = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "smoke-triage-dddddddd.yaml"), "utf8"),
+      );
+      expect(dismissedAfter.status).toBe("dismissed");
+      const triagedResearchAfter = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "smoke-triage-aaaaaaaa.yaml"), "utf8"),
+      );
+      expect(triagedResearchAfter.status).toBe("triaged_research");
+      for (const id of ["smoke-triage-bbbbbbbb", "smoke-triage-cccccccc"]) {
+        const after = parseYaml(
+          await readFile(join(workdir, "items", sourceId, `${id}.yaml`), "utf8"),
+        );
+        expect(
+          ["triaged_digest", "researched"].includes(after.status),
+          `digest item ${id} should be in triaged_digest or researched, got: ${after.status}`,
+        ).toBe(true);
+      }
+    });
+  });
+
   describe("scenario N: --verbose / --quiet / RADAR_NO_PROGRESS (research)", () => {
     // ADR-0015 D2 progress reporter behaviour through the binary boundary.
     // The reporter writes to stderr (so it never collides with stdout-
@@ -1406,6 +1643,64 @@ const entries = ids.map((id) => {
 process.stdout.write(JSON.stringify(entries));
 `;
   const scriptPath = join(binDir, "claude");
+  await writeFile(scriptPath, script, "utf8");
+  await chmod(scriptPath, 0o755);
+}
+
+/**
+ * Fake `gemini` binary that performs deterministic triage decisions for
+ * the `combined-with-triage` workflow smoke (scenario P / ADR-0018 §W5).
+ *
+ * The triage adapter (`src/core/triage/adapter.ts > buildSpawnArgs`)
+ * invokes `gemini -p "<prompt>" -y --skip-trust --output-format text` with
+ * the prompt on argv. The prompt contains a JSON-ish item list inside the
+ * UNTRUSTED-CONTENT boundary markers; the agent is expected to return a
+ * JSON array on stdout where each entry has `id` / `decision` /
+ * `confidence` / `reason` (and optional `group`).
+ *
+ * Our fake reads the prompt off `-p`, scans for the seeded item ids
+ * (smoke-triage-{aaaa,bbbb,cccc,dddd}…), and emits the corresponding
+ * decision matrix. Substring matching on titles is intentionally avoided
+ * — the prompt format may evolve (boundary marker tweaks, summary
+ * truncation) without breaking the test. Keying on the stable `id` field
+ * is robust to those changes.
+ *
+ * Decision matrix (mirrors the scenario P seed data):
+ *
+ *   smoke-triage-aaaaaaaa → research (high confidence)
+ *   smoke-triage-bbbbbbbb → digest, group=ui-incremental
+ *   smoke-triage-cccccccc → digest, group=ui-incremental
+ *   smoke-triage-dddddddd → dismiss
+ *
+ * Items not in this matrix are quietly omitted from the response — the
+ * triage orchestrator handles agent-omitted items by demoting them to
+ * `triaged_unsure`, which is also part of the contract we want covered.
+ */
+async function installFakeGeminiTriage(binDir: string): Promise<void> {
+  await mkdir(binDir, { recursive: true });
+  const script = `#!/usr/bin/env node
+// Args: -p "<prompt>" -y --skip-trust --output-format text
+// We only care about the prompt text; everything else is positional noise.
+const argv = process.argv.slice(2);
+const pIdx = argv.indexOf("-p");
+const prompt = pIdx >= 0 && pIdx + 1 < argv.length ? argv[pIdx + 1] : "";
+
+const decisions = [
+  { id: "smoke-triage-aaaaaaaa", decision: "research", confidence: 0.95,
+    reason: "Bedrock GA: matches policy 'GA / 価格改定' bucket" },
+  { id: "smoke-triage-bbbbbbbb", decision: "digest", confidence: 0.85, group: "ui-incremental",
+    reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
+  { id: "smoke-triage-cccccccc", decision: "digest", confidence: 0.85, group: "ui-incremental",
+    reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
+  { id: "smoke-triage-dddddddd", decision: "dismiss", confidence: 0.92,
+    reason: "SDK bump only: matches policy 'SDK bump' dismiss bucket" },
+];
+// Filter to ids actually present in the prompt so the triage parser's
+// hallucinated-id check stays happy if the test ever seeds a subset.
+const matched = decisions.filter((d) => prompt.includes(d.id));
+process.stdout.write(JSON.stringify(matched));
+`;
+  const scriptPath = join(binDir, "gemini");
   await writeFile(scriptPath, script, "utf8");
   await chmod(scriptPath, 0o755);
 }

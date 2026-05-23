@@ -23,3 +23,7 @@
 
 - スキル完了時のネクストアクション提案には `AskUserQuestion` を使用する
 - ネクストアクションはユーザーの確認なく実行しない
+
+## triage workflow
+
+scheduled GHA cron で `watch run → triage → research → review` を無人実行するワークフローを `radar workflow generate combined-with-triage` で生成可能（[ADR-0018](docs/adr/0018-triage-extension.md)）。詳細は [user-guide §triage workflow](docs/user-guide.md#triage-workflow) を参照。

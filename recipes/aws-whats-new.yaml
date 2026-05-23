@@ -85,3 +85,32 @@ jsonSelectors:
   summary: $.additionalFields.postBody
   publisherId: $.id
 trustLevel: untrusted
+# Default triage policy bundled with this recipe (ADR-0018 §W3 / #241).
+# Propagates onto `sources/<id>.yaml > triagePolicy:` when the user runs
+# `radar source add <id> --recipe aws-whats-new`. The rules block is
+# free-form markdown — see docs/user-guide.md "triage workflow" §policy
+# 書き方ガイド for tuning tips. Cheap-model channel (gemini-2.5-flash-lite)
+# keeps per-source triage cost well below $0.01/month even at AWS's volume
+# (~700 items/month at peak).
+triagePolicy:
+  agent: gemini-cli
+  confidenceThreshold: 0.7
+  rules: |
+    重要 (research):
+      - 新サービス / 新機能の GA, Preview ローンチ
+      - 価格改定 / 料金体系変更
+      - リブランド・ブランド統合 (例: QuickSight → Quick)
+      - セキュリティ関連 (脆弱性対応、認証方式変更)
+      - メジャーな API 変更 / 既存サービスの semantics 変更
+    集約 (digest):
+      - 既存サービスへの incremental な機能追加 (UI option, filter 追加)
+        group: ui-incremental
+      - 連携サービス追加 (新 connector, 新 integration)
+        group: integrations
+      - performance 改善・SLA 向上 announcement
+        group: performance-sla
+    除外 (dismiss):
+      - リージョン拡張のみ (例: "now available in <region>")
+      - SDK バージョン bump
+      - ドキュメント更新通知
+      - 既存リソースの minor 設定追加 (例: "now supports tagging")
