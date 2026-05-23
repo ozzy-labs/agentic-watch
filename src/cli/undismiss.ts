@@ -1,0 +1,185 @@
+import { access } from "node:fs/promises";
+import { join } from "node:path";
+import { loadItems, saveItems } from "../core/items.js";
+import { isValidTransition } from "../core/transitions.js";
+import type { Item } from "../schemas/index.js";
+import type { Command } from "./index.js";
+
+/**
+ * `radar undismiss <item-id> [--force]` (ADR-0018 §W6).
+ *
+ * Reverses `dismissed → detected`. Origin-aware:
+ *
+ * - `dismissedBy: triage_<agent>` (or missing — legacy items default to
+ *   "human" but the issue spec says triage origin should revert silently)
+ *   → revert without warning
+ * - `dismissedBy: "human"` → warn and require `--force` (the user dismissed
+ *   the item explicitly, so reversing should be a deliberate act)
+ *
+ * Note on the W2 collapse: per ADR-0018 the `triaged_dismiss` status was
+ * folded into the existing `dismissed` status with `dismissedBy` recording
+ * the origin. This CLI therefore only ever sees `dismissed` as the input
+ * status — the `triaged_dismiss` label exists in the ADR text but never in
+ * `ItemStatusSchema`.
+ */
+
+export interface UndismissIO {
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+}
+
+export interface UndismissCommandOptions {
+  cwd?: string;
+  io?: UndismissIO;
+}
+
+interface UndismissArgs {
+  itemId?: string;
+  force?: boolean;
+  help?: boolean;
+}
+
+function parseArgs(args: string[]): UndismissArgs {
+  const out: UndismissArgs = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-h" || a === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (a === "--force" || a === "-f") {
+      out.force = true;
+      continue;
+    }
+    if (a?.startsWith("--")) {
+      throw new Error(`unknown option: ${a}`);
+    }
+    if (!out.itemId) {
+      out.itemId = a;
+      continue;
+    }
+    throw new Error(`unexpected positional argument: ${a}`);
+  }
+  return out;
+}
+
+function printHelp(log: (m: string) => void): void {
+  log("Usage: radar undismiss <item-id> [--force]");
+  log("");
+  log("Arguments:");
+  log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
+  log("");
+  log("Options:");
+  log("  --force, -f           Required when reversing a human-origin dismiss");
+  log("");
+  log("Reverses `dismissed → detected` (ADR-0018 §W6).");
+  log("Triage-origin dismisses revert silently; human-origin dismisses require --force.");
+  log("");
+  log("Inverse of `radar dismiss`.");
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function runUndismiss(
+  args: string[],
+  options: UndismissCommandOptions = {},
+): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
+  const log = options.io?.log ?? ((m: string) => console.log(m));
+  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
+  const error = options.io?.error ?? ((m: string) => console.error(m));
+
+  let parsed: UndismissArgs;
+  try {
+    parsed = parseArgs(args);
+  } catch (e) {
+    error(`undismiss: ${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  if (parsed.help) {
+    printHelp(log);
+    return 0;
+  }
+  if (!parsed.itemId) {
+    error("undismiss: missing <item-id>");
+    printHelp(error);
+    return 2;
+  }
+
+  const itemsDir = join(cwd, "items");
+  if (!(await pathExists(itemsDir))) {
+    error(`undismiss: items/ not found (run \`radar init\`)`);
+    return 1;
+  }
+
+  let items: Item[];
+  try {
+    items = await loadItems(itemsDir);
+  } catch (e) {
+    error(`undismiss: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  const item = items.find((i) => i.id === parsed.itemId);
+  if (!item) {
+    error(`undismiss: item '${parsed.itemId}' not found under items/`);
+    return 1;
+  }
+
+  if (item.status !== "dismissed") {
+    error(
+      `undismiss: item '${item.id}' is in status '${item.status}', expected 'dismissed' (undismiss reverses a dismiss, not other transitions)`,
+    );
+    return 1;
+  }
+  // Defensive guard against future state machine changes: ensure
+  // `dismissed → detected` is still legal before mutating.
+  if (!isValidTransition("dismissed", "detected")) {
+    error(`undismiss: state machine forbids 'dismissed → detected' (internal error)`);
+    return 1;
+  }
+
+  // Origin gating. `dismissedBy: undefined` means the item predates the
+  // ADR-0018 field; treat it as "human" per the schema docstring's hint.
+  const origin = item.dismissedBy ?? "human";
+  const triageOrigin = origin.startsWith("triage_");
+
+  if (!triageOrigin && !parsed.force) {
+    error(
+      `undismiss: item '${item.id}' was dismissed by human; pass --force to revert (this is a deliberate safety gate; ADR-0018 §W6)`,
+    );
+    return 2;
+  }
+
+  const updated: Item = { ...item, status: "detected" };
+  // Reset `dismissedBy` on the way out so a future re-dismiss starts from a
+  // clean slate. Keeping the stale value would confuse subsequent triage
+  // runs (they'd see a `detected` item carrying a `dismissedBy: triage_*`
+  // hint from the previous lifecycle).
+  delete updated.dismissedBy;
+  try {
+    await saveItems(itemsDir, [updated]);
+  } catch (e) {
+    error(`undismiss: failed to update item: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+
+  if (!triageOrigin) {
+    warn(`undismiss: reverted human-origin dismiss for '${item.id}' (used --force)`);
+  }
+  log(`undismiss: items/${item.sourceId}/${item.id}.yaml status -> detected`);
+  return 0;
+}
+
+export const undismissCommand: Command = {
+  name: "undismiss",
+  summary: "Reverse a dismiss (`dismissed → detected`)",
+  run: (args) => runUndismiss(args),
+};

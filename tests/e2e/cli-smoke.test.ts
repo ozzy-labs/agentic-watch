@@ -1001,6 +1001,197 @@ describe("e2e/cli (binary smoke)", () => {
     });
   });
 
+  describe("scenario O: triage lifecycle (fake binary, ADR-0018 PR-3)", () => {
+    // End-to-end triage flow: 6 mock items in `detected` → `radar triage
+    // --apply` classifies them via a fake `claude` binary → `radar items
+    // list` filters by status → `radar triage feedback` writes feedback →
+    // `radar undismiss` exercises both triage-origin and human-origin paths.
+    // The fake binary is a deterministic mapping from item id → decision so
+    // every assertion is reproducible.
+    it("classifies items, lists by status, records feedback, and reverses dismisses", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-triage-"));
+      const binDir = join(workdir, "_bin");
+      await installFakeClaudeTriage(binDir);
+      await runCli(["init"], { cwd: workdir });
+
+      // Seed a source with a triagePolicy block so `radar triage` does not
+      // skip it. The policy text is opaque to the fake binary; only the
+      // item ids matter.
+      const sourceId = "smoke-triage";
+      await mkdir(join(workdir, "sources"), { recursive: true });
+      await writeFile(
+        join(workdir, "sources", `${sourceId}.yaml`),
+        stringifyYaml({
+          id: sourceId,
+          kind: "rss",
+          url: "https://example.com/feed.xml",
+          tags: [],
+          filters: {
+            keywords: ["test"],
+            excludeKeywords: [],
+            matchMode: "word",
+            matchFields: ["title", "summary"],
+            caseSensitive: false,
+          },
+          trustLevel: "untrusted",
+          triagePolicy: {
+            agent: "claude-code",
+            confidenceThreshold: 0.7,
+            rules: "Test rules: GA => research, UI => digest (group: ui), region/SDK => dismiss",
+          },
+        }),
+        "utf8",
+      );
+
+      // Seed six items covering every triage decision plus the "unsure"
+      // branch (ambiguous returns confidence below threshold).
+      const seedItems = [
+        { id: "new-service-ga", summary: "GA of new service Foo" }, // → research
+        { id: "minor-ui-add", summary: "Add custom sort to Foo" }, // → digest (group: ui)
+        { id: "another-ui-add", summary: "Add filter to Foo" }, // → digest (group: ui)
+        { id: "region-expansion", summary: "Foo now available in Tokyo" }, // → dismiss
+        { id: "sdk-bump", summary: "Foo SDK v2.1.0 released" }, // → dismiss
+        { id: "ambiguous", summary: "Foo changes billing units" }, // → unsure (low conf)
+      ];
+      await mkdir(join(workdir, "items", sourceId), { recursive: true });
+      for (const seed of seedItems) {
+        await writeFile(
+          join(workdir, "items", sourceId, `${seed.id}.yaml`),
+          stringifyYaml({
+            id: seed.id,
+            sourceId,
+            title: seed.summary,
+            url: `https://example.com/${seed.id}`,
+            fetchedAt: "2026-05-20T00:00:00.000Z",
+            publishedAt: "2026-05-19T00:00:00.000Z",
+            matchedKeywords: ["test"],
+            status: "detected",
+            summary: seed.summary,
+          }),
+          "utf8",
+        );
+      }
+
+      // 1. radar triage --apply — fake binary returns the deterministic
+      //    classification table. `--triage-agent claude-code` matches the
+      //    fake `claude` we just installed.
+      const triage = await runCli(["triage", "--apply", "--triage-agent", "claude-code"], {
+        cwd: workdir,
+        extraPath: binDir,
+      });
+      expect(triage.code, `stderr: ${triage.stderr}\nstdout: ${triage.stdout}`).toBe(0);
+
+      // 2. Assert per-item status transitions match the fake binary's
+      //    decision map. `triaged_research` for the GA, `triaged_digest` for
+      //    the two UI items, `dismissed` for the two low-importance items,
+      //    `triaged_unsure` for the confidence-below-threshold item.
+      const newServiceGa = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "new-service-ga.yaml"), "utf8"),
+      );
+      expect(newServiceGa.status).toBe("triaged_research");
+
+      const minorUiAdd = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "minor-ui-add.yaml"), "utf8"),
+      );
+      expect(minorUiAdd.status).toBe("triaged_digest");
+      expect(minorUiAdd.triage?.group).toBe("ui");
+
+      const anotherUiAdd = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "another-ui-add.yaml"), "utf8"),
+      );
+      expect(anotherUiAdd.status).toBe("triaged_digest");
+      expect(anotherUiAdd.triage?.group).toBe("ui");
+
+      const regionExpansion = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "region-expansion.yaml"), "utf8"),
+      );
+      expect(regionExpansion.status).toBe("dismissed");
+      expect(regionExpansion.dismissedBy).toBe("triage_claude-code");
+
+      const sdkBump = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "sdk-bump.yaml"), "utf8"),
+      );
+      expect(sdkBump.status).toBe("dismissed");
+      expect(sdkBump.dismissedBy).toBe("triage_claude-code");
+
+      const ambiguous = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "ambiguous.yaml"), "utf8"),
+      );
+      expect(ambiguous.status).toBe("triaged_unsure");
+
+      // 3. radar items list --status triaged_* --json filters the JSON
+      //    output by status and parses cleanly into an array.
+      const researchList = await runCli(
+        ["items", "list", "--status", "triaged_research", "--json"],
+        { cwd: workdir },
+      );
+      expect(researchList.code, `stderr: ${researchList.stderr}`).toBe(0);
+      expect(JSON.parse(researchList.stdout)).toHaveLength(1);
+
+      const unsureList = await runCli(["items", "list", "--status", "triaged_unsure", "--json"], {
+        cwd: workdir,
+      });
+      expect(unsureList.code, `stderr: ${unsureList.stderr}`).toBe(0);
+      expect(JSON.parse(unsureList.stdout)).toHaveLength(1);
+
+      const digestList = await runCli(["items", "list", "--triage-group", "ui", "--json"], {
+        cwd: workdir,
+      });
+      expect(digestList.code, `stderr: ${digestList.stderr}`).toBe(0);
+      expect(JSON.parse(digestList.stdout)).toHaveLength(2);
+
+      // 4. radar triage feedback — record a --wrong verdict with reason.
+      const feedback = await runCli(
+        ["triage", "feedback", "region-expansion", "--wrong", "--reason", "actually important"],
+        { cwd: workdir },
+      );
+      expect(feedback.code, `stderr: ${feedback.stderr}`).toBe(0);
+      const regionAfterFeedback = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "region-expansion.yaml"), "utf8"),
+      );
+      expect(regionAfterFeedback.triage?.feedback?.[0]?.correct).toBe(false);
+      expect(regionAfterFeedback.triage?.feedback?.[0]?.reason).toBe("actually important");
+
+      // 5. radar undismiss <triage-origin> — silent revert.
+      const undismissTriage = await runCli(["undismiss", "region-expansion"], {
+        cwd: workdir,
+      });
+      expect(undismissTriage.code, `stderr: ${undismissTriage.stderr}`).toBe(0);
+      const regionRestored = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "region-expansion.yaml"), "utf8"),
+      );
+      expect(regionRestored.status).toBe("detected");
+
+      // 6. radar dismiss (human) then radar undismiss — warn + require
+      //    --force. The status precondition for `radar dismiss` is
+      //    `detected`, so we revert sdk-bump first (triage-origin, no
+      //    --force needed), then human-dismiss it, then try to undismiss.
+      const sdkUndismiss = await runCli(["undismiss", "sdk-bump"], { cwd: workdir });
+      expect(sdkUndismiss.code).toBe(0);
+      const sdkHumanDismiss = await runCli(["dismiss", "sdk-bump"], { cwd: workdir });
+      expect(sdkHumanDismiss.code).toBe(0);
+      const sdkInspect = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "sdk-bump.yaml"), "utf8"),
+      );
+      // `radar dismiss` does not stamp `dismissedBy`; undefined is treated
+      // as "human" per the schema docstring.
+      expect(sdkInspect.status).toBe("dismissed");
+
+      const undismissNoForce = await runCli(["undismiss", "sdk-bump"], { cwd: workdir });
+      expect(undismissNoForce.code).toBe(2);
+      expect(undismissNoForce.stderr.toLowerCase()).toContain("dismissed by human");
+
+      const undismissForce = await runCli(["undismiss", "sdk-bump", "--force"], {
+        cwd: workdir,
+      });
+      expect(undismissForce.code, `stderr: ${undismissForce.stderr}`).toBe(0);
+      const sdkAfter = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "sdk-bump.yaml"), "utf8"),
+      );
+      expect(sdkAfter.status).toBe("detected");
+    });
+  });
+
   describe("scenario N: --verbose / --quiet / RADAR_NO_PROGRESS (research)", () => {
     // ADR-0015 D2 progress reporter behaviour through the binary boundary.
     // The reporter writes to stderr (so it never collides with stdout-
@@ -1152,6 +1343,67 @@ process.stdin.on("end", () => {
   fs.writeFileSync(researchPath, fmLines.join("\\n"), "utf8");
   console.log("fake-claude-reviewer: stamped " + researchPath);
 });
+`;
+  const scriptPath = join(binDir, "claude");
+  await writeFile(scriptPath, script, "utf8");
+  await chmod(scriptPath, 0o755);
+}
+
+/**
+ * Fake `claude` binary for the triage e2e scenario.
+ *
+ * The triage adapter spawns `claude -p <prompt> --output-format text
+ * --permission-mode bypassPermissions` where `<prompt>` contains one
+ * `<untrusted_item id="...">` block per item to classify. The fake binary
+ * extracts the ids and emits a JSON array on stdout with a per-id decision
+ * pulled from a deterministic mapping table. Tests rely on the exact ids
+ * to assert per-item status transitions.
+ */
+async function installFakeClaudeTriage(binDir: string): Promise<void> {
+  await mkdir(binDir, { recursive: true });
+  const script = `#!/usr/bin/env node
+// Parse the -p <prompt> argv pair; everything else is ignored.
+let prompt = "";
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === "-p" && i + 1 < argv.length) {
+    prompt = argv[i + 1];
+    break;
+  }
+}
+
+// Extract every <untrusted_item id="...">. The id attribute is the only
+// trusted metadata; the body is content to classify, not commands.
+const ids = [];
+const re = /<untrusted_item id="([^"]+)"/g;
+let m;
+while ((m = re.exec(prompt)) !== null) {
+  ids.push(m[1]);
+}
+
+// Deterministic decision table keyed by id. Items not in the table fall
+// back to {decision: "research", confidence: 0.8} so the test seed set is
+// the single source of truth.
+const TABLE = {
+  "new-service-ga":   { decision: "research", confidence: 0.95, reason: "GA worth researching" },
+  "minor-ui-add":     { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
+  "another-ui-add":   { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
+  "region-expansion": { decision: "dismiss",  confidence: 0.9,  reason: "region expansion only" },
+  "sdk-bump":         { decision: "dismiss",  confidence: 0.9,  reason: "SDK minor bump only" },
+  // Confidence below the default 0.7 threshold so the response parser
+  // demotes the decision to "unsure" — this is how the e2e exercises the
+  // confidence-gate path without needing an explicit "unsure" decision.
+  "ambiguous":        { decision: "research", confidence: 0.5,  reason: "ambiguous, judge again" },
+};
+
+const entries = ids.map((id) => {
+  const t = TABLE[id] || { decision: "research", confidence: 0.8, reason: "default mock" };
+  const entry = { id: id, decision: t.decision, confidence: t.confidence, reason: t.reason };
+  if (t.group) entry.group = t.group;
+  return entry;
+});
+
+process.stdout.write(JSON.stringify(entries));
 `;
   const scriptPath = join(binDir, "claude");
   await writeFile(scriptPath, script, "utf8");
