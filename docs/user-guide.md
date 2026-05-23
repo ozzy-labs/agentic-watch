@@ -1578,7 +1578,19 @@ radar research --commit <path>
 | サブコマンド | 説明 |
 |---|---|
 | `--emit-payload` | item ロード + テンプレ解決 + `outputPath` 確定 + `<untrusted_item>` ラップ済みコンテンツを含む payload を **stdout に出力**する。agent は spawn しない。出力は「人間可読プロンプト + 末尾に機械可読 JSON フェンス」のハイブリッド形式 |
-| `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する） |
+| `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する）。`<path>` は `<cwd>/research/` 配下に制約される（`..` 脱出・兄弟ディレクトリ・symlink 脱出を拒否、ADR-0009 M3b をコードで担保） |
+
+`review` / `update` も同じ 2-call で host モードに対応する（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）:
+
+```bash
+# review: research を in-place で改変（reviewedAt/reviewedBy stamp + レビューブロック追記）→ researched → reviewed
+radar review <research-id> --emit-payload
+radar review --commit <path>
+
+# update: 既存 research から v+1 を生成（supersedes / createdAt / itemIds を保持、items.yaml status は不変）
+radar update <research-id> --emit-payload
+radar update --commit <path>
+```
 
 なぜ host モード:
 
@@ -1592,7 +1604,7 @@ radar research --commit <path>
 - **prepare→commit 間に同一 workspace の cron を重ねない**: host モードは `researching` ロック status を持たない。`outputPath` は決定論的で、既存の「already exists」衝突ガードが backstop になるが、prepare→commit 間に同一 item へ無人 cron（`research --batch` 等）を向けない運用にする
 - **cross-agent review が要る場合は従来の spawn を使う**: research=copilot / review=claude のようなクロス運用は単一ホストセッションでは成立しない（[上記](#クロスエージェント運用推奨)）。host モードは「ホストと同じ agent で十分な場合」の最適化であり、cross-agent が要るケースは従来の `--agent <spawn>` を使う（両立・共存）
 
-triage / review / update への展開方針は [ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針 を参照（research が PoC、review / update は同型、triage は別契約）。
+展開状況: research / review / update は host モード対応済み（同型の prepare/commit）。triage は per-item の `TriageDecision` を書く別契約のため引き続き対象外（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）。
 
 ### `radar update <research-id> [--agent <agent-id>] [--template <id>]`
 

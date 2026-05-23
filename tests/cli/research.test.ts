@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import matter from "gray-matter";
@@ -1377,6 +1377,46 @@ describe("cli/research", () => {
       expect(code).toBe(2);
       expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
       // The item is untouched.
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("detected");
+    });
+
+    it("rejects a --commit path in a sibling directory (research-evil/)", async () => {
+      const workdir = await setupWorkspace();
+      await mkdir(join(workdir, "research-evil"), { recursive: true });
+      const { io, captured } = captureIo();
+      // `research-evil/x.md` shares the `research` prefix as a string but is a
+      // different directory; the `+ sep` guard must reject it.
+      const code = await runResearch(["--commit", "research-evil/x.md"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
+    });
+
+    it("rejects an absolute --commit path outside the workspace", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", "/etc/passwd"], { cwd: workdir, io });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("must be a file under"))).toBe(true);
+    });
+
+    it("rejects a --commit path that escapes research/ via a symlink (realpath, M3b)", async () => {
+      const workdir = await setupWorkspace();
+      // A valid report living OUTSIDE research/, reachable through a symlink
+      // inside research/. The literal prefix check passes (the link is under
+      // research/); the realpath guard must still reject the escape.
+      const outside = join(workdir, "outside.md");
+      await writeFile(outside, matter.stringify("# x\n", commitFrontmatter()), "utf8");
+      await symlink(outside, join(workdir, "research", "link.md"));
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--commit", "research/link.md"], { cwd: workdir, io });
+
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("via a symlink"))).toBe(true);
       const itemRaw = await readFile(
         join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
         "utf8",

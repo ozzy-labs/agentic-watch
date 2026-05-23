@@ -1,5 +1,5 @@
 import { access, readFile, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -29,6 +29,7 @@ import { loadTemplate } from "../core/templates.js";
 import { isValidTransition } from "../core/transitions.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
+import { resolveCommitPathInside } from "./_commit-path.js";
 import {
   buildAgentProgressCallback,
   buildReporter,
@@ -697,15 +698,14 @@ async function runResearchCommit(params: {
   progress: ProgressReporter;
 }): Promise<number> {
   const { cwd, commitPath, log, warn, error, progress } = params;
-  const researchDir = resolve(cwd, "research");
-  const resolved = resolve(cwd, commitPath);
-  if (!resolved.startsWith(researchDir + sep)) {
-    error(`research: --commit path must be a file under ${researchDir} (got: ${commitPath})`);
+  const guard = await resolveCommitPathInside(cwd, "research", commitPath);
+  if ("error" in guard) {
+    error(`research: ${guard.error}`);
     return 2;
   }
   return finalizeResearch({
     cwd,
-    outputPath: resolved,
+    outputPath: guard.resolved,
     items: undefined,
     log,
     warn,
