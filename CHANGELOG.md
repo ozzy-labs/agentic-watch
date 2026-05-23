@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.9](https://github.com/ozzy-labs/feedradar/compare/v0.1.8...v0.1.9) (2026-05-23)
+
+
+### Features
+
+* **watch:** label facet value on json-api per-page progress ([#269](https://github.com/ozzy-labs/feedradar/issues/269)) ([#271](https://github.com/ozzy-labs/feedradar/issues/271)) ([87f9b2d](https://github.com/ozzy-labs/feedradar/commit/87f9b2d6bc0fdf32173441e08aada22ead40b0cf))
+
+
+### Bug Fixes
+
+* **agents:** stream research/review/update payload via stdin ([#272](https://github.com/ozzy-labs/feedradar/issues/272)) ([#276](https://github.com/ozzy-labs/feedradar/issues/276)) ([6638a0d](https://github.com/ozzy-labs/feedradar/commit/6638a0d82e741fefdf9e2afd20fea40f07309c29))
+
 ## [0.1.8](https://github.com/ozzy-labs/feedradar/compare/v0.1.7...v0.1.8) (2026-05-23)
 
 
