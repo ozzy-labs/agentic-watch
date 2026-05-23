@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildEnvBlock,
+  buildFinalStep,
+  buildPermissionsBlock,
   buildSlackWebhookExpr,
   isSafeWorkflowPath,
   isValidCron,
@@ -132,9 +134,11 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
         "triage={{triageAgent}}",
         "research={{researchAgent}}",
         "review={{reviewAgent}}",
+        "{{permissionsBlock}}",
         "env:",
         "{{envBlock}}",
         "slack={{slackWebhookExpr}}",
+        "{{finalStep}}",
       ].join("\n");
       const out = renderCombinedWithTriageTemplate(tpl, {
         watchCron: "0 6 * * *",
@@ -144,6 +148,8 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
         reviewAgent: "codex-cli",
         envBlock: "      KEY: VALUE",
         slackWebhookExpr: '""',
+        permissionsBlock: "permissions:\n  contents: write",
+        finalStep: "      - name: Step",
       });
       expect(out).toContain("cron=0 6 * * *");
       expect(out).toContain("max=12");
@@ -152,8 +158,36 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
       expect(out).toContain("review=codex-cli");
       expect(out).toContain("      KEY: VALUE");
       expect(out).toContain('slack=""');
+      expect(out).toContain("permissions:\n  contents: write");
+      expect(out).toContain("      - name: Step");
       // Nothing should leak through.
       expect(out).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+    });
+
+    it("buildPermissionsBlock drops pull-requests: write only in direct-commit mode", () => {
+      const pr = buildPermissionsBlock("pr");
+      expect(pr).toContain("contents: write");
+      expect(pr).toContain("pull-requests: write");
+
+      const direct = buildPermissionsBlock("direct-commit");
+      expect(direct).toContain("contents: write");
+      expect(direct).not.toContain("pull-requests");
+    });
+
+    it("buildFinalStep emits create-pull-request for pr and commit&push for direct-commit", () => {
+      const pr = buildFinalStep("pr");
+      expect(pr).toContain("uses: peter-evans/create-pull-request@v6");
+      expect(pr).toContain("Create PR with research output");
+      expect(pr).not.toContain("git push origin");
+
+      const direct = buildFinalStep("direct-commit");
+      expect(direct).not.toContain("peter-evans/create-pull-request");
+      // Commit-only-when-changed guard + 3-attempt rebase retry (ADR-0014 D4).
+      expect(direct).toContain("git diff --cached --quiet");
+      expect(direct).toContain("git pull --rebase --autostash");
+      expect(direct).toContain("for attempt in 1 2 3; do");
+      // Branch-protection caveat is documented inline.
+      expect(direct).toContain("branch protection");
     });
   });
 
@@ -166,7 +200,21 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
       expect(parsed.reviewAgent).toBe("codex-cli");
       expect(parsed.maxItems).toBe(10);
       expect(parsed.slackWebhook).toBeUndefined();
+      expect(parsed.outputMode).toBe("pr");
       expect(parsed.force).toBe(false);
+    });
+
+    it("accepts --output-mode direct-commit and rejects unknown values", () => {
+      expect(
+        parseGenerateCombinedWithTriageArgs(["--output-mode", "direct-commit"]).outputMode,
+      ).toBe("direct-commit");
+      expect(parseGenerateCombinedWithTriageArgs(["--output-mode", "pr"]).outputMode).toBe("pr");
+      expect(() => parseGenerateCombinedWithTriageArgs(["--output-mode", "wat"])).toThrow(
+        /--output-mode expects/,
+      );
+      expect(() => parseGenerateCombinedWithTriageArgs(["--output-mode"])).toThrow(
+        /requires a value/,
+      );
     });
 
     it("rejects each agent flag with an invalid id", () => {
@@ -259,6 +307,59 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
       expect(captured.log.some((m) => m.includes("OPENAI_API_KEY"))).toBe(true);
       expect(captured.log.some((m) => m.includes("GEMINI_API_KEY"))).toBe(true);
       expect(captured.warn.some((m) => m.includes("--max-items cap"))).toBe(true);
+    });
+
+    it("default output-mode is pr: emits create-pull-request + pull-requests: write", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runGenerateCombinedWithTriage([], io, workdir);
+      expect(code).toBe(0);
+      const yaml = await readFile(join(workdir, ".github/workflows/feedradar-daily.yaml"), "utf8");
+      expect(yaml).toContain("uses: peter-evans/create-pull-request@v6");
+      expect(yaml).toMatch(/^ {2}pull-requests: write/m);
+      // Commit&push retry step must NOT appear in pr mode.
+      expect(yaml).not.toContain("Commit and push research output with retry");
+      // stdout surfaces the chosen mode.
+      expect(captured.log.some((m) => m.includes("output-mode:") && m.includes("pr"))).toBe(true);
+    });
+
+    it("--output-mode direct-commit drops pull-requests: write and emits commit&push", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runGenerateCombinedWithTriage(
+        ["--output-mode", "direct-commit"],
+        io,
+        workdir,
+      );
+      expect(code, `stderr: ${captured.error.join("\n")}`).toBe(0);
+      const yaml = await readFile(join(workdir, ".github/workflows/feedradar-daily.yaml"), "utf8");
+      // No PR machinery in direct-commit mode. The `uses:` line is the load-
+      // bearing signal; `peter-evans/...` still appears once in the header
+      // comment that documents both modes, so match the actual step line.
+      expect(yaml).not.toContain("uses: peter-evans/create-pull-request@v6");
+      // permissions: only contents: write (no pull-requests: write line).
+      expect(yaml).toMatch(/^ {2}contents: write/m);
+      expect(yaml).not.toMatch(/^ {2}pull-requests: write/m);
+      // Commit&push step with the change-guard + rebase retry (mirrors watch/combined).
+      expect(yaml).toContain("Commit and push research output with retry");
+      expect(yaml).toContain("git diff --cached --quiet");
+      expect(yaml).toContain("git pull --rebase --autostash");
+      // Branch-protection caveat documented inline.
+      expect(yaml).toContain("branch protection");
+      // No placeholders leak through.
+      expect(yaml).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+      // stdout surfaces the chosen mode.
+      expect(
+        captured.log.some((m) => m.includes("output-mode:") && m.includes("direct-commit")),
+      ).toBe(true);
+    });
+
+    it("rejects an invalid --output-mode (exit 2 at parse time)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runGenerateCombinedWithTriage(["--output-mode", "wat"], io, workdir);
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--output-mode expects"))).toBe(true);
     });
 
     it("renders --watch-cron and --max-items overrides as YAML literals", async () => {

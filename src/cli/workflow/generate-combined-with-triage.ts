@@ -29,6 +29,18 @@ import { SUPPORTED_AGENTS } from "./generate-watch.js";
 /** Default watch cron — 06:00 UTC daily, matching the #241 example. */
 const DEFAULT_WATCH_CRON = "0 6 * * *";
 
+/**
+ * Output modes for the final pipeline step (#258).
+ *
+ * - `pr` (default): emit a `peter-evans/create-pull-request@v6` step so a
+ *   human reviews the bot output before it lands on the default branch.
+ * - `direct-commit`: commit & push straight to the default branch (no PR
+ *   gate), dropping `pull-requests: write` from `permissions:`. Mirrors the
+ *   commit&push step the `watch` / `combined` generators already emit.
+ */
+export const OUTPUT_MODES = ["pr", "direct-commit"] as const;
+export type OutputMode = (typeof OUTPUT_MODES)[number];
+
 /** Default output path under `.github/workflows/`. */
 const DEFAULT_OUTPUT = join(".github", "workflows", "feedradar-daily.yaml");
 
@@ -192,9 +204,111 @@ export function buildSlackWebhookExpr(raw: string | undefined): string {
 }
 
 /**
+ * Build the top-level `permissions:` block for the given output mode.
+ *
+ * - `pr` needs both `contents: write` (to create the branch/commit) and
+ *   `pull-requests: write` (so `peter-evans/create-pull-request` can open
+ *   the PR).
+ * - `direct-commit` pushes straight to the default branch, so it only needs
+ *   `contents: write`; emitting `pull-requests: write` would be an unused —
+ *   and misleading — grant (#258).
+ *
+ * Exported for unit testing.
+ */
+export function buildPermissionsBlock(outputMode: OutputMode): string {
+  if (outputMode === "direct-commit") {
+    return ["permissions:", "  contents: write"].join("\n");
+  }
+  return ["permissions:", "  contents: write", "  pull-requests: write"].join("\n");
+}
+
+/**
+ * Build the final pipeline step for the given output mode.
+ *
+ * - `pr`: a `peter-evans/create-pull-request@v6` step that stages
+ *   `items/ state/ research/` into a single PR per cron tick so a human can
+ *   review the auto-generated content before it lands on main
+ *   (ADR-0014 §X5 / ADR-0018 §W5).
+ * - `direct-commit`: a commit & push step modeled on the `watch` / `combined`
+ *   generators — commit only when something changed, then push with a
+ *   three-attempt `git pull --rebase --autostash` retry loop. No PR gate, so
+ *   the comment warns against a PR-required branch protection on the default
+ *   branch (#258).
+ *
+ * Both blocks are emitted with the same 6-space step indentation as the
+ * surrounding steps in the template (the placeholder sits at column 0 where a
+ * `- name:` step would normally start). Exported for unit testing.
+ */
+export function buildFinalStep(outputMode: OutputMode): string {
+  if (outputMode === "direct-commit") {
+    return [
+      "      - name: Commit and push research output with retry",
+      "        # direct-commit output mode (#258): push straight to the default",
+      "        # branch instead of opening a PR. Commit only when items/ state/",
+      "        # research/ actually changed, then retry the push up to 3 times with",
+      "        # `git pull --rebase --autostash` between attempts (ADR-0014 D4),",
+      "        # mirroring the watch / combined generators.",
+      "        #",
+      "        # NB: this mode pushes without a human review gate, so do NOT put a",
+      "        # PR-required branch protection rule on the default branch — the bot",
+      "        # commit would be rejected and every run would fail.",
+      "        run: |",
+      "          set -euo pipefail",
+      '          git config user.name "feedradar-bot"',
+      '          git config user.email "feedradar-bot@users.noreply.github.com"',
+      "          git add items/ state/ research/",
+      "          if git diff --cached --quiet; then",
+      '            echo "nothing staged; exiting cleanly"',
+      "            exit 0",
+      "          fi",
+      '          git commit -m "chore(feedradar): daily watch + triage + research $(date -u +%Y-%m-%d)"',
+      "          for attempt in 1 2 3; do",
+      // The `${...}` tokens below are bash parameter expansions in the
+      // generated YAML, not JS template placeholders, so they are assembled
+      // by concatenation to keep biome's noTemplateCurlyInString quiet
+      // (same convention as the `${{ ... }}` Actions expressions above).
+      '            if git push origin "$' + '{GITHUB_REF_NAME}"; then',
+      '              echo "push succeeded on attempt $' + '{attempt}"',
+      "              exit 0",
+      "            fi",
+      '            echo "push failed (attempt $' + '{attempt}/3), rebasing..."',
+      '            git pull --rebase --autostash origin "$' + '{GITHUB_REF_NAME}"',
+      "          done",
+      '          echo "push failed after 3 attempts" >&2',
+      "          exit 1",
+    ].join("\n");
+  }
+  return [
+    "      - name: Create PR with research output",
+    "        # `peter-evans/create-pull-request@v6` stages items/ state/ research/",
+    "        # into a single PR per cron tick. Human reviews the PR before",
+    "        # research/ lands on main, giving an explicit gate on auto-generated",
+    "        # content (ADR-0014 §X5 / ADR-0018 §W5).",
+    "        uses: peter-evans/create-pull-request@v6",
+    "        with:",
+    '          commit-message: "chore(feedradar): daily watch + triage + research"',
+    "          # peter-evans/create-pull-request does not run shell on these",
+    "          # fields, so `$(date ...)` would land literally in the PR title.",
+    "          # Use the `github.run_id` expression to keep titles unique per run.",
+    '          title: "feedradar: daily triage + research (run $' + '{{ github.run_id }})"',
+    "          body: |",
+    "            Automated feedradar pipeline output. Review the research/ Markdown",
+    "            before merging — generated content is untrusted (ADR-0009).",
+    "          branch: feedradar/daily",
+    "          base: $" + "{{ github.ref_name }}",
+    "          delete-branch: true",
+    "          add-paths: |",
+    "            items/",
+    "            state/",
+    "            research/",
+  ].join("\n");
+}
+
+/**
  * Render the bundled template by substituting `{{watchCron}}` /
  * `{{maxItems}}` / `{{triageAgent}}` / `{{researchAgent}}` /
- * `{{reviewAgent}}` / `{{envBlock}}` / `{{slackWebhookExpr}}`.
+ * `{{reviewAgent}}` / `{{envBlock}}` / `{{slackWebhookExpr}}` /
+ * `{{permissionsBlock}}` / `{{finalStep}}`.
  */
 export function renderCombinedWithTriageTemplate(
   template: string,
@@ -206,6 +320,8 @@ export function renderCombinedWithTriageTemplate(
     reviewAgent: SupportedAgent;
     envBlock: string;
     slackWebhookExpr: string;
+    permissionsBlock: string;
+    finalStep: string;
   },
 ): string {
   return template
@@ -215,7 +331,9 @@ export function renderCombinedWithTriageTemplate(
     .replaceAll("{{researchAgent}}", values.researchAgent)
     .replaceAll("{{reviewAgent}}", values.reviewAgent)
     .replaceAll("{{envBlock}}", values.envBlock)
-    .replaceAll("{{slackWebhookExpr}}", values.slackWebhookExpr);
+    .replaceAll("{{slackWebhookExpr}}", values.slackWebhookExpr)
+    .replaceAll("{{permissionsBlock}}", values.permissionsBlock)
+    .replaceAll("{{finalStep}}", values.finalStep);
 }
 
 export interface GenerateCombinedWithTriageOptions {
@@ -228,6 +346,8 @@ export interface GenerateCombinedWithTriageOptions {
   maxItems: number;
   /** `secrets.<NAME>` ref, or undefined when the notify step should no-op. */
   slackWebhook?: string;
+  /** Final-step output mode (#258). Defaults to `pr`. */
+  outputMode: OutputMode;
   force: boolean;
   templatesRoot?: string;
   io?: WorkflowIO;
@@ -249,8 +369,17 @@ export interface GenerateCombinedWithTriageResult {
 export async function generateCombinedWithTriage(
   options: GenerateCombinedWithTriageOptions,
 ): Promise<GenerateCombinedWithTriageResult> {
-  const { cwd, watchCron, output, triageAgent, researchAgent, reviewAgent, maxItems, force } =
-    options;
+  const {
+    cwd,
+    watchCron,
+    output,
+    triageAgent,
+    researchAgent,
+    reviewAgent,
+    maxItems,
+    outputMode,
+    force,
+  } = options;
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -272,6 +401,11 @@ export async function generateCombinedWithTriage(
       `invalid --slack-webhook '${options.slackWebhook}' (expected 'secrets.<NAME>', e.g. 'secrets.SLACK_WEBHOOK')`,
     );
   }
+  if (!(OUTPUT_MODES as readonly string[]).includes(outputMode)) {
+    throw new Error(
+      `invalid --output-mode '${outputMode}' (expected one of: ${OUTPUT_MODES.join(" | ")})`,
+    );
+  }
 
   const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
   const templatePath = join(templatesRoot, "workflows", "combined-with-triage.template.yaml.tmpl");
@@ -282,6 +416,8 @@ export async function generateCombinedWithTriage(
 
   const envBlock = buildEnvBlock(triageAgent, researchAgent, reviewAgent);
   const slackWebhookExpr = buildSlackWebhookExpr(options.slackWebhook);
+  const permissionsBlock = buildPermissionsBlock(outputMode);
+  const finalStep = buildFinalStep(outputMode);
 
   const rendered = renderCombinedWithTriageTemplate(template, {
     watchCron,
@@ -291,6 +427,8 @@ export async function generateCombinedWithTriage(
     reviewAgent,
     envBlock,
     slackWebhookExpr,
+    permissionsBlock,
+    finalStep,
   });
 
   const destAbs = isAbsolute(output) ? output : join(cwd, output);
@@ -323,6 +461,7 @@ export async function generateCombinedWithTriage(
   log(`  research-agent: ${researchAgent}`);
   log(`  review-agent:   ${reviewAgent}`);
   log(`  max-items:      ${maxItems}`);
+  log(`  output-mode:    ${outputMode}`);
   log(`  slack-webhook:  ${options.slackWebhook ?? "(none — notify step no-ops)"}`);
   log("");
   log("Required GitHub Actions secrets (Settings → Secrets and variables → Actions):");
@@ -349,6 +488,7 @@ interface ParsedFlags {
   reviewAgent: SupportedAgent;
   maxItems: number;
   slackWebhook?: string;
+  outputMode: OutputMode;
   force: boolean;
   help: boolean;
 }
@@ -368,6 +508,7 @@ export function parseGenerateCombinedWithTriageArgs(args: string[]): ParsedFlags
   let reviewAgent: SupportedAgent = "codex-cli";
   let maxItems = RESEARCH_BATCH_DEFAULT_MAX_ITEMS;
   let slackWebhook: string | undefined;
+  let outputMode: OutputMode = "pr";
   let force = false;
   let help = false;
 
@@ -429,6 +570,17 @@ export function parseGenerateCombinedWithTriageArgs(args: string[]): ParsedFlags
       slackWebhook = value;
       continue;
     }
+    if (a === "--output-mode") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(OUTPUT_MODES as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --output-mode expects one of: ${OUTPUT_MODES.join(" | ")}, got '${value}'`,
+        );
+      }
+      outputMode = value as OutputMode;
+      continue;
+    }
     if (a === "--force" || a === "-f") {
       force = true;
       continue;
@@ -447,6 +599,7 @@ export function parseGenerateCombinedWithTriageArgs(args: string[]): ParsedFlags
     reviewAgent,
     maxItems,
     slackWebhook,
+    outputMode,
     force,
     help,
   };
@@ -478,6 +631,9 @@ export function printGenerateCombinedWithTriageHelp(log: (m: string) => void): v
   );
   log("  --slack-webhook <ref>      Secret reference (e.g. secrets.SLACK_WEBHOOK) for the");
   log("                             triaged_unsure-queue alert (optional)");
+  log("  --output-mode <mode>       pr | direct-commit (default: pr). 'pr' opens a");
+  log("                             review PR; 'direct-commit' commits & pushes straight");
+  log("                             to the default branch (drops pull-requests: write)");
   log("  --force, -f                Overwrite existing output file");
   log("");
   log("Required secrets (Settings → Secrets and variables → Actions):");
@@ -521,6 +677,7 @@ export async function runGenerateCombinedWithTriage(
       reviewAgent: parsed.reviewAgent,
       maxItems: parsed.maxItems,
       slackWebhook: parsed.slackWebhook,
+      outputMode: parsed.outputMode,
       force: parsed.force,
       io,
     });
