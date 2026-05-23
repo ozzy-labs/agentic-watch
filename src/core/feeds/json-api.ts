@@ -920,7 +920,6 @@ export const jsonApiAdapter: FeedAdapter = {
     let aggregatedNotModified = true;
     const fetchedAt = new Date().toISOString();
 
-    let facetIndex = 0;
     for (const value of generateFacetValues(facetSpec)) {
       const innerUrl = applyFacetValue(source.url, facetSpec, value);
       // Build a "single-axis" view of the source: same id / pagination /
@@ -958,13 +957,10 @@ export const jsonApiAdapter: FeedAdapter = {
         aggregatedSeen.add(item.id);
       }
 
-      facetIndex++;
       // Dry-run: walk only the first facet value so `source test` stays
       // cheap and the per-page-0 selector preview is meaningful.
       if (dryRun) break;
     }
-
-    void facetIndex;
 
     return {
       items: aggregatedItems,
