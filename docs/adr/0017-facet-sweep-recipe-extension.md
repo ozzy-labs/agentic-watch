@@ -14,13 +14,13 @@ Accepted（2026-05-23）
 
 しかし、2026-05-23 に `curl` で endpoint を直接叩いて検証した結果、**AWS dirs API は `(page + 1) × size <= 10000` の hard cap を実装している**ことが判明した:
 
-| `page` × `size` | レスポンス |
-|---|---|
-| `page=99, size=100` (offset 9,900) | `items: [100件]` (正常) |
-| `page=100, size=100` (offset 10,000) | `items: []` (空) |
-| `page=0, size=500` × `page=20` (offset 10,000) | `items: []` (空) |
-| `page=0, size=1000` × `page=10` (offset 10,000) | `items: []` (空) |
-| `pageSize` を変えても境界は 10,000 で一定 | |
+| `page` × `size`                                 | レスポンス              |
+| ----------------------------------------------- | ----------------------- |
+| `page=99, size=100` (offset 9,900)              | `items: [100件]` (正常) |
+| `page=100, size=100` (offset 10,000)            | `items: []` (空)        |
+| `page=0, size=500` × `page=20` (offset 10,000)  | `items: []` (空)        |
+| `page=0, size=1000` × `page=10` (offset 10,000) | `items: []` (空)        |
+| `pageSize` を変えても境界は 10,000 で一定       |                         |
 
 つまり、`maxPages: 250` に引き上げても **AWS 側が page 100 で打ち切る**ため PR #232 の修正は実質効いていない。`sort_order=desc` (新→古) と `sort_order=asc` (古→新) を両方走らせても 10,000 + 10,000 = 20,000 件にしかならず、中間の ~11 ヶ月分 ~1,834 件 (2021-08-17 から 2022-07-26 付近) は引き続き取り込めない。
 
@@ -34,16 +34,16 @@ curl 'https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2
 
 各年の totalHits は 10,000 の cap を**大幅に**下回る:
 
-| 年 | totalHits | 年 | totalHits |
-|---|---|---|---|
-| 2026 | 842 | 2015 | 452 |
-| 2025 | (進行中) | 2014 | ~250 |
-| 2024 | 2,345 | 2013 | ~120 |
-| 2023 | ~2,200 | 2012 | ~70 |
-| 2022 | 2,101 | 2011 | ~70 |
-| 2021 | 2,074 | 2010 | 66 |
-| 2020 | 2,294 | ... | ... |
-| 2019 | ~2,300 | 2004 | 2 |
+| 年   | totalHits | 年   | totalHits |
+| ---- | --------- | ---- | --------- |
+| 2026 | 842       | 2015 | 452       |
+| 2025 | (進行中)  | 2014 | ~250      |
+| 2024 | 2,345     | 2013 | ~120      |
+| 2023 | ~2,200    | 2012 | ~70       |
+| 2022 | 2,101     | 2011 | ~70       |
+| 2021 | 2,074     | 2010 | 66        |
+| 2020 | 2,294     | ...  | ...       |
+| 2019 | ~2,300    | 2004 | 2         |
 
 最大の年 (2020) でも 2,294 件 / 100 件 per page = **23 ページ**で完結し、AWS の 10,000 件 cap (~100 ページ) に余裕で収まる。年単位で sweep すれば、2004 年〜現在の **21,834 件すべて**を欠落なく取得できる。
 
@@ -72,7 +72,7 @@ facet sweep は AWS 固有の workaround ではなく、archive / news 系の pa
 facets:
   year:
     type: range
-    range: [2004, 2026]    # inclusive (両端含む)
+    range: [2004, 2026] # inclusive (両端含む)
     step: 1
     param: tags.id
     template: "whats-new-v2#year#{}"
@@ -80,18 +80,18 @@ facets:
 
 #### 共通フィールド
 
-| field | type | 説明 |
-|---|---|---|
-| `type` | `"range" \| "enum"` | facet の値生成戦略 |
-| `param` | string | inject 先の query param 名 (上例では `tags.id`) |
-| `template` | string | facet 値を埋め込む string テンプレート。**リテラル `{}` プレースホルダ必須** (Zod refine で検証) |
+| field      | type                | 説明                                                                                             |
+| ---------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| `type`     | `"range" \| "enum"` | facet の値生成戦略                                                                               |
+| `param`    | string              | inject 先の query param 名 (上例では `tags.id`)                                                  |
+| `template` | string              | facet 値を埋め込む string テンプレート。**リテラル `{}` プレースホルダ必須** (Zod refine で検証) |
 
 #### `type: range` 固有
 
-| field | type | 説明 |
-|---|---|---|
+| field   | type                                 | 説明                                                                                                                                  |
+| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `range` | `[number, number \| "current-year"]` | inclusive な start / end。end は数値 or `current-year` sentinel ([#257](https://github.com/ozzy-labs/feedradar/issues/257) follow-up) |
-| `step` | `number` (default 1) | 正の整数 |
+| `step`  | `number` (default 1)                 | 正の整数                                                                                                                              |
 
 > **Follow-up ([#257](https://github.com/ozzy-labs/feedradar/issues/257)):** range の上端を数値ハードコードにすると、年 (時刻) 軸 facet が年境界で新着をサイレントに取りこぼす (例: 2027 年に `…#year#2027` を一度もクエリしない)。上端に `current-year` sentinel を許容し、fetch 時 (`generateFacetValues`) に現在のカレンダー年へ解決することで、手動 bump 不要で範囲が wall-clock に追随する。既存の数値タプルは後方互換でそのまま動作する。
 
@@ -106,8 +106,8 @@ facets:
     template: "{}"
 ```
 
-| field | type | 説明 |
-|---|---|---|
+| field    | type                      | 説明                          |
+| -------- | ------------------------- | ----------------------------- |
 | `values` | `Array<string \| number>` | 明示的な値のリスト (min 1 件) |
 
 ### D3. Adapter semantics
@@ -137,9 +137,11 @@ for facetValue of generateFacetValues(facets[name]):
 
 #### dry-run (`source test`)
 
-- `source test <id>` は dry-run なので、facet 軸も **最初の 1 facet 値のみ** を walk する
+- `source test <id>` は dry-run なので、facet 軸も **単一の facet 値のみ** を walk する
 - これにより selector adoption preview / pagination preview は意味のある情報を保ったまま、`source test` の実行時間が膨張しない
-- diag (selectorAdoption / paginationPreview) は **最初の facet 値の結果**を代表値として返す
+- diag (selectorAdoption / paginationPreview) は **その facet 値の結果**を代表値として返す
+
+> **Revision (2026-05-23, [#256](https://github.com/ozzy-labs/feedradar/issues/256) / [#257](https://github.com/ozzy-labs/feedradar/issues/257)):** 初版は「**最初の 1 facet 値のみ**」(range facet なら range 先頭 = 最古年) を test していたが、recency 系 recipe で常に `matched: 0` となりキーワード検証が機能しない問題があった。range facet は **上端 (最新年) を probe** するよう変更し、#257 で導入した相対上端 (`current-year` sentinel) も解決される。enum facet は「最新」概念が無いため従来どおり先頭値を test する。どの facet 値を test したかは警告として明示される。詳細は末尾の Revision 節を参照。
 
 #### progress reporting
 
@@ -163,14 +165,14 @@ facets:
 
 ### D5. Scope (Phase 1 限定)
 
-| 項目 | Phase 1 | 後続 |
-|---|---|---|
-| 単一 facet sweep | ✅ | |
-| `type: range` / `type: enum` | ✅ | |
-| **multi-facet (year × category 等)** | ❌ (adapter が runtime error) | future ADR で composition rules を確立 |
-| **per-facet ETag tracking** | ❌ (conditional GET 無効) | future ADR で必要性が出たら検討 |
-| facet ごとの異なる selector / template / param | ✅ (record shape) | |
-| CLI flags (`--facet-*`) | ❌ (recipe のみ) | future issue |
+| 項目                                           | Phase 1                       | 後続                                   |
+| ---------------------------------------------- | ----------------------------- | -------------------------------------- |
+| 単一 facet sweep                               | ✅                            |                                        |
+| `type: range` / `type: enum`                   | ✅                            |                                        |
+| **multi-facet (year × category 等)**           | ❌ (adapter が runtime error) | future ADR で composition rules を確立 |
+| **per-facet ETag tracking**                    | ❌ (conditional GET 無効)     | future ADR で必要性が出たら検討        |
+| facet ごとの異なる selector / template / param | ✅ (record shape)             |                                        |
+| CLI flags (`--facet-*`)                        | ❌ (recipe のみ)              | future issue                           |
 
 ## Consequences
 
@@ -247,3 +249,22 @@ AWS の rss / atom feed や、別の history endpoint があればそちらに�
   - [ADR-0009 Untrusted External Content Handling](./0009-untrusted-external-content-handling.md) — facet sweep でも全リクエストが ADR-0009 の boundary 上で処理される (`trustLevel` / size cap / host blocklist)
 - 関連 docs:
   - `docs/user-guide.md` (`#--kind-json-api`) — facet sweep の使い方を追記
+
+## Revision (2026-05-23, [#256](https://github.com/ozzy-labs/feedradar/issues/256) / [#257](https://github.com/ozzy-labs/feedradar/issues/257))
+
+### 動機
+
+初版の dry-run 仕様 (上記 §dry-run) は `source test` が facet 軸の **最初の 1 facet 値のみ** を walk すると定めていた。range facet では range 先頭 = 最古年が test されるため、recency 系の recipe (バンドル `aws-whats-new` の `facets.year`、range `[2004, current-year]`) で次の問題が顕在化した:
+
+- "Amazon Quick" のような 2025+ のブランドキーワードは 2004 年のアーカイブには出現せず、`source test` が常に `matched: 0` を返す
+- 「キーワードが当たるか」を確認する最重要ツールが、フラッグシップ recipe で実質無効になっていた ([#256](https://github.com/ozzy-labs/feedradar/issues/256))
+
+あわせて、range facet の上端がハードコード (`[2004, 2026]`) のままだと年境界で新着をサイレントに取りこぼす問題も判明した ([#257](https://github.com/ozzy-labs/feedradar/issues/257))。
+
+### 改訂後の方針
+
+- **range facet の上端を相対指定可能に** ([#257](https://github.com/ozzy-labs/feedradar/issues/257)): `range` の上端に `current-year` sentinel を許容し、実行時の現在年へ自動拡張する。out-of-range 年は 0 件即終了なので安全。既存の数値タプル (`[2004, 2026]`) は後方互換で受け付け続ける。
+- **`source test` は range facet で上端 (最新年) を probe** ([#256](https://github.com/ozzy-labs/feedradar/issues/256)): dry-run の単一 facet 値選択を「先頭値」から、range facet に限り「上端 (= 最新年。`current-year` sentinel も解決後の値)」へ変更。これにより recency 系 recipe でも最新コンテンツに対してキーワード検証ができる。enum facet は「最新」概念が無いため従来どおり先頭値を test する。
+- **どの facet 値を test したか明示**: `facet sweep 有効: year=2026 のみ test 中（全 facet 値は walk しない）` のように、test 対象の facet 値を警告として表示し、サイレントな誤認を防ぐ。
+
+これにより上記 §dry-run の「最初の 1 facet 値のみ」記述は range facet については本 Revision で上書きされる (enum facet の挙動は不変)。実装は `src/core/feeds/json-api.ts` / `src/cli/source.ts`、利用方法は `docs/user-guide.md` を参照。
