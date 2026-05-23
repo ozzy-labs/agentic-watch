@@ -28,20 +28,21 @@ triage を **自動化レイヤーとして CLI に組み込む**必要がある
 
 ## Decision
 
-LLM-based triage extension を導入する。**cheap model (gemini-2.5-flash-lite / claude-haiku) を triage 専用 channel** として agent adapter に追加し、per-source `triagePolicy:` に基づき detected item を 4 つの triage decision に自動分類する。以下の 9 論点 (W2-W7 + W-A/W-B/W-G/W-H) を順に決定する。
+LLM-based triage extension を導入する。**cheap model (gemini-2.5-flash-lite / claude-haiku) を triage 専用 channel** として agent adapter に追加し、per-source `triagePolicy:` に基づき detected item を 4 つの triage decision (`research` / `digest` / `dismiss` / `unsure`) に自動分類する。以下の 10 論点 (W2-W7 + W-A/W-B/W-G/W-H) を順に決定する。
 
-### W2. state machine — sub-field 採用 (新 status 案を却下)
+### W2. state machine — hybrid (新 3 status + `dismiss` は sub-field 統合)
 
-triage 結果を表現する state 表現には 2 案あった:
+triage 結果を表現する state 表現には 3 案あった (詳細は §Alternatives 参照):
 
-- **新 status 4 種を追加**: `triaged_research` / `triaged_digest` / `triaged_dismiss` / `triaged_unsure` を `ItemStatusSchema` に追加 (state 数 4 → 7)
-- **sub-field**: `detected` のまま `triage.decision` フィールドを追加 (state 数 4 → 6: `triaged_research` / `triaged_digest` / `triaged_unsure` の 3 status 追加 + 既存 `dismissed` を兼用)
+- **案 B (epic 仮置き案)**: `triaged_research` / `triaged_digest` / `triaged_dismiss` / `triaged_unsure` の 4 新 status を `ItemStatusSchema` に追加。`triaged_dismiss` は `dismissed` と別の terminal 状態として保持 (合計 status: 8)
+- **案 A (完全 sub-field 案)**: `detected` のまま `triage.decision` フィールドだけ追加し、新 status は 0 追加 (合計 status: 4)
+- **採用案 (hybrid)**: `triaged_research` / `triaged_digest` / `triaged_unsure` の 3 新 status を追加し、`triaged_dismiss` のみ既存 `dismissed` と統合 (`dismissedBy: human | triage_<agent>` sub-field で出所を区別)。合計 status: 7
 
-epic では「新 status 案」を仮置きしていたが、本 ADR では **sub-field 案 (`triaged_dismiss` は既存 `dismissed` と統合)** を採用する。理由:
+本 ADR では **採用案 (hybrid)** を選ぶ。理由:
 
 - `dismissed` の semantic (= terminal 状態、`undismiss` で `detected` 復帰可) を保てる
 - CLI filter は `radar items list --status dismissed --by triage` で同等の UX
-- state 数: 4 → 6 で済む (既存 4 + `triaged_research` / `triaged_digest` / `triaged_unsure`)
+- 合計 status は 7 (既存 4 + 新 3: `triaged_research` / `triaged_digest` / `triaged_unsure`)。案 B (合計 8) より 1 つ少なく、状態空間が小さい
 - `dismissedBy: human | triage_<agent>` で出所を区別、reversibility ロジック (W6) も簡潔
 
 ただし `triaged_research` / `triaged_digest` / `triaged_unsure` は **新 status として追加**する。これらは「triage 済みだが research / digest / 判断保留」という中間状態であり、`detected` でも terminal でもない。
@@ -145,7 +146,7 @@ W2 で sub-field 案 + 新 3 status 案を採用したことを正式化:
 | `reviewed` | レビュー実行済み | yes | (update は v+1 を作るが status 不変) |
 | `dismissed` | 人間 or triage が「research しない」と判定 | yes | → detected (undismiss) |
 
-state 数: **4 → 6** (新規追加 3 status: `triaged_research` / `triaged_digest` / `triaged_unsure`)。`dismissed` は既存だが `dismissedBy: human | triage_<agent>` で出所を区別する。
+合計 status: **7** (既存 4 + 新規追加 3: `triaged_research` / `triaged_digest` / `triaged_unsure`)。`dismissed` は既存だが `dismissedBy: human | triage_<agent>` で出所を区別する。
 
 `triaged_dismiss` を独立 status として持たないため、CLI filter は `--status dismissed` (= 全 dismissed) または `--status dismissed --by triage` (= triage 由来のみ) で表現する。
 
@@ -172,7 +173,7 @@ triage で生成された group key (例: `quick-ui-features` / `region-expansio
 ### 良い面
 
 - triage 自体は **コスト要因にならない** (gemini-flash-lite で月 ~$0.01 / source: 100 items × ~1k token × $0.075/M token = ~$0.0075)
-- state 数 6 で済む (新 status 案 7 より 1 つ少ない)、`dismissed` の terminal semantic を保てる
+- 合計 status は 7 で済む (案 B 案の 8 より 1 つ少ない)、`dismissed` の terminal semantic を保てる
 - per-source `triagePolicy:` SSoT + bundled recipe default で UX 段差なし
 - prompt injection 対策が triage layer にも適用され、third-party recipe 解禁の前提条件を満たす
 - feedback loop で policy tuning の根拠が git history に残る (immutable audit trail)
@@ -198,16 +199,16 @@ triage で生成された group key (例: `quick-ui-features` / `region-expansio
 
 - CLI filter が `--status detected --filter-triage research-worthy` のように冗長
 - detected の semantic が「triage 前」「triage 後 research-worthy」「triage 後 digest 候補」の 3 種に膨張し、operator が item 一覧を見ても triage 状態が即座にわからない
-- **却下理由**: state machine の visibility が下がる。CLI filter UX 劣化が許容範囲を超える。一方で、本 ADR W2 の sub-field 案 (=「`dismissed` のみ sub-field 統合、`research` / `digest` / `unsure` は新 status」) と比較すると trade-off は近い。
-- **note**: W2 で採用した hybrid 案 (sub-field for dismiss + new status for the rest) は、**「dismiss は terminal で人間操作と同じ」「research / digest / unsure は中間状態で triage 専用」**という semantic 差を尊重したもの。完全 sub-field 案より state 数は 2 多いが、visibility と semantic 整合性で勝る。
+- **却下理由**: state machine の visibility が下がる。CLI filter UX 劣化が許容範囲を超える。一方で、本 ADR W2 の hybrid 案 (=「`dismissed` のみ sub-field 統合、`research` / `digest` / `unsure` は新 status」) と比較すると trade-off は近い。
+- **note**: W2 で採用した hybrid 案 (sub-field for dismiss + new status for the rest) は、**「dismiss は terminal で人間操作と同じ」「research / digest / unsure は中間状態で triage 専用」**という semantic 差を尊重したもの。完全 sub-field 案より status 数は 3 多いが、visibility と semantic 整合性で勝る。
 
-### 案 B: 新 status 案 (state 数 4 → 7)
+### 案 B: 新 status 案 (合計 status: 8)
 
-epic 起票時の仮置き案。`triaged_dismiss` を `dismissed` と独立 status として保持:
+epic 起票時の仮置き案。`triaged_research` / `triaged_digest` / `triaged_dismiss` / `triaged_unsure` の 4 種を新 status として追加し、`triaged_dismiss` を `dismissed` と独立 status として保持:
 
 - history 保持はできるが、`dismissed` の terminal semantic が「人間 dismiss」「triage dismiss」の 2 種に分裂
 - `undismiss` ロジックが 2 系統必要 (triaged_dismiss → detected と dismissed → detected)
-- **却下理由**: state 数増加に見合う semantic 利得がない。`dismissedBy` sub-field で出所区別すれば十分。
+- **却下理由**: status 数増加 (採用案 7 → 8) に見合う semantic 利得がない。`dismissedBy` sub-field で出所区別すれば十分。
 
 ### 案 C: heuristic ranking (LLM なし)
 
@@ -229,7 +230,7 @@ epic 起票時の仮置き案。`triaged_dismiss` を `dismissed` と独立 stat
 本 ADR は以下の既存 ADR を継承・補強する:
 
 - [ADR-0001](./0001-agent-adapter-interface.md): triage が新 channel (`adapter.triage()`) を `AgentAdapter` interface に追加。PR-2 (#239) で実装
-- [ADR-0008](./0008-status-state-machine.md): item status state machine を 4 → 6 状態に拡張。詳細は本 ADR §W2 / §W-B、ADR-0008 末尾 Update セクション参照
+- [ADR-0008](./0008-status-state-machine.md): item status state machine を 4 → 7 状態に拡張 (3 新 status + `dismissed` 既存)。詳細は本 ADR §W2 / §W-B、ADR-0008 末尾 Update セクション参照
 - [ADR-0009](./0009-untrusted-external-content-handling.md): boundary marker pattern を triage path にも常時適用 (untrusted_item + policy の両方、`trustLevel` 不問)
 - [ADR-0014](./0014-workflow-generate-and-auto-research-safety.md): `workflow generate combined-with-triage` template が ADR-0014 の `combined` workflow の自然な拡張。PR-4 (#241) で追加
 - [ADR-0015](./0015-progress-reporting-ux.md): progress reporter (`Reporter` interface) を `radar triage` CLI でも利用 (継承、本 ADR で追加判断は不要)

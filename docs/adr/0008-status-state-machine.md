@@ -103,6 +103,6 @@ session で言及した `triaged` は**明示状態として持たない**。理
 - `triaged_digest` — triage が digest 候補と判定（group key 保持）
 - `triaged_unsure` — triage が confidence 不足で判断保留
 
-`triaged_dismiss` は独立 status として追加せず、既存 `dismissed` に `dismissedBy: human | triage_<agent>` sub-field を加えて出所を区別する形に統合された（state 数: 4 → 6）。詳細・trade-off は [ADR-0018](./0018-triage-extension.md) §Decision W2 / §W-B 参照。
+`triaged_dismiss` は独立 status として追加せず、既存 `dismissed` に `dismissedBy: human | triage_<agent>` sub-field を加えて出所を区別する形に統合された（合計 status: 4 → 7）。詳細・trade-off は [ADR-0018](./0018-triage-extension.md) §Decision W2 / §W-B 参照。
 
 > 本 ADR の Decision 本文は immutable に保ち、上記拡張は ADR-0018 を SSoT とする。
