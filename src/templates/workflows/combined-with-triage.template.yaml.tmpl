@@ -5,6 +5,14 @@
 # LoC-heavy research/review steps see ~5-15% of the raw detected count
 # instead of the full firehose. Template placeholders / hard-cap rationale
 # are documented in `src/cli/workflow/generate-combined-with-triage.ts`.
+#
+# The final step is rendered from `--output-mode` (default `pr`):
+#   pr            — peter-evans/create-pull-request@v6 (human reviews the PR
+#                   before research/ lands on the default branch).
+#   direct-commit — commit & push straight to the default branch (no PR gate;
+#                   `permissions:` drops `pull-requests: write`). Do NOT put a
+#                   PR-required branch protection on the default branch when
+#                   using this mode — the bot pushes directly.
 
 name: feedradar-daily
 
@@ -13,9 +21,7 @@ on:
     - cron: "{{watchCron}}"
   workflow_dispatch: {}
 
-permissions:
-  contents: write
-  pull-requests: write
+{{permissionsBlock}}
 
 concurrency:
   # Distinct from feedradar-watch / feedradar-combined so this can co-exist
@@ -123,25 +129,4 @@ jobs:
               -d "{\"text\":\"feedradar: $UNSURE items need human triage review\"}"
           fi
 
-      - name: Create PR with research output
-        # `peter-evans/create-pull-request@v6` stages items/ state/ research/
-        # into a single PR per cron tick. Human reviews the PR before
-        # research/ lands on main, giving an explicit gate on auto-generated
-        # content (ADR-0014 §X5 / ADR-0018 §W5).
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: "chore(feedradar): daily watch + triage + research"
-          # peter-evans/create-pull-request does not run shell on these
-          # fields, so `$(date ...)` would land literally in the PR title.
-          # Use the `github.run_id` expression to keep titles unique per run.
-          title: "feedradar: daily triage + research (run ${{ github.run_id }})"
-          body: |
-            Automated feedradar pipeline output. Review the research/ Markdown
-            before merging — generated content is untrusted (ADR-0009).
-          branch: feedradar/daily
-          base: ${{ github.ref_name }}
-          delete-branch: true
-          add-paths: |
-            items/
-            state/
-            research/
+{{finalStep}}

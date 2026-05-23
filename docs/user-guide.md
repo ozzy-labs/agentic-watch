@@ -2514,6 +2514,7 @@ workflow generate combined-with-triage: wrote .github/workflows/feedradar-daily.
   research-agent: claude-code
   review-agent:   codex-cli
   max-items:      10
+  output-mode:    pr
   slack-webhook:  secrets.SLACK_WEBHOOK
 
 Required GitHub Actions secrets (Settings → Secrets and variables → Actions):
@@ -2536,7 +2537,23 @@ Required GitHub Actions secrets (Settings → Secrets and variables → Actions)
 | `Research digest groups (one report per triage.group)` | `radar items list --triage-group <g>` でグループ走査し `radar research --digest --triage-group "$GROUP"` で集約。`--triage-group` が digest ファイル名を group ごとに一意化するため、単一キーワード source ＋同日複数 group でもファイル名衝突しない（[#255](https://github.com/ozzy-labs/feedradar/issues/255)） |
 | `Review researched items` | `radar review --batch --status researched --agent codex-cli`。cross-agent review (ADR-0001) |
 | `Notify unsure queue` | `if: always()`。`triaged_unsure` 件数を Slack に通知（webhook 未設定なら no-op） |
-| `Create PR with research output` | `peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる。人間が PR レビューして merge |
+| 最終ステップ（`--output-mode` 依存） | `pr`（既定）: `Create PR with research output` ステップ。`peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめ、人間が PR レビューして merge。`direct-commit`: `Commit and push research output with retry` ステップ。default ブランチへ直 commit & push（PR を介さない）。詳細は[後述の `--output-mode`](#--output-mode-pr--direct-commit) を参照 |
+
+#### `--output-mode pr | direct-commit`
+
+最終ステップの出力先を切り替える（既定 `pr`、[#258](https://github.com/ozzy-labs/feedradar/issues/258)）。
+
+| mode | permissions | 最終ステップ | 用途 |
+|---|---|---|---|
+| `pr`（既定） | `contents: write` + `pull-requests: write` | `peter-evans/create-pull-request@v6` で 1 PR を作成 | bot 出力を人間が PR レビューしてから merge したい（既定の安全側） |
+| `direct-commit` | `contents: write` のみ | commit & push（**変更があるときだけ commit** ＋ `git pull --rebase --autostash` で 3 回リトライ。`watch` / `combined` のステップと同形） | 「日々の bot PR を人手レビューしたくない」個人/低リスクな監視ダイジェスト蓄積。生成 YAML の手改変が不要になる |
+
+```bash
+# 直 commit モードで生成（PR を作らず default ブランチへ直接 push）
+radar workflow generate combined-with-triage --output-mode direct-commit
+```
+
+`direct-commit` は **PR ゲートを介さず default ブランチへ直 push する**ため、default ブランチに **PR 必須のブランチ保護ルールを掛けないこと**（掛けると bot の commit が拒否され毎回 run が失敗する）。生成 YAML にもこの旨がコメントで明示される。
 
 #### 3. secrets を登録
 
