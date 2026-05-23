@@ -1213,15 +1213,18 @@ describe("e2e/cli (binary smoke)", () => {
     // the dedicated `workflow-generate-combined-with-triage.test.ts`; this
     // scenario covers the *runtime* CLI contract those YAML steps invoke.
     //
-    // We intentionally stop short of `research --batch --status
-    // triaged_research` and `review --batch --status researched`: those CLI
-    // surfaces are scheduled for a follow-up PR (the workflow generator
-    // bakes the future command surface into the YAML; running it against
-    // today's binary is the responsibility of PR-6 / #243's real-agent
-    // smoke). Verifying the *first half* of the lifecycle here is the
-    // valuable layer for PR-4: it proves the triage → items list → digest
-    // chain — which the workflow's per-group `while IFS=` loop critically
-    // depends on — actually works end-to-end through the binary boundary.
+    // Issue #250 closed the gap that previously forced this scenario to
+    // accept either pre- or post-transition status. We now also drive
+    // `research --batch --status triaged_research` and `review --batch
+    // --status researched` against fake binaries and pin the actual
+    // transitions the generated YAML expects:
+    //   triaged_research → researched   (research --batch)
+    //   triaged_digest   → researched   (research --digest per group)
+    //   researched       → reviewed     (review --batch)
+    // The whole-lifecycle smoke complements scenarios H / I and
+    // workflow-generate-combined-with-triage.test.ts which assert the
+    // generated YAML shape; this asserts the binaries the YAML invokes
+    // actually move items through every state the matrix promises.
     //
     // NO real cron / no real agent CLI invocation here (that's PR-6 #243).
     it("walks detected items through triage and emits one digest report per triage.group", async () => {
@@ -1386,46 +1389,90 @@ describe("e2e/cli (binary smoke)", () => {
         `stderr: ${digestResult.stderr}\nstdout: ${digestResult.stdout}`,
       ).toBe(0);
 
-      // Exactly one digest report should now exist in research/. The
-      // workflow's expected end-state is "one digest Markdown per
-      // triage.group", and that file existence is the contract that
-      // matters for the smoke. (Status-transition semantics for
-      // `triaged_digest → researched` are intentionally not pinned
-      // here: the legacy `radar research --digest` path only transitions
-      // `detected` items; updating the transition matrix for the new
-      // `triaged_*` statuses lands in a follow-up PR. The workflow's
-      // PR-creation step still sees the digest Markdown either way.)
+      // The digest report exists on disk AND the linked items transition
+      // to `researched` (issue #250: `triaged_digest → researched` is now
+      // wired via processResearchInvocation's expanded status whitelist).
       const reports = readdirSync(join(workdir, "research")).filter((f) => f.endsWith(".md"));
-      expect(reports.length, `research/ should contain 1 digest, got: ${reports.join(", ")}`).toBe(
-        1,
-      );
+      expect(
+        reports.length,
+        `research/ should contain 1 digest so far, got: ${reports.join(", ")}`,
+      ).toBe(1);
       expect(reports[0]).toContain("digest");
 
-      // The dismissed item stays dismissed (terminal), the
-      // triaged_research item still sits in its triage bucket waiting
-      // for the future `research --batch --status triaged_research`
-      // transition, and the triaged_digest items either landed at
-      // `researched` (once the transition matrix is wired) or remain
-      // `triaged_digest` (today's behaviour). We accept either so this
-      // smoke does not regress when the follow-up PR adds the
-      // transition.
+      // The dismissed item stays dismissed (terminal).
       const dismissedAfter = parseYaml(
         await readFile(join(workdir, "items", sourceId, "smoke-triage-dddddddd.yaml"), "utf8"),
       );
       expect(dismissedAfter.status).toBe("dismissed");
-      const triagedResearchAfter = parseYaml(
-        await readFile(join(workdir, "items", sourceId, "smoke-triage-aaaaaaaa.yaml"), "utf8"),
-      );
-      expect(triagedResearchAfter.status).toBe("triaged_research");
+
+      // Digest items: triaged_digest → researched (issue #250 transition).
       for (const id of ["smoke-triage-bbbbbbbb", "smoke-triage-cccccccc"]) {
         const after = parseYaml(
           await readFile(join(workdir, "items", sourceId, `${id}.yaml`), "utf8"),
         );
-        expect(
-          ["triaged_digest", "researched"].includes(after.status),
-          `digest item ${id} should be in triaged_digest or researched, got: ${after.status}`,
-        ).toBe(true);
+        expect(after.status, `digest item ${id} should be researched after #250`).toBe(
+          "researched",
+        );
       }
+
+      // The triaged_research item still sits in its bucket — the workflow
+      // YAML now drives `radar research --batch --status triaged_research`
+      // against it, which we exercise next.
+      const triagedResearchBefore = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "smoke-triage-aaaaaaaa.yaml"), "utf8"),
+      );
+      expect(triagedResearchBefore.status).toBe("triaged_research");
+
+      // Step 5 (#250): `radar research --batch --status triaged_research`
+      // mirrors the generated YAML's "Research triaged_research items"
+      // step. With the issue #250 fix, this picks up the
+      // smoke-triage-aaaaaaaa item and transitions it to `researched`.
+      const batchResearchResult = await runCli(
+        ["research", "--batch", "--status", "triaged_research", "--agent", "claude-code"],
+        { cwd: workdir, extraPath: binDir },
+      );
+      expect(
+        batchResearchResult.code,
+        `stderr: ${batchResearchResult.stderr}\nstdout: ${batchResearchResult.stdout}`,
+      ).toBe(0);
+      const triagedResearchAfter = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "smoke-triage-aaaaaaaa.yaml"), "utf8"),
+      );
+      expect(triagedResearchAfter.status, "triaged_research → researched per #250").toBe(
+        "researched",
+      );
+
+      // Step 6 (#250): `radar review --batch --status researched` mirrors
+      // the generated YAML's "Review researched items" step. We swap in
+      // the reviewer fake (separate stdin contract) on a fresh binDir so
+      // both fakes can coexist for the same invocation chain.
+      const reviewBinDir = join(workdir, "_bin_review");
+      await installFakeClaudeReviewer(reviewBinDir);
+      const batchReviewResult = await runCli(
+        ["review", "--batch", "--status", "researched", "--agent", "claude-code"],
+        { cwd: workdir, extraPath: reviewBinDir },
+      );
+      expect(
+        batchReviewResult.code,
+        `stderr: ${batchReviewResult.stderr}\nstdout: ${batchReviewResult.stdout}`,
+      ).toBe(0);
+      // All previously-researched items (the triaged_research one plus
+      // both triaged_digest ones via the digest report) end in `reviewed`.
+      for (const id of [
+        "smoke-triage-aaaaaaaa",
+        "smoke-triage-bbbbbbbb",
+        "smoke-triage-cccccccc",
+      ]) {
+        const after = parseYaml(
+          await readFile(join(workdir, "items", sourceId, `${id}.yaml`), "utf8"),
+        );
+        expect(after.status, `item ${id} should be reviewed after the batch step`).toBe("reviewed");
+      }
+      // The dismissed item is still terminal.
+      const dismissedFinal = parseYaml(
+        await readFile(join(workdir, "items", sourceId, "smoke-triage-dddddddd.yaml"), "utf8"),
+      );
+      expect(dismissedFinal.status).toBe("dismissed");
     });
   });
 

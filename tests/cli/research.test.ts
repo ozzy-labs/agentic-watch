@@ -951,6 +951,178 @@ describe("cli/research", () => {
       expect(captured.error.some((m) => m.includes("--max-items requires --batch"))).toBe(true);
     });
 
+    it("walks triaged_research items (#250) and transitions them to researched", async () => {
+      // PR #249 generates workflow YAML that runs:
+      //   radar research --batch --status triaged_research --max-items N
+      // against items that the triage adapter promoted (ADR-0018 §W-B).
+      // Issue #250 closed the gap where this surface was schema-rejected
+      // (or silently filtered to zero) before. This test pins the contract:
+      // input `triaged_research` → output `researched`.
+      const { workdir, items } = await setupBatchWorkspace(3);
+      // Promote each seeded item from detected → triaged_research before
+      // the CLI runs so we exercise the same on-disk state the triage step
+      // would leave behind.
+      for (const item of items) {
+        const promoted = { ...item, status: "triaged_research" as const };
+        await writeFile(
+          join(workdir, "items", promoted.sourceId, `${promoted.id}.yaml`),
+          stringifyYaml(promoted),
+          "utf8",
+        );
+      }
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--status", "triaged_research"], {
+        cwd: workdir,
+        io,
+      });
+
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(3);
+      for (let i = 0; i < 3; i++) {
+        const raw = await readFile(
+          join(workdir, "items", items[i].sourceId, `${items[i].id}.yaml`),
+          "utf8",
+        );
+        // ADR-0008 / ADR-0018: triaged_research → researched.
+        expect(parseYaml(raw).status).toBe("researched");
+      }
+      // The progress phase marker reflects the actual source status so the
+      // user sees "triaged_research → researched" (not the legacy
+      // "detected → researched"). The log path mirrors the marker.
+      expect(captured.log.some((m) => m.includes("status -> researched"))).toBe(true);
+    });
+
+    it("backward-compat: --status detected still transitions detected → researched", async () => {
+      // Guard rail for #250: the existing `detected` path must keep working
+      // unchanged after we expanded the allow-list to also accept
+      // `triaged_research`. Mirrors the first batch test but explicitly
+      // sets `--status detected` to assert it is not just a fluke of the
+      // default.
+      const { workdir, items } = await setupBatchWorkspace(2);
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch(["--batch", "--status", "detected"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls).toHaveLength(2);
+      for (let i = 0; i < 2; i++) {
+        const raw = await readFile(
+          join(workdir, "items", items[i].sourceId, `${items[i].id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(raw).status).toBe("researched");
+      }
+    });
+
+    it("--batch --status triaged_research only matches triaged_research items (no cross-status bleed)", async () => {
+      // Seed a mix: items 0..1 stay `detected`, items 2..3 become
+      // `triaged_research`. `--status triaged_research` must only pick up
+      // the latter so the workflow's per-status dispatch (triaged_research
+      // step vs. triaged_digest step) does not double-process anything.
+      const { workdir, items } = await setupBatchWorkspace(4);
+      for (let i = 2; i < 4; i++) {
+        const promoted = { ...items[i], status: "triaged_research" as const };
+        await writeFile(
+          join(workdir, "items", promoted.sourceId, `${promoted.id}.yaml`),
+          stringifyYaml(promoted),
+          "utf8",
+        );
+      }
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("body", {
+            id: `20260510_${req.items[0].id}_v1`,
+            itemIds: req.items.map((i) => i.id),
+            agent: req.agent,
+            templateId: req.templateId,
+            createdAt: "2026-05-10T03:00:00.000Z",
+            updatedAt: null,
+            reviewedAt: null,
+            reviewedBy: null,
+          }),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch(["--batch", "--status", "triaged_research"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(0);
+      // Only items[2] and items[3] were eligible.
+      expect(calls.map((c) => c.items[0].id)).toEqual([items[2].id, items[3].id]);
+      // items[0..1] still detected (untouched).
+      for (let i = 0; i < 2; i++) {
+        const raw = await readFile(
+          join(workdir, "items", items[i].sourceId, `${items[i].id}.yaml`),
+          "utf8",
+        );
+        expect(parseYaml(raw).status).toBe("detected");
+      }
+    });
+
+    it("rejects --status values outside the documented allow-list (#250)", async () => {
+      // `researched` / `reviewed` / `dismissed` / `triaged_digest` /
+      // `triaged_unsure` are valid `ItemStatus` enum values but not valid
+      // *input* states for research. Per ADR-0018 only `detected` and
+      // `triaged_research` produce a `researched` transition; the rest must
+      // be rejected with an explicit error so a typo in scheduled YAML
+      // fails loud instead of silently no-op-ing.
+      const { workdir } = await setupBatchWorkspace(1);
+      for (const bogus of [
+        "researched",
+        "reviewed",
+        "dismissed",
+        "triaged_digest",
+        "triaged_unsure",
+      ]) {
+        const { io, captured } = captureIo();
+        const code = await runResearch(["--batch", "--status", bogus], { cwd: workdir, io });
+        expect(code, `--status ${bogus} should be rejected`).toBe(2);
+        expect(
+          captured.error.some((m) => m.includes("invalid --status") && m.includes(bogus)),
+          `error should name '${bogus}'`,
+        ).toBe(true);
+      }
+    });
+
     it("halts the batch when an inner item invocation fails", async () => {
       const { workdir, items } = await setupBatchWorkspace(3);
       const { adapter, calls } = buildMockAdapter(async (req) => {

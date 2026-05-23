@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -58,6 +58,16 @@ interface ReviewArgs {
   agent?: string;
   template?: string;
   help?: boolean;
+  /**
+   * Batch mode (#250): review every research file whose linked items are in
+   * `--status <status>` (must be `researched`). Mirrors the
+   * `research --batch` surface so scheduled YAML can run
+   * `radar review --batch --status researched` end-to-end (PR #249).
+   */
+  batch?: boolean;
+  status?: string;
+  maxItems?: string;
+  filterTags?: string;
 }
 
 function parseArgs(args: string[]): ReviewArgs {
@@ -68,12 +78,28 @@ function parseArgs(args: string[]): ReviewArgs {
       out.help = true;
       continue;
     }
+    if (a === "--batch") {
+      out.batch = true;
+      continue;
+    }
     if (a === "--agent") {
       out.agent = args[++i];
       continue;
     }
     if (a === "--template") {
       out.template = args[++i];
+      continue;
+    }
+    if (a === "--status") {
+      out.status = args[++i];
+      continue;
+    }
+    if (a === "--max-items") {
+      out.maxItems = args[++i];
+      continue;
+    }
+    if (a === "--filter-tags") {
+      out.filterTags = args[++i];
       continue;
     }
     if (a?.startsWith("--")) {
@@ -88,17 +114,59 @@ function parseArgs(args: string[]): ReviewArgs {
   return out;
 }
 
+/**
+ * Default hard-cap for `radar review --batch`.
+ *
+ * Mirrors `RESEARCH_BATCH_DEFAULT_MAX_ITEMS` (ADR-0014 D3a). Review is the
+ * downstream of research, so the same per-tick cost envelope applies; pinning
+ * to the same literal keeps a scheduled `research --batch --max-items 10
+ * → review --batch` chain from accidentally fanning the review step out
+ * faster than research can keep up.
+ */
+export const REVIEW_BATCH_DEFAULT_MAX_ITEMS = 10;
+
+/**
+ * Whitelist of `Item.status` values accepted by `radar review --batch
+ * --status <status>`.
+ *
+ * Only `researched` is valid: review consumes research outputs (ADR-0008
+ * `researched → reviewed`) and there is no other prior status that produces
+ * a non-null research file with `reviewedAt: null`. We still keep the surface
+ * as `--status <status>` (rather than a hardcoded `researched`) so the CLI
+ * matches the symmetry of `research --batch --status <status>` and so a typo
+ * in scheduled YAML fails loud with an explicit allow-list message instead
+ * of being silently ignored (issue #250).
+ */
+export const REVIEW_BATCH_ALLOWED_STATUSES = ["researched"] as const;
+type ReviewBatchStatus = (typeof REVIEW_BATCH_ALLOWED_STATUSES)[number];
+
 function printHelp(log: (m: string) => void): void {
-  log("Usage: radar review <research-id> [--agent <agent-id>] [--template <template-id>]");
+  log("Usage:");
+  log("  radar review <research-id> [--agent <agent-id>] [--template <template-id>]");
+  log(
+    `  radar review --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
+  );
   log("");
   log("Arguments:");
   log("  <research-id>         Research id (basename of research/<id>.md without .md)");
+  log("                        Omit with --batch — research files are discovered.");
   log("");
   log("Options:");
   log(
     "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
   );
   log("  --template <id>       Template id under templates/ (default: default)");
+  log("  --batch               Review every un-reviewed research file whose linked");
+  log("                        items match --status (and --filter-tags), respecting");
+  log("                        --max-items (default: REVIEW_BATCH_DEFAULT_MAX_ITEMS).");
+  log("  --status <status>     Batch-mode filter: researched (default).");
+  log("                        `researched → reviewed` is the only legal transition");
+  log("                        per ADR-0008; other values are rejected.");
+  log(
+    `  --max-items N         Batch-mode hard-cap on processed reports (default: ${REVIEW_BATCH_DEFAULT_MAX_ITEMS}).`,
+  );
+  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
+  log("                        each linked item's matchedKeywords (case-insensitive).");
   log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
@@ -189,6 +257,251 @@ async function restoreSnapshot(snapshot: AtomicSnapshot): Promise<Error[]> {
   return errors;
 }
 
+function parseBatchMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+  if (raw === undefined) return REVIEW_BATCH_DEFAULT_MAX_ITEMS;
+  if (!/^[0-9]+$/.test(raw)) {
+    error(`review: invalid --max-items '${raw}' (expected positive integer)`);
+    return null;
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    error(`review: invalid --max-items '${raw}' (must be > 0)`);
+    return null;
+  }
+  return n;
+}
+
+function parseBatchFilterTags(raw: string | undefined): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0),
+    ),
+  ];
+}
+
+/**
+ * Discover candidate research files for `--batch` mode (#250).
+ *
+ * Walk `research/` for `*.md`, parse frontmatter, and keep entries that:
+ *   - parse cleanly against `ResearchFrontmatterSchema`
+ *   - have `reviewedAt === null` (un-reviewed; idempotent skip otherwise)
+ *
+ * Sort deterministically by (createdAt, id) so a scheduled batch always
+ * processes oldest-first. The per-item status filter (`--status researched`)
+ * is applied by the caller after cross-referencing `items/`.
+ */
+async function discoverBatchCandidates(
+  cwd: string,
+): Promise<Array<{ id: string; createdAt: string }>> {
+  const researchDir = join(cwd, "research");
+  if (!(await pathExists(researchDir))) return [];
+  let entries: string[];
+  try {
+    entries = await readdir(researchDir);
+  } catch {
+    return [];
+  }
+  const candidates: Array<{ id: string; createdAt: string }> = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".md")) continue;
+    // The frontmatter's `id` field is the canonical research id; we trust
+    // it over the filename so a rename does not silently change the id
+    // the review CLI passes to the agent.
+    let body: string;
+    try {
+      body = await readFile(join(researchDir, entry), "utf8");
+    } catch {
+      continue;
+    }
+    let fm: unknown;
+    try {
+      fm = matter(body, matterOptions).data;
+    } catch {
+      // Malformed frontmatter: leave it to the per-item review call to
+      // surface the schema error (skipping it silently in discovery hides
+      // a real corruption from the user).
+      continue;
+    }
+    const result = ResearchFrontmatterSchema.safeParse(fm);
+    if (!result.success) continue;
+    if (result.data.reviewedAt !== null) continue;
+    candidates.push({ id: result.data.id, createdAt: result.data.createdAt });
+  }
+  candidates.sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
+  return candidates;
+}
+
+/**
+ * Implementation of `radar review --batch` (#250).
+ *
+ * Mirrors `research --batch` shape:
+ *   1. Validate `--status` against `REVIEW_BATCH_ALLOWED_STATUSES`.
+ *   2. Walk `research/` to find un-reviewed research files.
+ *   3. Cross-reference linked items; keep those whose status matches.
+ *   4. Apply `--filter-tags` allow-list (case-insensitive) against linked
+ *      items' `matchedKeywords`.
+ *   5. Cap at `--max-items` (drops excess + warns).
+ *   6. Run the existing single-review path per candidate. Atomicity, agent
+ *      resolution, and rollback all reuse `runReview`'s implementation —
+ *      this function intentionally stays a thin orchestrator.
+ *
+ * Workflow YAML generated by `radar workflow generate combined-with-triage`
+ * (PR #249) drives this entry point: `radar review --batch --status
+ * researched --agent <reviewAgent>`.
+ */
+async function runReviewBatch(
+  parsed: ReviewArgs,
+  cwd: string,
+  options: ReviewCommandOptions,
+  log: (m: string) => void,
+  warn: (m: string) => void,
+  error: (m: string) => void,
+  progress: ProgressReporter,
+): Promise<number> {
+  if (parsed.researchId !== undefined) {
+    error(`review: --batch is incompatible with positional <research-id> ('${parsed.researchId}')`);
+    return 2;
+  }
+  const rawStatus = parsed.status ?? "researched";
+  if (!(REVIEW_BATCH_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
+    error(
+      `review: invalid --status '${rawStatus}' (expected: ${REVIEW_BATCH_ALLOWED_STATUSES.join(" | ")})`,
+    );
+    return 2;
+  }
+  const status: ReviewBatchStatus = rawStatus as ReviewBatchStatus;
+
+  const maxItems = parseBatchMaxItems(parsed.maxItems, error);
+  if (maxItems === null) return 2;
+  const filterTags = parseBatchFilterTags(parsed.filterTags);
+
+  // Resolve the agent once up front so the batch fails fast on a typo
+  // rather than 10x reporting it once per candidate. The per-item review
+  // path will re-resolve (defensively), but it will hit the same
+  // explicit-agent slot and short-circuit identically.
+  let explicitAgent: AgentId | undefined;
+  if (parsed.agent !== undefined) {
+    const agentResult = AgentIdSchema.safeParse(parsed.agent);
+    if (!agentResult.success) {
+      error(
+        `review: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
+      );
+      return 2;
+    }
+    explicitAgent = agentResult.data;
+  }
+  let agent: AgentId;
+  try {
+    const config = await loadRadarConfig(cwd);
+    agent = await getDefaultAgent("review", { explicit: explicitAgent, configOverride: config });
+  } catch (e) {
+    if (e instanceof RadarConfigError) {
+      error(`review: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
+  const candidates = await discoverBatchCandidates(cwd);
+  if (candidates.length === 0) {
+    log(`review: --batch found no un-reviewed research/*.md files`);
+    return 0;
+  }
+
+  // Cross-reference linked items so we can apply the per-item `--status`
+  // and `--filter-tags` filters. Loading items once and reusing the
+  // Map<id, Item> across candidates avoids quadratic scans for workspaces
+  // with many sources / items.
+  const itemsDir = join(cwd, "items");
+  const allItems = await loadItems(itemsDir);
+  const itemsById = new Map<string, Item>(allItems.map((i) => [i.id, i]));
+
+  const lowerFilterTags = filterTags;
+  type Matched = { researchId: string; createdAt: string; itemIds: string[] };
+  const matches: Matched[] = [];
+  for (const cand of candidates) {
+    // Re-read frontmatter to discover the linked itemIds — discovery only
+    // captured the bare `id` / `createdAt` to keep memory bounded.
+    const researchPath = join(cwd, "research", `${cand.id}.md`);
+    let body: string;
+    try {
+      body = await readFile(researchPath, "utf8");
+    } catch {
+      continue;
+    }
+    const fm = ResearchFrontmatterSchema.safeParse(matter(body, matterOptions).data);
+    if (!fm.success) continue;
+    const linked = fm.data.itemIds.map((id) => itemsById.get(id)).filter((i): i is Item => !!i);
+    if (linked.length === 0) continue;
+    // Every linked item must satisfy --status; mixed states would leave the
+    // review pass with a partially-eligible candidate that the downstream
+    // review code rejects anyway. Failing fast here keeps the per-item
+    // error budget cheap.
+    if (!linked.every((i) => i.status === status)) continue;
+    if (lowerFilterTags.length > 0) {
+      const tagged = linked.some((i) => {
+        const haystack = new Set(i.matchedKeywords.map((k) => k.toLowerCase()));
+        return lowerFilterTags.some((t) => haystack.has(t));
+      });
+      if (!tagged) continue;
+    }
+    matches.push({ researchId: cand.id, createdAt: cand.createdAt, itemIds: fm.data.itemIds });
+  }
+
+  if (matches.length === 0) {
+    log(
+      `review: --batch matched 0 research file(s) (status=${status}${
+        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+      })`,
+    );
+    return 0;
+  }
+
+  let selected = matches;
+  if (matches.length > maxItems) {
+    const dropped = matches.length - maxItems;
+    warn(
+      `review: --max-items ${maxItems} cap reached; dropping ${dropped} excess research file(s) (matched ${matches.length})`,
+    );
+    selected = matches.slice(0, maxItems);
+  }
+
+  log(
+    `review: --batch will process ${selected.length} research file(s) (status=${status}${
+      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
+    }, agent=${agent}, cap=${maxItems})`,
+  );
+
+  // Dispatch each candidate through the single-review path. We pass the
+  // resolved agent explicitly so each call short-circuits the config
+  // resolver to the same value the batch already accepted.
+  const innerOptions: ReviewCommandOptions = {
+    cwd,
+    io: { log, warn, error },
+    progress: options.progress ?? progress,
+  };
+  for (const m of selected) {
+    const innerArgs = [m.researchId, "--agent", agent];
+    if (parsed.template !== undefined) {
+      innerArgs.push("--template", parsed.template);
+    }
+    const code = await runReview(innerArgs, innerOptions);
+    if (code !== 0) {
+      error(`review: --batch halted on research '${m.researchId}' (exit ${code})`);
+      return code;
+    }
+  }
+  log(`review: --batch completed ${selected.length} research file(s)`);
+  return 0;
+}
+
 /**
  * Implementation of `radar review <research-id>`.
  *
@@ -243,6 +556,24 @@ export async function runReview(
   if (parsed.help) {
     printHelp(log);
     return 0;
+  }
+  if (parsed.batch) {
+    return runReviewBatch(parsed, cwd, options, log, warn, error, progress);
+  }
+  // Surface the batch-only flags when used outside `--batch`; matches
+  // `research.ts`'s "no silent ignore" stance so a typo in scheduled YAML
+  // does not become a no-op.
+  if (parsed.status !== undefined) {
+    error("review: --status requires --batch");
+    return 2;
+  }
+  if (parsed.maxItems !== undefined) {
+    error("review: --max-items requires --batch");
+    return 2;
+  }
+  if (parsed.filterTags !== undefined) {
+    error("review: --filter-tags requires --batch");
+    return 2;
   }
   if (!parsed.researchId) {
     error("review: missing <research-id>");
