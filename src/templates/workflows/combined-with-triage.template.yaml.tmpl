@@ -70,19 +70,33 @@ jobs:
         # matching item.
         run: |
           set -euo pipefail
-          GROUPS=$(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
-          if [ -z "$GROUPS" ]; then
+          # `mapfile` reads the group list into an array so each element is a
+          # single, properly-quoted token. The earlier command-substitution
+          # scalar assignment tripped actionlint/shellcheck SC2128 (expanding an
+          # array without an index) / SC2178 (reusing a name as both scalar and
+          # array) once the loop below treated it array-like. The pipeline still
+          # de-dupes and drops the `-` sentinel that `--field` prints for
+          # ungrouped items.
+          #
+          # NB: the array is NOT named `GROUPS` — that is a special bash array
+          # (the caller's group IDs); reading the group list into that reserved
+          # name fails outright under `set -e`. Use a non-reserved name.
+          mapfile -t DIGEST_GROUPS < <(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
+          if [ "${#DIGEST_GROUPS[@]}" -eq 0 ]; then
             echo "no triaged_digest groups to process"
             exit 0
           fi
-          while IFS= read -r GROUP; do
+          for GROUP in "${DIGEST_GROUPS[@]}"; do
             [ -z "$GROUP" ] && continue
             echo "::group::digest for triage.group=$GROUP"
             IDS=$(radar items list --triage-group "$GROUP" --status triaged_digest --field id | tr '\n' ' ')
+            # `--triage-group "$GROUP"` names the digest file after the group so
+            # two same-day groups from a single-keyword source no longer collide
+            # on `<date>_digest_<slug>_v1.md` (#255).
             # shellcheck disable=SC2086
-            radar research --digest $IDS --agent {{researchAgent}}
+            radar research --digest $IDS --triage-group "$GROUP" --agent {{researchAgent}}
             echo "::endgroup::"
-          done <<< "$GROUPS"
+          done
 
       - name: Review researched items (agent={{reviewAgent}})
         # Cross-agent review (ADR-0001): the review step intentionally uses
