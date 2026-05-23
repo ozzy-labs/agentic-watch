@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { listRecipes, mergeRecipeWithOverrides } from "../../src/core/recipes.js";
-import { SourceSchema } from "../../src/schemas/source.js";
+import { SourceSchema, SourceTriagePolicySchema } from "../../src/schemas/source.js";
 
 /**
  * Bundled-recipe contract tests (#178 / ADR-0012 §D3 strategy A).
@@ -176,5 +176,82 @@ describe("bundled recipes :: documented bundle (Phase 1 set)", () => {
     // explicit selectors back, this assertion will surface the change in
     // review.
     expect(devto?.recipe?.jsonSelectors).toBeUndefined();
+  });
+});
+
+describe("bundled recipes :: triagePolicy (#241 / ADR-0018 §W3)", () => {
+  it("aws-whats-new ships a SourceTriagePolicySchema-valid triagePolicy block", async () => {
+    const entries = await listRecipes();
+    const aws = entries.find((e) => e.name === "aws-whats-new");
+    expect(aws?.recipe?.triagePolicy, "aws-whats-new must bundle a triagePolicy").toBeDefined();
+    // Re-validate the parsed block directly against the schema so future
+    // schema bumps surface here even if `RecipeFileSchema` loosens.
+    const result = SourceTriagePolicySchema.safeParse(aws?.recipe?.triagePolicy);
+    expect(
+      result.success,
+      `aws-whats-new triagePolicy fails schema: ${
+        result.success
+          ? ""
+          : result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+      }`,
+    ).toBe(true);
+    expect(aws?.recipe?.triagePolicy?.agent).toBe("gemini-cli");
+    expect(aws?.recipe?.triagePolicy?.confidenceThreshold).toBe(0.7);
+    // Rules should mention all three decision categories so the agent has
+    // working context. The exact wording is free-form, but the presence of
+    // the canonical labels protects against accidental empty/placeholder
+    // rules slipping in.
+    const rules = aws?.recipe?.triagePolicy?.rules ?? "";
+    expect(rules).toMatch(/research/);
+    expect(rules).toMatch(/digest/);
+    expect(rules).toMatch(/dismiss/);
+  });
+
+  it("dev-to ships a SourceTriagePolicySchema-valid triagePolicy block", async () => {
+    const entries = await listRecipes();
+    const devto = entries.find((e) => e.name === "dev-to");
+    expect(devto?.recipe?.triagePolicy, "dev-to must bundle a triagePolicy").toBeDefined();
+    const result = SourceTriagePolicySchema.safeParse(devto?.recipe?.triagePolicy);
+    expect(
+      result.success,
+      `dev-to triagePolicy fails schema: ${
+        result.success
+          ? ""
+          : result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+      }`,
+    ).toBe(true);
+    expect(devto?.recipe?.triagePolicy?.agent).toBe("gemini-cli");
+    expect(devto?.recipe?.triagePolicy?.confidenceThreshold).toBe(0.7);
+    const rules = devto?.recipe?.triagePolicy?.rules ?? "";
+    expect(rules).toMatch(/research/);
+    expect(rules).toMatch(/digest/);
+    expect(rules).toMatch(/dismiss/);
+  });
+
+  it("triagePolicy propagates onto the merged source so `radar source add` carries it through", async () => {
+    // `mergeRecipeWithOverrides` is the entry point the CLI uses; the
+    // resulting Source object must still validate against `SourceSchema`
+    // with the triagePolicy block intact (ADR-0018 §W3 — policy is
+    // per-source SSoT once the recipe is materialized).
+    const entries = await listRecipes();
+    for (const entry of entries) {
+      if (!entry.recipe?.triagePolicy) continue;
+      const merged = mergeRecipeWithOverrides(entry.recipe, {
+        id: `bundled-test-${entry.name}`,
+      });
+      expect(
+        merged.triagePolicy,
+        `recipe '${entry.name}' triagePolicy must propagate to merged source`,
+      ).toBeDefined();
+      const sourceResult = SourceSchema.safeParse(merged);
+      expect(
+        sourceResult.success,
+        `recipe '${entry.name}' merged source fails SourceSchema: ${
+          sourceResult.success
+            ? ""
+            : sourceResult.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
+        }`,
+      ).toBe(true);
+    }
   });
 });

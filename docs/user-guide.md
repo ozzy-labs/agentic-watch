@@ -2197,6 +2197,225 @@ filters:
 
    `items/<sourceId>/` 配下は履歴として残る（ADR-0008）。
 
+## triage workflow
+
+scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triage → research → review` を**無人実行**するための運用ガイド。CLI コマンド単体のリファレンスは「[`radar triage`](#radar-triage---dry-run----apply----interactive)」「[`radar triage feedback`](#radar-triage-feedback-item-id---correct----wrong---reason-text)」「[`radar items list`](#radar-items-list-filters-output-options)」を参照（[ADR-0018](./adr/0018-triage-extension.md)）。
+
+このセクションでは、**個別 CLI ではなく workflow 全体を 1 cron tick で動かすときの設計判断と運用ノウハウ**を扱う。**`radar workflow generate combined-with-triage`** が生成する `.github/workflows/feedradar-daily.yaml` がこのセクションの主役。
+
+### overview — scheduled context での lifecycle
+
+`combined-with-triage` workflow が 1 cron tick で走らせる 5 ステップは、`items/<id>.yaml > status` を以下のように遷移させる:
+
+```text
+                              [LLM triage]                    [LLM research]
+   ┌─────────┐  watch run  ┌─────────┐  decision=research  ┌────────────────┐
+   │  (new)  │ ──────────▶ │detected │ ──────────────────▶ │triaged_research│ ──┐
+   └─────────┘             └─────────┘                     └────────────────┘   │
+                                │                                               │
+                                │ decision=digest (group=foo)                   │
+                                ▼                                               │
+                          ┌──────────────┐  research --digest by group  ┌──────▼─────┐
+                          │triaged_digest│ ──────────────────────────▶  │ researched │
+                          └──────────────┘                              └──────┬─────┘
+                                │                                              │
+                                │ decision=dismiss                             │ review --batch
+                                ▼                                              ▼
+                          ┌──────────────┐                              ┌──────────┐
+                          │  dismissed   │                              │ reviewed │
+                          └──────────────┘                              └──────────┘
+                                ▲
+                                │ decision=unsure (confidence < threshold)
+                          ┌──────────────┐
+                          │triaged_unsure│ ── 人間が手動で /research / /dismiss / undismiss
+                          └──────────────┘
+```
+
+ポイント:
+
+- **`triaged_unsure` は terminal 状態ではなく、人間のレビュー待ちキュー**。workflow 末尾の Slack 通知 step がキュー深度をアラートする。`radar items list --status triaged_unsure` で残量を確認 → 個別に `/research` / `/dismiss` / `radar triage feedback` で対処する
+- **`triaged_digest` は `triage.group` フィールドで分類される**。同 group は `radar research --digest` で 1 本のレポートに集約される（ADR-0011 の digest mode を triage 結果に再利用）
+- **`detected` → `triaged_*` 以外への直接遷移は CLI が拒否**する（[ADR-0008](./adr/0008-status-state-machine.md) の status state machine を triage 用 3 status で拡張、ADR-0018 §S2）
+
+### policy 書き方ガイド
+
+`sources/<id>.yaml > triagePolicy.rules:` は **markdown free-form** で書く（schema は文字列、内容は agent 側の判断材料）。効果的な書き方:
+
+1. **3 カテゴリ（research / digest / dismiss）を明示する**
+
+   ```yaml
+   triagePolicy:
+     agent: gemini-cli
+     confidenceThreshold: 0.7
+     rules: |
+       重要 (research):
+         - 新サービス GA / Preview
+         - 価格改定
+       集約 (digest):
+         - incremental な機能追加
+           group: ui-incremental
+       除外 (dismiss):
+         - リージョン拡張のみ
+         - SDK バージョン bump
+   ```
+
+   bundled recipe (`recipes/aws-whats-new.yaml`, `recipes/dev-to.yaml`) が canonical example。`radar source add --recipe aws-whats-new` で workspace に propagate される。
+
+2. **`group: <name>` を digest 行に付ける**: 同 group の item は 1 digest に集約される。group 名は agent の自由裁量だが、推奨は kebab-case の意味ラベル（`ui-incremental` / `integrations` / `tutorial-roundup` 等）。group が無い digest item は item 単位で（つまり digest にならず単体で）research される
+
+3. **不確実なケースは "判断困難なら unsure" と明記**: agent が confidence < `confidenceThreshold` の判定を返したとき `triaged_unsure` に振る。明示しないと「とりあえず research」に倒れがちで、cost が膨らむ
+
+#### anti-pattern
+
+- **"Always return research"**: triage の意味が無くなる。`combined` workflow（triage 無し）でよい
+- **判定基準を URL / hash で書く**: agent は新規 item の title / summary を見るだけで、source 側 URL pattern は知らない。「タイトルに `[GA]` が含まれる」のような表層ヒューリスティックも fragile（publisher が prefix を変えると一斉に外れる）。**意味ベース**で書く: 「新サービスの一般提供開始」
+- **長すぎる rules**: 200 行を超えると agent が rule 全体を取りこぼす。`重要 / 集約 / 除外` 各 5-10 個程度で抑える
+
+### secrets setup
+
+scheduled workflow は API key 認証で動く（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D5 / ADR-0018 §W5。OAuth は unattended 用途で禁止）。`combined-with-triage` の `env:` block には triage / research / review の 3 ロール分の secret が並ぶ:
+
+| agent | 必要な secret | 取得方法 |
+|---|---|---|
+| `gemini-cli` (default for triage) | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) → API keys。flash-lite モデルは無料枠あり |
+| `claude-code` (default for research) | `ANTHROPIC_API_KEY` | [Anthropic Console](https://console.anthropic.com/settings/keys) → Create Key |
+| `codex-cli` (default for review) | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/api-keys) → Create new secret key |
+| `copilot` | (`secrets.GITHUB_TOKEN` を自動利用) | 登録不要 |
+
+すべて `GITHUB_TOKEN` も forward する（`github-releases` adapter の rate limit を 60 → 5000 req/h に引き上げる）。`secrets.GITHUB_TOKEN` は GitHub Actions が自動付与するので登録不要。
+
+#### GitHub repo settings での登録手順
+
+1. リポジトリの `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
+2. **Name**: `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` のうち、生成 workflow が要求するもの（`radar workflow generate combined-with-triage` の stdout に必要 secret 名が列挙される）
+3. **Secret**: 各 console で発行した API key を貼り付け
+4. オプションで Slack 通知用に `SLACK_WEBHOOK` も登録（`--slack-webhook secrets.SLACK_WEBHOOK` を付けて generate した場合）
+
+#### 動作確認
+
+```bash
+# 手動 trigger で 1 cron tick を即起動
+gh workflow run feedradar-daily.yaml --ref main
+
+# 進行状況を tail で見る
+gh run watch
+```
+
+`triage` step が API key 認証エラーで失敗した場合、`Settings → Secrets` で正しい名前で登録されているか確認する（typo / 末尾改行 / 余計な空白が一番多い原因）。
+
+### triage cost 見積もり
+
+triage の cost は **research に比べて圧倒的に安い**。`gemini-2.5-flash-lite` のような cheap-model channel を使う前提で（[ADR-0018](./adr/0018-triage-extension.md) §W2）:
+
+| 構成 | 1 月の triage call 数 | 試算 cost (USD) |
+|---|---|---|
+| AWS What's New (~700 items/month at peak) | ~700 | **\<\$0.01** |
+| dev.to global (~3,000 items/month) | ~3,000 | **\<\$0.05** |
+| 上記 + Anthropic news + GitHub Releases × 5 (~5,000 items/month 合計) | ~5,000 | **\<\$0.10** |
+
+> 試算根拠: gemini-2.5-flash-lite の input ~\$0.10/M tokens × 1 item ~500 tokens × N items = N × 0.00005 USD。500 items でも 0.025 USD。
+
+対する **research の cost は 2-3 桁高い**:
+
+| 構成 | 1 月の research call 数 | 試算 cost (USD) |
+|---|---|---|
+| triage 無しで `combined --max-items 10` (24 cron/日 × 30 日 × 10 = 7,200 calls/月最大) | 1,000-3,000 (実運用) | **\$5-20** |
+| triage 有り (`triaged_research` だけ研究、典型 5-15%) | 100-500 | **\$1-5** |
+
+つまり **triage を入れる目的は cost 削減（10x 程度）と human attention 削減** の両方。「triage そのものの cost が気になる」段階で詰まることはまずない。
+
+詳細な cost 警告と暴走時の止め方は[`radar workflow generate combined` のコスト試算](#コスト試算とコスト警告)を参照（`combined-with-triage` も同じ防御機構を継承）。
+
+### `workflow generate combined-with-triage` チュートリアル
+
+`radar workflow generate combined-with-triage` で生成 → secrets 設定 → 手動 trigger で動作確認、を 1 通り示す。
+
+#### 1. workflow YAML を生成
+
+```bash
+radar workflow generate combined-with-triage \
+  --watch-cron "0 6 * * *" \
+  --triage-agent gemini-cli \
+  --research-agent claude-code \
+  --review-agent codex-cli \
+  --max-items 10 \
+  --slack-webhook secrets.SLACK_WEBHOOK
+```
+
+出力:
+
+```text
+workflow generate combined-with-triage: wrote .github/workflows/feedradar-daily.yaml
+  watch-cron:     0 6 * * *
+  triage-agent:   gemini-cli
+  research-agent: claude-code
+  review-agent:   codex-cli
+  max-items:      10
+  slack-webhook:  secrets.SLACK_WEBHOOK
+
+Required GitHub Actions secrets (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY
+  GEMINI_API_KEY
+  OPENAI_API_KEY
+  SLACK_WEBHOOK
+  GITHUB_TOKEN (auto-provisioned, no setup needed)
+```
+
+#### 2. 生成 YAML の構造
+
+主要 step は 5 つ + 通知 + PR 作成:
+
+| step | 何をするか |
+|---|---|
+| `Run watch (detect new items)` | `radar watch run` で全 source を fetch。新 item は `detected` で `items/` に書く |
+| `Triage detected items` | `radar triage --apply --triage-agent gemini-cli`。`detected` → `triaged_research` / `triaged_digest` / `triaged_unsure` / `dismissed` に振り分け |
+| `Research triaged_research items (capped at 10)` | `radar research --batch --status triaged_research --max-items 10`。triage で「重要」判定された item を 1 件 1 レポート |
+| `Research digest groups (one report per triage.group)` | `radar items list --triage-group <g>` でグループ走査し `radar research --digest` で集約 |
+| `Review researched items` | `radar review --batch --status researched --agent codex-cli`。cross-agent review (ADR-0001) |
+| `Notify unsure queue` | `if: always()`。`triaged_unsure` 件数を Slack に通知（webhook 未設定なら no-op） |
+| `Create PR with research output` | `peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる。人間が PR レビューして merge |
+
+#### 3. secrets を登録
+
+「[secrets setup](#secrets-setup)」の手順に従い、stdout に列挙された secret 名を `Settings → Secrets and variables → Actions` に登録する。
+
+#### 4. 動作確認
+
+```bash
+# commit & push
+git add .github/workflows/feedradar-daily.yaml
+git commit -m "ci: add daily feedradar triage workflow"
+git push
+
+# 手動 trigger で 1 cron tick を即実行
+gh workflow run feedradar-daily.yaml --ref main
+
+# 完了まで watch
+gh run watch
+```
+
+完了したら:
+
+- 新規 PR (`feedradar/daily` ブランチ) が立ち、`research/` 配下の Markdown と `items/` の status 遷移が含まれる
+- Slack webhook を設定していて `triaged_unsure` が > 0 なら通知が飛ぶ
+
+PR を人間がレビューして merge。これで 1 サイクル。
+
+### troubleshooting
+
+| 症状 | 想定原因 | 対処 |
+|---|---|---|
+| triage step が `agent 'gemini-cli' not found in PATH` で失敗 | runner に gemini-cli が install されていない（生成 YAML は `npm install -g @ozzylabs/feedradar` しか走らない） | step の `run:` に `npm install -g @google/gemini-cli` を追加するか、`runs-on:` を gemini プリインストール image に切り替える |
+| triage step が `Authentication failed` で失敗 | `GEMINI_API_KEY` secret が未登録 / typo / 末尾改行 | `Settings → Secrets and variables → Actions` で値を再登録（GitHub UI は値を保持表示しないため、再貼り付けが安全） |
+| `triaged_unsure` が大量発生（毎日 100 件以上） | `confidenceThreshold` が高すぎる / `rules:` が unsure ケースを明示していない | `radar triage stats` で trend を見る。**閾値を 0.7 → 0.5 に下げる**か、`rules:` に「判断困難なら dismiss」を明示する。`radar triage feedback <item-id> --wrong --reason "..."` で誤判定を蓄積すれば次回 triage の prompt に反映される（ADR-0018 §W4） |
+| triage が `research` 判定を返したが内容が低品質 | rules の "重要" カテゴリが曖昧 / publisher 側の表現変化に追従できていない | 該当 item を `radar triage feedback <item-id> --wrong --reason "marketing post, not GA"` で誤判定マークし、`rules:` の "除外" カテゴリに該当パターンを追加 |
+| 同じ source の item が毎日 `triaged_unsure` に振られる | source の trustLevel / 投稿パターンが特殊で agent が判断できない | source ごと dismiss するか（`radar source remove <id>`）、`triagePolicy:` を per-source で書き直す。bundled recipe の policy はあくまで出発点 |
+| `triaged_digest` の group 名がバラついて digest が 1 item ずつになる | agent が group 名を毎回違う表現で返す（例: `ui-incremental` vs `incremental-ui`） | `rules:` で group 名を**明示**する（上の policy 書き方ガイドの bundled recipe を参照）。明示しない group は agent の自由裁量で揺らぐ |
+| `triage --apply` が `policy invalid` で全件スキップ | `sources/<id>.yaml > triagePolicy:` が schema 違反 | `radar doctor` で全 source の schema を一斉検証。`agent` / `confidenceThreshold` / `rules` の 3 フィールドが必須 |
+| dismissed item を間違えて作った（false positive） | `radar dismiss` / `radar triage --apply` の判断ミス | `radar undismiss <item-id>` で `dismissed → detected` に戻し、再 triage / 再 research する（[ADR-0018](./adr/0018-triage-extension.md) §W4） |
+
+詳細な triage 設計判断（cheap-model channel / boundary marker / status state machine 拡張）は [ADR-0018](./adr/0018-triage-extension.md) を参照。
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
