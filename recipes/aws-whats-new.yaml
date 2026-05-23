@@ -37,19 +37,35 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  # 250 pages * 100 items/page = 25,000 items. `whats-new-v2` reports
-  # `totalHits: ~21,834` (2026-05 observation), so a full `--backfill`
-  # completes well within the cap with ~3,166 items / ~1.2 years of
-  # headroom at AWS's observed ~2,500 announcements/year rate. The
-  # bundled-recipe ceiling in `tests/recipes/bundled.test.ts` was lifted
-  # to 250 in lockstep (defense-in-depth, ADR-0012 §D5). Issue #230
-  # raised the cap from the previous 200 because that left the oldest
-  # ~1,800 posts unindexed. `--backfill --max-pages N` can narrow further.
-  maxPages: 250
-  # `metadata.totalHits` is the AWS-reported total; the adapter uses it to
-  # short-circuit backfill once `ceil(totalHits / pageSize)` pages have been
-  # walked (ADR-0012 §D2 backfill early-stop hint).
+  # PER-FACET inner cap (ADR-0017). The 10,000-item offset cap is
+  # circumvented by the year-by-year facet sweep below — each year holds
+  # at most ~2,345 items (2024), which fits in ≤24 pages at pageSize=100.
+  # 30 leaves ~25% headroom for the largest year. Previous value 250 was
+  # dictated by full-history sweep on a single axis (PR #232) and is
+  # superseded by the facet sweep approach in ADR-0017. `--backfill
+  # --max-pages N` applies to this inner cap, not the outer year axis.
+  maxPages: 30
+  # `metadata.totalHits` is the AWS-reported total per facet value; the
+  # adapter uses it to short-circuit backfill once `ceil(totalHits /
+  # pageSize)` pages have been walked (ADR-0012 §D2 backfill early-stop
+  # hint). With the year facet active, each year reports its own
+  # totalHits (~2,000-2,300 for active years).
   totalPath: $.metadata.totalHits
+# Facet sweep (ADR-0017). The AWS dirs API enforces a hard
+# `(page + 1) * size <= 10000` cap, making the upper ~half of the catalog
+# (totalHits 21,834 vs reachable 10,000) unreachable via inner pagination
+# alone. Sweeping year-by-year recovers full coverage with zero gap: each
+# year holds well under 10,000 items, so the inner traversal never bumps
+# the AWS-side limit. Range covers 2004 (AWS's first announcement year)
+# through the current year; out-of-range years simply return 0 items and
+# the inner loop terminates immediately.
+facets:
+  year:
+    type: range
+    range: [2004, 2026]
+    step: 1
+    param: tags.id
+    template: "whats-new-v2#year#{}"
 jsonSelectors:
   # Each result is wrapped in `{ "item": { ... } }`, so we dereference one
   # extra level inside `items[*].item` to keep the per-element selectors

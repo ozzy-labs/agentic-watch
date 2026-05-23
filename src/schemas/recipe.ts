@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  SourceFacetsSchema,
   SourceFiltersSchema,
   SourceHttpOptionsSchema,
   SourceJsOptionsSchema,
@@ -59,6 +60,9 @@ export const RecipeFileSchema = z.object({
   http: SourceHttpOptionsSchema.optional(),
   pagination: SourcePaginationSchema.optional(),
   jsonSelectors: SourceJsonApiSelectorsSchema.optional(),
+  // Facet sweep recipe extension (ADR-0017). Optional so existing recipes
+  // without `facets:` keep working unchanged.
+  facets: SourceFacetsSchema.optional(),
   trustLevel: TrustLevelSchema.default("untrusted"),
 });
 

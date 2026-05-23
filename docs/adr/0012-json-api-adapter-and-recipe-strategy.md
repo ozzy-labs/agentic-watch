@@ -418,6 +418,7 @@ ADR-0009 §A 信頼境界表 (`Source kind` 別) に **2 行追加**する:
   - [ADR-0008 Item Status State Machine](./0008-status-state-machine.md) (D5a の "response too large" を fail として記録する semantics)
   - [ADR-0009 Untrusted External Content Handling](./0009-untrusted-external-content-handling.md) (本 ADR の D5 / D6 で generic adapter 用に拡張)
   - [ADR-0010 html-js Adapter and Playwright Distribution](./0010-html-js-adapter-and-distribution.md) (recipe バンドル案 B 却下理由の参照、distribution 単純化方針の継承)
+  - [ADR-0017 Facet Sweep Recipe Extension](./0017-facet-sweep-recipe-extension.md) (本 ADR §D2 の pagination 軸とは独立した outer "data slice" 軸を追加。AWS dirs API の 10,000 件 offset cap を回避)
 - 関連 docs:
   - [`docs/design/threat-model.md`](../design/threat-model.md) (本 ADR で `json-api` / `json-feed` 行を信頼境界表に追加する作業は ADR-0009 改訂と同 PR で実施)
 - 関連背景 (公開情報のみ):

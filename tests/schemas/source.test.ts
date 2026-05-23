@@ -265,6 +265,128 @@ describe("schemas/source - kind: json-api (ADR-0012)", () => {
   });
 });
 
+describe("schemas/source - facets (ADR-0017)", () => {
+  const baseJsonApi = {
+    id: "aws-whats-new",
+    kind: "json-api" as const,
+    url: "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2",
+    pagination: {
+      type: "page" as const,
+      param: "page",
+      start: 0,
+      pageSize: 100,
+      pageSizeParam: "size",
+      maxPages: 30,
+    },
+  };
+
+  it("accepts a json-api source without facets (backward compat)", () => {
+    // Existing recipes (PR #229 / #232) omit `facets` entirely. They must
+    // continue to parse with the new optional field unset.
+    const result = SourceSchema.parse(baseJsonApi);
+    expect(result.facets).toBeUndefined();
+  });
+
+  it("accepts a valid range facet", () => {
+    const result = SourceSchema.parse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, 2026],
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    expect(result.facets?.year?.type).toBe("range");
+  });
+
+  it("accepts a valid enum facet", () => {
+    const result = SourceSchema.parse({
+      ...baseJsonApi,
+      facets: {
+        category: {
+          type: "enum",
+          values: ["compute", "storage", "database"],
+          param: "category",
+          template: "{}",
+        },
+      },
+    });
+    expect(result.facets?.category?.type).toBe("enum");
+  });
+
+  it("rejects a facet template missing the {} placeholder", () => {
+    // The Zod refine catches malformed templates so `.replace("{}", ...)`
+    // does not silently no-op at runtime (which would inject a fixed
+    // string and ignore the facet value entirely).
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, 2026],
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#2024", // missing {}
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a range facet with step <= 0", () => {
+    // step: 0 would yield an infinite loop in the adapter; step: -1 would
+    // walk backwards past the start. Schema rejects both.
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2004, 2026],
+          step: 0,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a range facet where start > end", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      facets: {
+        year: {
+          type: "range",
+          range: [2026, 2004], // inverted
+          step: 1,
+          param: "tags.id",
+          template: "whats-new-v2#year#{}",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an enum facet with empty values", () => {
+    const result = SourceSchema.safeParse({
+      ...baseJsonApi,
+      facets: {
+        category: {
+          type: "enum",
+          values: [], // empty
+          param: "category",
+          template: "{}",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("schemas/source - SourceJsOptionsSchema (ADR-0010)", () => {
   it("applies defaults for waitUntil and timeout", () => {
     const result = SourceJsOptionsSchema.parse({});
