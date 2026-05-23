@@ -57,7 +57,7 @@ radar source remove <id>
 
 # JSON API recipe を pagination 付きで追加（ADR-0012）
 radar source add aws-whats-new --kind json-api \
-  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new&size=100&page=0" \
+  --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&size=100&page=0" \
   --keywords "Bedrock,Claude" \
   --pagination-strategy page --page-size 100 --max-pages 200
 
