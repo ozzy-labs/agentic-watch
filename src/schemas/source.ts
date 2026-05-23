@@ -225,6 +225,112 @@ export const SourceJsonApiSelectorsSchema = z.object({
 export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema>;
 
 /**
+ * Facet sweep recipe extension for `kind: json-api` (ADR-0017).
+ *
+ * `facets` is an outer "data slice" axis that wraps the inner pagination
+ * loop. It exists because some APIs cap their offset/page traversal at a
+ * fixed total (e.g. AWS dirs API: `(page + 1) * size <= 10000`), making
+ * the upper ~half of the catalog unreachable via inner pagination alone.
+ * Splitting the request by a facet (year, category, …) keeps every slice
+ * comfortably under the cap and recovers full-history coverage.
+ *
+ * Two facet types are supported in Phase 1:
+ *
+ * - `range`: a numeric range `[start, end]` (inclusive) walked with `step`.
+ *   Useful for year sweeps where the API exposes a `year=YYYY` filter.
+ * - `enum`: an explicit list of values (string / number). Useful for
+ *   non-numeric or non-sequential facets (categories, regions, tags).
+ *
+ * The `template` must contain a literal `{}` placeholder which the
+ * adapter substitutes with the current facet value (e.g.
+ * `whats-new-v2#year#{}` → `whats-new-v2#year#2024`). The substituted
+ * string is injected into the URL as the value of the `param` query
+ * parameter.
+ *
+ * Multi-facet support (e.g. year × category) is explicitly deferred to a
+ * future ADR; the adapter throws when more than one facet entry is
+ * present. The schema allows a `Record<string, Facet>` purely for
+ * forward-compatibility — single entry today, additional entries later
+ * without a schema break.
+ *
+ * See ADR-0017 for the full design rationale (option A vs option D
+ * `pagination.type: facet`, lastSeenIds-as-global semantics, conditional
+ * GET disablement in facet sweep mode).
+ */
+export const SourceFacetRangeSchema = z
+  .object({
+    type: z.literal("range"),
+    /** Query parameter name to inject (e.g. `tags.id`). */
+    param: z.string().min(1),
+    /**
+     * Template string with a literal `{}` placeholder for the facet value.
+     * E.g. `whats-new-v2#year#{}` → injected as `whats-new-v2#year#2024`.
+     */
+    template: z.string().min(1),
+    /** Inclusive `[start, end]` range — both endpoints are visited. */
+    range: z.tuple([z.number(), z.number()]),
+    /** Step size (default 1). Must be a positive integer. */
+    step: z.number().int().positive().default(1),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.template.includes("{}")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["template"],
+        message: "template must contain '{}' placeholder",
+      });
+    }
+    if (value.range[0] > value.range[1]) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["range"],
+        message: "range start must be <= end",
+      });
+    }
+  });
+export type SourceFacetRange = z.infer<typeof SourceFacetRangeSchema>;
+
+export const SourceFacetEnumSchema = z
+  .object({
+    type: z.literal("enum"),
+    /** Query parameter name to inject (e.g. `category`). */
+    param: z.string().min(1),
+    /**
+     * Template string with a literal `{}` placeholder for the facet value.
+     * The adapter coerces non-string values via `String(value)` before
+     * substitution.
+     */
+    template: z.string().min(1),
+    /** Explicit list of facet values to sweep. */
+    values: z.array(z.union([z.string(), z.number()])).min(1),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.template.includes("{}")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["template"],
+        message: "template must contain '{}' placeholder",
+      });
+    }
+  });
+export type SourceFacetEnum = z.infer<typeof SourceFacetEnumSchema>;
+
+export const SourceFacetSchema = z.discriminatedUnion("type", [
+  SourceFacetRangeSchema,
+  SourceFacetEnumSchema,
+]);
+export type SourceFacet = z.infer<typeof SourceFacetSchema>;
+
+/**
+ * Map of facet-name → facet-spec. In Phase 1 the adapter enforces a
+ * single entry at runtime (multi-facet is deferred to a future ADR), but
+ * the schema accepts the record shape so future multi-facet support does
+ * not require a schema break.
+ */
+export const SourceFacetsSchema = z.record(z.string().min(1), SourceFacetSchema);
+export type SourceFacets = z.infer<typeof SourceFacetsSchema>;
+
+/**
  * Validate `Source.url` per kind.
  *
  * Every kind except `npm-registry` requires a fully-qualified `http(s)` URL.
@@ -275,6 +381,12 @@ export const SourceSchema = z
     http: SourceHttpOptionsSchema.optional(),
     pagination: SourcePaginationSchema.optional(),
     jsonSelectors: SourceJsonApiSelectorsSchema.optional(),
+    // Facet sweep recipe extension (ADR-0017). Independent of
+    // `pagination`: `facets` is the outer "data slice" axis, `pagination`
+    // is the inner per-request page traversal. Only consulted by the
+    // `json-api` adapter. Single-facet only in Phase 1 — multi-facet is
+    // schema-allowed for forward-compat but the adapter throws at runtime.
+    facets: SourceFacetsSchema.optional(),
     // `trustLevel` defaults to `"untrusted"` so existing source YAMLs (which
     // omit the field entirely) keep their current treatment. Per ADR-0009 M4
     // this is schema-only; policy branches that read `trustLevel` arrive in a

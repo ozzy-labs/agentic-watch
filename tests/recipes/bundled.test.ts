@@ -67,18 +67,22 @@ describe("bundled recipes :: schema", () => {
 
   it("keeps pagination.maxPages within a sane envelope (no runaway recipes)", async () => {
     // ADR-0012 §D5 defense-in-depth: a malformed `maxPages: 9999` would let
-    // a single recipe issue ~10⁴ requests. Cap bundled recipes at 250 — the
-    // ceiling chosen for AWS What's New (the largest documented case). The
-    // cap was raised from 200 to 250 in issue #230 so a full `--backfill`
-    // of `whats-new-v2` (totalHits ~21,834) fits with ~1 year of headroom.
+    // a single recipe issue ~10⁴ requests. Cap bundled recipes at 100 —
+    // the facet-sweep approach (ADR-0017) means individual recipe slices
+    // are now per-facet caps rather than full-history caps, so values like
+    // 250 (PR #232's full-history setting) are no longer needed. AWS
+    // What's New now uses `maxPages: 30` (per-year cap, ≤24 pages needed
+    // for the largest year). dev.to uses 10. Leaving 100 as the ceiling
+    // gives future bundled recipes plenty of headroom without re-opening
+    // the runaway-recipe risk.
     const entries = await listRecipes();
     for (const entry of entries) {
       const max = entry.recipe?.pagination?.maxPages;
       if (max === undefined) continue;
       expect(
         max,
-        `recipe '${entry.name}' pagination.maxPages=${max} exceeds the bundled-recipe cap (250)`,
-      ).toBeLessThanOrEqual(250);
+        `recipe '${entry.name}' pagination.maxPages=${max} exceeds the bundled-recipe cap (100)`,
+      ).toBeLessThanOrEqual(100);
       expect(max).toBeGreaterThan(0);
     }
   });
@@ -143,6 +147,23 @@ describe("bundled recipes :: documented bundle (Phase 1 set)", () => {
     // protects against accidental edits that would silently drop every
     // AWS item again (#204).
     expect(aws?.recipe?.jsonSelectors?.linkBase).toBe("https://aws.amazon.com");
+  });
+
+  it("aws-whats-new declares a year facet sweep (ADR-0017)", async () => {
+    // The year facet circumvents the AWS dirs API's 10,000-item offset
+    // cap (empirically discovered: `(page + 1) * size <= 10000` regardless
+    // of pageSize). Without this, ~1,800 of the totalHits ~21,834 items
+    // would be unreachable. Pinning the spec shape protects against
+    // accidental edits that would silently re-introduce the gap.
+    const entries = await listRecipes();
+    const aws = entries.find((e) => e.name === "aws-whats-new");
+    const year = aws?.recipe?.facets?.year;
+    expect(year, "aws-whats-new must declare facets.year").toBeDefined();
+    expect(year?.type).toBe("range");
+    // Template must contain the `{}` placeholder (Zod refine would have
+    // rejected otherwise, but pin the contract here too).
+    expect(year?.template).toContain("{}");
+    expect(year?.param).toBe("tags.id");
   });
 
   it("dev-to relies on the default selector chain (no jsonSelectors block)", async () => {

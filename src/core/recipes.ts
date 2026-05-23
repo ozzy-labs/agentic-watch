@@ -333,6 +333,9 @@ export function mergeRecipeWithOverrides(
   if (recipe.http !== undefined) candidate.http = recipe.http;
   if (recipe.pagination !== undefined) candidate.pagination = recipe.pagination;
   if (recipe.jsonSelectors !== undefined) candidate.jsonSelectors = recipe.jsonSelectors;
+  // Facet sweep (ADR-0017). Recipe-only structural field — caller cannot
+  // override via flags in Phase 1 (see `printAddHelp` for the rationale).
+  if (recipe.facets !== undefined) candidate.facets = recipe.facets;
 
   candidate.trustLevel = recipe.trustLevel;
 

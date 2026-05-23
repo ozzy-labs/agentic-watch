@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   Item,
   Source,
+  SourceFacet,
   SourceJsonApiSelectors,
   SourcePagination,
 } from "../../schemas/index.js";
@@ -9,7 +10,13 @@ import { ItemSchema } from "../../schemas/index.js";
 import { fetchWithRetry } from "./_fetch.js";
 import { selectAll, selectOne } from "./_jsonpath.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
-import type { FeedAdapter, FeedAdapterOptions, FeedFetchDiag, FetchLike } from "./types.js";
+import type {
+  FeedAdapter,
+  FeedAdapterOptions,
+  FeedFetchDiag,
+  FeedFetchResult,
+  FetchLike,
+} from "./types.js";
 
 const USER_AGENT = "feedradar/0.0.0 (+https://github.com/ozzy-labs/feedradar)";
 
@@ -546,281 +553,425 @@ function effectiveMaxPages(
   return recipeCap;
 }
 
-export const jsonApiAdapter: FeedAdapter = {
-  kind: "json-api",
-  fetch: async (source: Source, options: FeedAdapterOptions = {}) => {
-    if (!source.pagination) {
-      throw new Error(`json-api adapter: source '${source.id}' has no pagination config`);
-    }
-    const fetchImpl = options.fetch ?? (globalThis.fetch as unknown as FetchLike);
-    if (typeof fetchImpl !== "function") {
-      throw new Error("json-api adapter: no fetch implementation available (Node 22+ required)");
-    }
+/**
+ * Apply a single facet value to the source URL by injecting the templated
+ * query parameter. Replaces any existing value of `facet.param` so a recipe
+ * URL with a placeholder/default does not double-up at fetch time.
+ */
+function applyFacetValue(rawUrl: string, facet: SourceFacet, value: string | number): string {
+  const u = new URL(rawUrl);
+  const substituted = facet.template.replace("{}", String(value));
+  u.searchParams.set(facet.param, substituted);
+  return u.toString();
+}
 
-    const pagination = source.pagination;
-    // `jsonSelectors` is optional in the schema (#174). When omitted, every
-    // field falls back to its default chain so trivial APIs (dev.to,
-    // generic JSON Feed clones) work without a selector block at all.
-    const selectors = source.jsonSelectors ?? {};
-    const env = options.env ?? (process.env as Record<string, string | undefined>);
-    const headers = buildHeaders(source, env);
-    const previous = options.state;
-    const previousSeen = new Set(previous?.lastSeenIds ?? []);
-    const fetchedAt = new Date().toISOString();
-    const backfill = options.backfill === true;
-    const dryRun = options.dryRun === true;
-    const warn = options.warn ?? (() => {});
-    const onPage = options.onPage;
-    const maxPages = effectiveMaxPages(pagination, backfill, options.maxPagesOverride);
+/**
+ * Enumerate the facet values for a single facet spec.
+ *
+ * - `range`: `[start, end]` inclusive, walked with `step` (default 1).
+ *   Schema guarantees `step > 0` and `start <= end` so the loop terminates.
+ * - `enum`: returns the explicit list verbatim (string or number).
+ */
+function* generateFacetValues(facet: SourceFacet): Generator<string | number> {
+  if (facet.type === "range") {
+    const [start, end] = facet.range;
+    const step = facet.step;
+    for (let v = start; v <= end; v += step) yield v;
+    return;
+  }
+  for (const v of facet.values) yield v;
+}
 
-    let currentUrl = initialUrl(source, pagination);
-    let pageIndex = 0;
-    const items: Item[] = [];
-    let lastEtag: string | null = null;
-    let firstBodyText: string | null = null;
-    let firstBody: unknown = null;
-    let notModified = false;
-    // `undefined` means "not seen yet"; once we normalize the first item we
-    // overwrite each entry with either the matched path (string) or `null`
-    // (no candidate yielded a value). The diag payload reports the final
-    // state at end-of-fetch.
-    const adoption: Record<DefaultableField, string | null | undefined> = {
-      title: undefined,
-      link: undefined,
-      publishedAt: undefined,
-      summary: undefined,
-    };
-    let itemsPath: string | null = null;
-    let paginationPreview: FeedFetchDiag["paginationPreview"] | undefined;
-    // Effective cap may tighten mid-traversal when `totalPath` resolves to a
-    // value smaller than the recipe's `maxPages` (backfill early stop).
-    let effectiveCap = maxPages;
-    // Dry-run mode short-circuits after page 0: we record the diag preview
-    // (next URL / Link header / nextCursor) but never fetch page 1.
-    if (dryRun) effectiveCap = Math.min(effectiveCap, 1);
+/**
+ * Inner fetch — the original single-axis (pagination-only) traversal. The
+ * public adapter delegates here either directly (no facets) or once per
+ * facet value (facet sweep mode).
+ *
+ * `dryRun` is preserved (single-page fetch behaviour) but the public
+ * adapter narrows it further in facet sweep mode to "first facet value
+ * only" so `source test` does not walk every year.
+ */
+async function fetchSingle(source: Source, options: FeedAdapterOptions): Promise<FeedFetchResult> {
+  if (!source.pagination) {
+    throw new Error(`json-api adapter: source '${source.id}' has no pagination config`);
+  }
+  const fetchImpl = options.fetch ?? (globalThis.fetch as unknown as FetchLike);
+  if (typeof fetchImpl !== "function") {
+    throw new Error("json-api adapter: no fetch implementation available (Node 22+ required)");
+  }
 
-    while (pageIndex < effectiveCap) {
-      const response = await fetchPage(currentUrl, fetchImpl, headers, pagination, pageIndex, {
-        etag: previous?.lastEtag,
-        // Skip conditional GET in backfill mode so a stale ETag from a
-        // previous normal-mode run does not 304-out a requested full-history
-        // traversal.
-        sendConditional: !backfill,
-      });
-      if (pageIndex === 0) {
-        firstBody = response.body;
-        firstBodyText = response.bodyText;
-        lastEtag = response.etag;
-        if (response.status === 304) {
-          notModified = true;
-          break;
-        }
-      }
+  const pagination = source.pagination;
+  // `jsonSelectors` is optional in the schema (#174). When omitted, every
+  // field falls back to its default chain so trivial APIs (dev.to,
+  // generic JSON Feed clones) work without a selector block at all.
+  const selectors = source.jsonSelectors ?? {};
+  const env = options.env ?? (process.env as Record<string, string | undefined>);
+  const headers = buildHeaders(source, env);
+  const previous = options.state;
+  const previousSeen = new Set(previous?.lastSeenIds ?? []);
+  const fetchedAt = new Date().toISOString();
+  const backfill = options.backfill === true;
+  const dryRun = options.dryRun === true;
+  const warn = options.warn ?? (() => {});
+  const onPage = options.onPage;
+  const maxPages = effectiveMaxPages(pagination, backfill, options.maxPagesOverride);
+
+  let currentUrl = initialUrl(source, pagination);
+  let pageIndex = 0;
+  const items: Item[] = [];
+  let lastEtag: string | null = null;
+  let firstBodyText: string | null = null;
+  let firstBody: unknown = null;
+  let notModified = false;
+  // `undefined` means "not seen yet"; once we normalize the first item we
+  // overwrite each entry with either the matched path (string) or `null`
+  // (no candidate yielded a value). The diag payload reports the final
+  // state at end-of-fetch.
+  const adoption: Record<DefaultableField, string | null | undefined> = {
+    title: undefined,
+    link: undefined,
+    publishedAt: undefined,
+    summary: undefined,
+  };
+  let itemsPath: string | null = null;
+  let paginationPreview: FeedFetchDiag["paginationPreview"] | undefined;
+  // Effective cap may tighten mid-traversal when `totalPath` resolves to a
+  // value smaller than the recipe's `maxPages` (backfill early stop).
+  let effectiveCap = maxPages;
+  // Dry-run mode short-circuits after page 0: we record the diag preview
+  // (next URL / Link header / nextCursor) but never fetch page 1.
+  if (dryRun) effectiveCap = Math.min(effectiveCap, 1);
+
+  while (pageIndex < effectiveCap) {
+    const response = await fetchPage(currentUrl, fetchImpl, headers, pagination, pageIndex, {
+      etag: previous?.lastEtag,
+      // Skip conditional GET in backfill mode so a stale ETag from a
+      // previous normal-mode run does not 304-out a requested full-history
+      // traversal.
+      sendConditional: !backfill,
+    });
+    if (pageIndex === 0) {
+      firstBody = response.body;
+      firstBodyText = response.bodyText;
+      lastEtag = response.etag;
       if (response.status === 304) {
-        // 304 on a later page is unusual but treat as end-of-pagination.
+        notModified = true;
         break;
       }
+    }
+    if (response.status === 304) {
+      // 304 on a later page is unusual but treat as end-of-pagination.
+      break;
+    }
 
-      const itemsResult = resolveItemsList(selectors, response.body);
-      if (pageIndex === 0) itemsPath = itemsResult.path;
-      const matches = itemsResult.matches;
-      const pageItems = matches
-        .map((m) => elementToItem(m, source, selectors, fetchedAt, adoption))
-        .filter((i): i is Item => i !== null);
+    const itemsResult = resolveItemsList(selectors, response.body);
+    if (pageIndex === 0) itemsPath = itemsResult.path;
+    const matches = itemsResult.matches;
+    const pageItems = matches
+      .map((m) => elementToItem(m, source, selectors, fetchedAt, adoption))
+      .filter((i): i is Item => i !== null);
 
-      // Surface a pagination preview for `source test` on page 0 only. We
-      // compute the *would-be* next URL / cursor / Link header but never
-      // actually fetch it in dry-run mode (#174 state-clean invariant).
-      if (pageIndex === 0) {
-        const linkHeaderNext = pagination.type === "link-header" ? response.linkNext : undefined;
-        let nextCursor: string | null | undefined;
-        if (
-          (pagination.type === "cursor" || pagination.type === "token") &&
-          pagination.nextCursorPath
-        ) {
-          nextCursor = coerceString(selectOne(pagination.nextCursorPath, response.body)) ?? null;
-        }
-        let previewNextUrl: string | null;
-        if (pagination.type === "link-header") {
-          previewNextUrl = response.linkNext;
-        } else {
-          previewNextUrl = computeNextUrl(
-            source,
-            pagination,
-            currentUrl,
-            response.body,
-            pageItems.length,
-            1,
-          );
-        }
-        paginationPreview = {
-          strategy: pagination.type,
-          nextUrl: previewNextUrl,
-          ...(linkHeaderNext !== undefined ? { linkHeaderNext } : {}),
-          ...(nextCursor !== undefined ? { nextCursor } : {}),
-        };
-      }
-
-      // Normal-mode early stop: if this page contains an id we have already
-      // seen, the older pages will all be older still — stop paginating.
-      let hitSeen = false;
-      if (!backfill && previousSeen.size > 0) {
-        for (const item of pageItems) {
-          if (previousSeen.has(item.id)) {
-            hitSeen = true;
-            break;
-          }
-        }
-      }
-
-      items.push(...pageItems);
-
-      // Backfill-mode early stop via `totalPath`: if the recipe declared a
-      // total-count selector, narrow the page budget so we exit after the
-      // implied last page rather than walking the full `maxPages` cap. We
-      // only consult `totalPath` on page 0 because the value is unlikely to
-      // change mid-traversal and re-evaluating per page would cost an extra
-      // JSONPath walk for negligible benefit.
-      //
-      // Applied BEFORE the `onPage` callback below so the user-visible
-      // `Page N/M` denominator already reflects the narrowed cap on the
-      // very first page event (otherwise the spinner ratio would jump
-      // from `1/20` to `1/2` between page 0 and page 1, which reads as a
-      // bug).
-      if (backfill && pagination.totalPath && pageIndex === 0) {
-        const totalRaw = selectOne(pagination.totalPath, response.body);
-        const total = typeof totalRaw === "number" ? totalRaw : Number(coerceString(totalRaw));
-        if (Number.isFinite(total) && total > 0 && pagination.pageSize) {
-          const computedMax = Math.max(1, Math.ceil(total / pagination.pageSize));
-          if (computedMax < effectiveCap) {
-            effectiveCap = computedMax;
-          }
-        }
-      }
-
-      // Surface per-page progress to the CLI spinner / non-TTY log (#198).
-      // The callback is invoked before any early-exit checks below so the
-      // user always sees a final `Page N/N` event for the page that decided
-      // termination. `effectiveCap` is the denominator the loop will respect
-      // (recipe `maxPages`, narrowed by `totalPath` on page 0 in backfill
-      // mode above), so the user-visible ratio shrinks as the budget tightens.
-      if (onPage) {
-        onPage({
-          pageIndex,
-          pageTotal: effectiveCap,
-          items: pageItems.length,
-        });
-      }
-
-      // Stop when the page yielded zero items — protects against runaway
-      // pagination on broken recipes / empty trailing pages.
-      if (matches.length === 0) break;
-
-      if (hitSeen) break;
-
-      // End-of-pagination heuristic: when the recipe declared a `pageSize`
-      // and this page returned fewer matches than that, treat it as the last
-      // page. Saves one extra round-trip per source on the common "trailing
-      // partial page" case (page 0 of size N, …, page K returns K' < N).
-      // Skipped for `cursor` / `token` pagination where `nextCursor` is the
-      // authoritative signal — those types may legitimately return fewer
-      // items per page than the requested size.
+    // Surface a pagination preview for `source test` on page 0 only. We
+    // compute the *would-be* next URL / cursor / Link header but never
+    // actually fetch it in dry-run mode (#174 state-clean invariant).
+    if (pageIndex === 0) {
+      const linkHeaderNext = pagination.type === "link-header" ? response.linkNext : undefined;
+      let nextCursor: string | null | undefined;
       if (
-        pagination.pageSize !== undefined &&
-        (pagination.type === "page" || pagination.type === "offset") &&
-        matches.length < pagination.pageSize
+        (pagination.type === "cursor" || pagination.type === "token") &&
+        pagination.nextCursorPath
       ) {
-        break;
+        nextCursor = coerceString(selectOne(pagination.nextCursorPath, response.body)) ?? null;
       }
-
-      // Compute next URL.
-      let nextUrl: string | null;
+      let previewNextUrl: string | null;
       if (pagination.type === "link-header") {
-        nextUrl = response.linkNext;
+        previewNextUrl = response.linkNext;
       } else {
-        nextUrl = computeNextUrl(
+        previewNextUrl = computeNextUrl(
           source,
           pagination,
           currentUrl,
           response.body,
           pageItems.length,
-          pageIndex + 1,
+          1,
         );
       }
-      if (!nextUrl) break;
-
-      currentUrl = nextUrl;
-      pageIndex++;
-    }
-
-    // Warn for default-chain fields where every candidate returned null —
-    // recipe authors typically want to know the API has a non-standard
-    // shape (e.g. `additionalFields.headline` instead of `$.title`). We
-    // skip the warning when the recipe explicitly declared the selector
-    // (the absence is then on the user, not the default chain).
-    for (const field of Object.keys(adoption) as DefaultableField[]) {
-      const explicit = selectors[field];
-      if (!explicit && adoption[field] === null) {
-        warn(
-          `json-api adapter: source '${source.id}' — default selector chain for '${field}' produced no value; consider setting jsonSelectors.${field} explicitly`,
-        );
-      }
-    }
-
-    // Build state. Prefer the server-supplied ETag; otherwise hash the page-0
-    // body so re-runs without a server ETag still dedup correctly (mirrors the
-    // html adapter's content-hash fallback).
-    let nextEtag: string | undefined = previous?.lastEtag;
-    if (lastEtag) {
-      nextEtag = lastEtag;
-    } else if (firstBodyText && firstBodyText.length > 0) {
-      nextEtag = `${CONTENT_HASH_PREFIX}${createHash("sha256")
-        .update(firstBodyText)
-        .digest("hex")}`;
-    }
-
-    // Avoid unused-variable warnings while keeping `firstBody` available for
-    // future debug surfaces (`source test` may want to print the first page
-    // body when no items matched).
-    void firstBody;
-
-    // Compose diag payload for `source test --show-content`. The selector
-    // adoption map reports the JSONPath candidate that won the fallback
-    // chain per field (or the recipe-supplied path verbatim, or `null` when
-    // every candidate missed). Pagination preview surfaces the next-URL /
-    // Link / cursor extraction so users can spot misconfigurations without
-    // letting the dry-run actually walk page 1.
-    const selectorAdoption: Record<string, string | null> = {
-      items: itemsPath ?? null,
-      title: adoption.title ?? null,
-      link: adoption.link ?? null,
-      publishedAt: adoption.publishedAt ?? null,
-      summary: adoption.summary ?? null,
-    };
-    const diag: FeedFetchDiag = {
-      selectorAdoption,
-      ...(paginationPreview ? { paginationPreview } : {}),
-    };
-
-    if (notModified) {
-      return {
-        items: [],
-        notModified: true,
-        state: {
-          lastFetchedAt: fetchedAt,
-          lastEtag: nextEtag,
-        },
-        diag,
+      paginationPreview = {
+        strategy: pagination.type,
+        nextUrl: previewNextUrl,
+        ...(linkHeaderNext !== undefined ? { linkHeaderNext } : {}),
+        ...(nextCursor !== undefined ? { nextCursor } : {}),
       };
     }
 
+    // Normal-mode early stop: if this page contains an id we have already
+    // seen, the older pages will all be older still — stop paginating.
+    let hitSeen = false;
+    if (!backfill && previousSeen.size > 0) {
+      for (const item of pageItems) {
+        if (previousSeen.has(item.id)) {
+          hitSeen = true;
+          break;
+        }
+      }
+    }
+
+    items.push(...pageItems);
+
+    // Backfill-mode early stop via `totalPath`: if the recipe declared a
+    // total-count selector, narrow the page budget so we exit after the
+    // implied last page rather than walking the full `maxPages` cap. We
+    // only consult `totalPath` on page 0 because the value is unlikely to
+    // change mid-traversal and re-evaluating per page would cost an extra
+    // JSONPath walk for negligible benefit.
+    //
+    // Applied BEFORE the `onPage` callback below so the user-visible
+    // `Page N/M` denominator already reflects the narrowed cap on the
+    // very first page event (otherwise the spinner ratio would jump
+    // from `1/20` to `1/2` between page 0 and page 1, which reads as a
+    // bug).
+    if (backfill && pagination.totalPath && pageIndex === 0) {
+      const totalRaw = selectOne(pagination.totalPath, response.body);
+      const total = typeof totalRaw === "number" ? totalRaw : Number(coerceString(totalRaw));
+      if (Number.isFinite(total) && total > 0 && pagination.pageSize) {
+        const computedMax = Math.max(1, Math.ceil(total / pagination.pageSize));
+        if (computedMax < effectiveCap) {
+          effectiveCap = computedMax;
+        }
+      }
+    }
+
+    // Surface per-page progress to the CLI spinner / non-TTY log (#198).
+    // The callback is invoked before any early-exit checks below so the
+    // user always sees a final `Page N/N` event for the page that decided
+    // termination. `effectiveCap` is the denominator the loop will respect
+    // (recipe `maxPages`, narrowed by `totalPath` on page 0 in backfill
+    // mode above), so the user-visible ratio shrinks as the budget tightens.
+    if (onPage) {
+      onPage({
+        pageIndex,
+        pageTotal: effectiveCap,
+        items: pageItems.length,
+      });
+    }
+
+    // Stop when the page yielded zero items — protects against runaway
+    // pagination on broken recipes / empty trailing pages.
+    if (matches.length === 0) break;
+
+    if (hitSeen) break;
+
+    // End-of-pagination heuristic: when the recipe declared a `pageSize`
+    // and this page returned fewer matches than that, treat it as the last
+    // page. Saves one extra round-trip per source on the common "trailing
+    // partial page" case (page 0 of size N, …, page K returns K' < N).
+    // Skipped for `cursor` / `token` pagination where `nextCursor` is the
+    // authoritative signal — those types may legitimately return fewer
+    // items per page than the requested size.
+    if (
+      pagination.pageSize !== undefined &&
+      (pagination.type === "page" || pagination.type === "offset") &&
+      matches.length < pagination.pageSize
+    ) {
+      break;
+    }
+
+    // Compute next URL.
+    let nextUrl: string | null;
+    if (pagination.type === "link-header") {
+      nextUrl = response.linkNext;
+    } else {
+      nextUrl = computeNextUrl(
+        source,
+        pagination,
+        currentUrl,
+        response.body,
+        pageItems.length,
+        pageIndex + 1,
+      );
+    }
+    if (!nextUrl) break;
+
+    currentUrl = nextUrl;
+    pageIndex++;
+  }
+
+  // Warn for default-chain fields where every candidate returned null —
+  // recipe authors typically want to know the API has a non-standard
+  // shape (e.g. `additionalFields.headline` instead of `$.title`). We
+  // skip the warning when the recipe explicitly declared the selector
+  // (the absence is then on the user, not the default chain).
+  for (const field of Object.keys(adoption) as DefaultableField[]) {
+    const explicit = selectors[field];
+    if (!explicit && adoption[field] === null) {
+      warn(
+        `json-api adapter: source '${source.id}' — default selector chain for '${field}' produced no value; consider setting jsonSelectors.${field} explicitly`,
+      );
+    }
+  }
+
+  // Build state. Prefer the server-supplied ETag; otherwise hash the page-0
+  // body so re-runs without a server ETag still dedup correctly (mirrors the
+  // html adapter's content-hash fallback).
+  let nextEtag: string | undefined = previous?.lastEtag;
+  if (lastEtag) {
+    nextEtag = lastEtag;
+  } else if (firstBodyText && firstBodyText.length > 0) {
+    nextEtag = `${CONTENT_HASH_PREFIX}${createHash("sha256").update(firstBodyText).digest("hex")}`;
+  }
+
+  // Avoid unused-variable warnings while keeping `firstBody` available for
+  // future debug surfaces (`source test` may want to print the first page
+  // body when no items matched).
+  void firstBody;
+
+  // Compose diag payload for `source test --show-content`. The selector
+  // adoption map reports the JSONPath candidate that won the fallback
+  // chain per field (or the recipe-supplied path verbatim, or `null` when
+  // every candidate missed). Pagination preview surfaces the next-URL /
+  // Link / cursor extraction so users can spot misconfigurations without
+  // letting the dry-run actually walk page 1.
+  const selectorAdoption: Record<string, string | null> = {
+    items: itemsPath ?? null,
+    title: adoption.title ?? null,
+    link: adoption.link ?? null,
+    publishedAt: adoption.publishedAt ?? null,
+    summary: adoption.summary ?? null,
+  };
+  const diag: FeedFetchDiag = {
+    selectorAdoption,
+    ...(paginationPreview ? { paginationPreview } : {}),
+  };
+
+  if (notModified) {
     return {
-      items,
+      items: [],
+      notModified: true,
       state: {
         lastFetchedAt: fetchedAt,
         lastEtag: nextEtag,
       },
       diag,
+    };
+  }
+
+  return {
+    items,
+    state: {
+      lastFetchedAt: fetchedAt,
+      lastEtag: nextEtag,
+    },
+    diag,
+  };
+}
+
+/**
+ * Public adapter. When `source.facets` is set, wraps {@link fetchSingle}
+ * in an outer facet sweep loop (ADR-0017). Each iteration:
+ *
+ * - injects the facet value into the URL via {@link applyFacetValue}
+ * - delegates to {@link fetchSingle} with `facets: undefined` so the
+ *   inner traversal sees the modified URL but does not recurse
+ * - disables conditional GET in facet sweep mode (ADR-0017 §State —
+ *   per-facet ETag tracking is deferred to a future ADR)
+ * - merges state.lastSeenIds globally across facet values (item IDs are
+ *   unique across facets in the documented AWS What's New use case)
+ *
+ * Inner traversal semantics (`lastSeenIds` early-stop, `pagination.maxPages`
+ * cap, `--max-pages` override, `--backfill` full traversal) apply unchanged
+ * to each facet value. The outer loop walks every facet value in both
+ * normal and `--backfill` modes — normal mode gets the early-stop benefit
+ * inside each value but never skips a facet outright (that would silently
+ * miss items in a facet whose first page has not changed since last run).
+ *
+ * Dry-run (`source test`) iterates only the first facet value so the
+ * selector adoption preview is meaningful without walking every year.
+ *
+ * Phase 1 limitation: a single facet entry only. Multi-facet (e.g. year ×
+ * category) requires composition rules that are out of scope here — see
+ * ADR-0017 §Scope.
+ */
+export const jsonApiAdapter: FeedAdapter = {
+  kind: "json-api",
+  fetch: async (source: Source, options: FeedAdapterOptions = {}) => {
+    if (!source.facets || Object.keys(source.facets).length === 0) {
+      return fetchSingle(source, options);
+    }
+
+    const facetEntries = Object.entries(source.facets);
+    if (facetEntries.length > 1) {
+      // Phase 1 single-facet guard. The schema accepts a record shape for
+      // forward-compat, but composing two axes (year × category) needs
+      // explicit ordering / dedup semantics that ADR-0017 defers.
+      throw new Error(
+        `json-api adapter: source '${source.id}' declares ${facetEntries.length} facets — multi-facet sweep is not supported in Phase 1 (ADR-0017 §Scope)`,
+      );
+    }
+    const [, facetSpec] = facetEntries[0] as [string, SourceFacet];
+
+    const dryRun = options.dryRun === true;
+    // Aggregate items + lastSeenIds across every facet value. ETag is
+    // intentionally NOT persisted: a single ETag cannot represent the
+    // combined state of N facet values, and re-using last-run's ETag
+    // would 304-out the next sweep. Per-facet ETag is future work.
+    const aggregatedItems: Item[] = [];
+    const aggregatedSeen = new Set<string>(options.state?.lastSeenIds ?? []);
+    let aggregatedDiag: FeedFetchDiag | undefined;
+    let aggregatedNotModified = true;
+    const fetchedAt = new Date().toISOString();
+
+    for (const value of generateFacetValues(facetSpec)) {
+      const innerUrl = applyFacetValue(source.url, facetSpec, value);
+      // Build a "single-axis" view of the source: same id / pagination /
+      // selectors but with the facet-stamped URL and `facets: undefined`
+      // so the inner fetch does not recurse.
+      const innerSource: Source = { ...source, url: innerUrl, facets: undefined };
+      // Share the running lastSeenIds set with the inner fetch so the
+      // per-facet early-stop heuristic dedupes against items already
+      // observed in earlier facets. Conditional GET is disabled: each
+      // facet value has its own ETag and re-using the previous value's
+      // would silently 304-out the next slice.
+      const innerOptions: FeedAdapterOptions = {
+        ...options,
+        state: options.state
+          ? {
+              ...options.state,
+              lastEtag: undefined,
+              lastSeenIds: Array.from(aggregatedSeen),
+            }
+          : {
+              sourceId: source.id,
+              lastSeenIds: Array.from(aggregatedSeen),
+            },
+      };
+
+      const result = await fetchSingle(innerSource, innerOptions);
+      // Capture the diag from the FIRST facet value only — it serves as
+      // the representative selector-adoption / pagination-preview surface
+      // for `source test`. Later iterations overwrite nothing.
+      if (aggregatedDiag === undefined) aggregatedDiag = result.diag;
+      if (!result.notModified) aggregatedNotModified = false;
+
+      for (const item of result.items) {
+        aggregatedItems.push(item);
+        aggregatedSeen.add(item.id);
+      }
+
+      // Dry-run: walk only the first facet value so `source test` stays
+      // cheap and the per-page-0 selector preview is meaningful.
+      if (dryRun) break;
+    }
+
+    return {
+      items: aggregatedItems,
+      // ADR-0017 §State: ETag disabled in facet sweep mode. Persist
+      // `undefined` so the next run starts fresh.
+      state: {
+        lastFetchedAt: fetchedAt,
+        lastEtag: undefined,
+      },
+      ...(aggregatedNotModified && aggregatedItems.length === 0 ? { notModified: true } : {}),
+      ...(aggregatedDiag ? { diag: aggregatedDiag } : {}),
     };
   },
 };

@@ -42,8 +42,11 @@ interface WatchRunArgs {
    */
   backfill?: boolean;
   /**
-   * Override the per-source `pagination.maxPages` cap for backfill mode
-   * (e.g. `--max-pages 250` to walk AWS What's New all the way to 2004).
+   * Override the per-source `pagination.maxPages` cap for backfill mode.
+   * Applies only to the INNER pagination loop — facet sweep (ADR-0017)
+   * always walks every facet value regardless of this flag. AWS What's
+   * New uses `facets.year` so the recipe's per-facet `maxPages: 30` is
+   * the relevant inner cap; pass e.g. `--max-pages 20` to clamp further.
    * Ignored without `--backfill`.
    */
   maxPages?: number;
@@ -136,6 +139,8 @@ function printWatchHelp(log: (m: string) => void): void {
   log("                    Supported fully by kind: json-api / github-releases / npm-registry.");
   log("                    Other kinds (rss / html / html-js) only return their current page.");
   log("  --max-pages N     Override pagination.maxPages cap (requires --backfill).");
+  log("                    Applies to INNER pagination only — facet sweep (ADR-0017)");
+  log("                    always walks every facet value regardless of this flag.");
   log("  -v, --verbose     Enable progress-reporter raw() pass-through (adapter stdout).");
   log("  -q, --quiet       Suppress the per-source progress reporter (legacy 1-line log");
   log("                    remains). RADAR_NO_PROGRESS=1 has the same effect.");

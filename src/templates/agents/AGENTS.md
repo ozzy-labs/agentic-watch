@@ -56,12 +56,13 @@ radar source test <id> [--limit N] [--show-content]   # state/items を書き換
 radar source remove <id>
 
 # JSON API recipe を pagination 付きで追加（ADR-0012）
+# `facets:` (年・カテゴリ単位の sweep) は flag では設定できず recipe のみ (ADR-0017)
 radar source add aws-whats-new --kind json-api \
   --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&size=100&page=0" \
   --keywords "Bedrock,Claude" \
-  --pagination-strategy page --page-size 100 --max-pages 250
+  --pagination-strategy page --page-size 100 --max-pages 30
 
-# 同じことを bundled recipe で 1 行で
+# 同じことを bundled recipe で 1 行で (year facet sweep 付き、全 21,834 件カバー)
 radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Claude"
 
 # JSON Feed (1.0 / 1.1) は URL のみで動く zero-config
@@ -73,7 +74,8 @@ radar source add example-microblog --kind json-feed \
 radar watch run
 
 # 過去全履歴の一括取り込み (kind: json-api / github-releases / npm-registry)
-radar watch run --source aws-whats-new --backfill --max-pages 250
+# AWS は recipe の facets.year + per-facet maxPages=30 で 21,834 件を完全カバー (ADR-0017)
+radar watch run --source aws-whats-new --backfill
 
 # 検出済み item に対する操作
 radar research <item-id> --agent <agent> [--verbose]   # 調査レポートを生成 (status: detected -> researched)。--verbose で agent stdout を直接見る (ADR-0015)

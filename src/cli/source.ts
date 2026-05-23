@@ -453,6 +453,11 @@ function printAddHelp(log: (m: string) => void): void {
   log("  the schema has a default fallback chain (items / title / link / publishedAt / summary),");
   log("  so simple APIs work without selectors. Edit sources/<id>.yaml directly when explicit");
   log("  selectors are needed (nested fields, non-standard envelopes).");
+  log("");
+  log("  Facet sweep (e.g. year-by-year sweep) cannot be configured via flags; see ADR-0017");
+  log(
+    "  and bundle the year sweep through `--recipe aws-whats-new`. Recipe-only structural field.",
+  );
 }
 
 function printListHelp(log: (m: string) => void): void {

@@ -185,7 +185,7 @@ workspace に既に独自の人間向けドキュメント (`README.md` 等) が
 | `github-releases` | GitHub Releases API | 不要（`<owner>/<repo>` を URL から抽出） | ETag | partial | ADR-0002 |
 | `npm-registry` | npm registry packument | 不要（パッケージ名のみ） | ETag | partial | ADR-0002 |
 | `json-feed` | JSON Feed 1.0 / 1.1 標準 | 不要（URL のみ） | ETag + Last-Modified | partial（`next_url` を辿る範囲） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) |
-| `json-api` | 任意 JSON API（recipe ベース） | `pagination.*` 必須、`jsonSelectors.*` 任意（default chain あり） | ETag + content-hash fallback | **full**（recipe の `pagination.maxPages` まで辿る） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) |
+| `json-api` | 任意 JSON API（recipe ベース） | `pagination.*` 必須、`jsonSelectors.*` 任意（default chain あり）、`facets.*` 任意（[ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)） | ETag + content-hash fallback（facet sweep mode では無効） | **full**（recipe の `pagination.maxPages` まで辿る、facet sweep mode では `(facet 数) × (per-facet pagination)`） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) / [ADR-0017](./adr/0017-facet-sweep-recipe-extension.md) |
 
 L0 / L1 tier の整理（recipe 不要かどうか）:
 
@@ -571,8 +571,8 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  maxPages: 250      # ≈ 25,000 件まで遡れるキャップ（--backfill 用、whats-new-v2 totalHits ~21,834 を完全カバー）
-  totalPath: "$.metadata.totalHits"   # backfill 早期停止のヒント
+  maxPages: 30       # per-facet inner cap (ADR-0017)。各年 ≤24 ページで完結
+  totalPath: "$.metadata.totalHits"   # backfill 早期停止のヒント（per-facet）
 jsonSelectors:
   items: "$.items[*].item"
   title: "$.additionalFields.headline"
@@ -580,6 +580,15 @@ jsonSelectors:
   publishedAt: "$.additionalFields.postDateTime"
   summary: "$.additionalFields.postBody"
   publisherId: "$.id"
+# year facet sweep (ADR-0017)。AWS dirs API の `(page+1) * size <= 10000`
+# offset cap を回避し、totalHits 21,834 件すべてを欠落なく取り込む
+facets:
+  year:
+    type: range
+    range: [2004, 2026]
+    step: 1
+    param: tags.id
+    template: "whats-new-v2#year#{}"
 trustLevel: untrusted
 ```
 
@@ -620,7 +629,7 @@ radar source add aws-whats-new \
   --pagination-start 0 \
   --page-size 100 \
   --page-size-param size \
-  --max-pages 250 \
+  --max-pages 30 \
   --total-path "$.metadata.totalHits"
 
 # 生成された sources/aws-whats-new.yaml を編集して jsonSelectors を追記
@@ -701,11 +710,11 @@ interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c
 通常 `watch run` は新着検出に最適化されており、`lastSeenIds` に当たった時点でページネーションを打ち切る。**`--backfill` モード**を使うと、recipe の `pagination.maxPages` まで全ページを辿って items を一括取り込みする（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。
 
 ```bash
-# AWS What's New の過去 21,000+ 件を取り込む
-radar watch run --source aws-whats-new --backfill --max-pages 250
-
-# default の maxPages（recipe 値）で backfill
+# AWS What's New の過去 21,000+ 件を取り込む (recipe の per-facet maxPages=30 で十分)
 radar watch run --source aws-whats-new --backfill
+
+# inner pagination cap を絞りたい場合 (facet 軸には影響しない)
+radar watch run --source aws-whats-new --backfill --max-pages 20
 ```
 
 挙動の要点:
@@ -723,6 +732,51 @@ radar watch run --source aws-whats-new --backfill
 | (なし、通常モード) | 新着のみ | `lastSeenIds` 追加 + `lastEtag` | 有効 | `lastSeenIds` ヒットで止まる | 定期実行 |
 | `--bootstrap` | **生成しない** | `lastSeenIds` に全 id を seed | 有効 | 通常通り | 初回導入時のノイズ抑制 |
 | `--backfill` | **全件生成** | `lastSeenIds` に全 id 追加 + `lastEtag` | **無効** | `pagination.maxPages` または `totalPath` 由来の cap | 過去履歴の一括取り込み |
+
+##### facet sweep (年・カテゴリ単位の全件取得)
+
+API が offset cap (例: `(page+1) * size <= 10000`) を実装していて inner pagination だけでは過去全件を取りこぼす場合、**facet sweep** で年・カテゴリ等の切り口ごとにリクエストを分割すれば全件カバーできる ([ADR-0017](./adr/0017-facet-sweep-recipe-extension.md))。AWS What's New が代表例:
+
+- 単一軸 (`sort_order=desc` で page 0..99) では offset 10,000 で打ち切られ totalHits 21,834 のうち ~10,000 件しか取れない
+- year facet (`tags.id=whats-new-v2#year#<YYYY>`) で年単位に切ると各年 ≤2,345 件 = 24 ページで完結し、cap に当たらない
+- bundled `aws-whats-new` recipe は 2004〜現在の year range を sweep して全 21,834 件を取り込む
+
+##### facet sweep の schema
+
+```yaml
+facets:
+  year:                                  # facet 名 (任意の文字列、複数 entry は Phase 1 では未サポート)
+    type: range                          # range | enum
+    range: [2004, 2026]                  # inclusive [start, end]
+    step: 1                              # positive integer (default 1)
+    param: tags.id                       # inject 先 query param 名
+    template: "whats-new-v2#year#{}"     # `{}` プレースホルダ必須 (facet 値を埋め込む)
+```
+
+`type: enum` の例:
+
+```yaml
+facets:
+  category:
+    type: enum
+    values: ["compute", "storage", "database"]
+    param: category
+    template: "{}"
+```
+
+##### facet sweep mode の挙動
+
+- **normal mode (`--backfill` なし)**: 外側 facet loop で **全 facet 値を walk** するが、内側 pagination は通常通り page-0 のみで `lastSeenIds` early-stop が効くため、定期実行のオーバーヘッドは「facet 数 × page 1 リクエスト」程度に抑えられる
+- **`--backfill`**: 外側 facet loop で全 facet 値、内側 pagination も `pagination.maxPages` まで full traversal
+- **`--max-pages N`**: inner pagination のみに適用される。facet 軸には影響しない
+- **conditional GET (`If-None-Match`) は無効化**: 1 つの ETag で N 個の facet 値の状態を表現できないため。`lastEtag` は永続化されない (per-facet ETag tracking は future work)
+- **`lastSeenIds` は global**: facet 値を跨ぐ item ID の重複は想定しない (AWS What's New のように item.id が unique である API を前提とする)
+- **`source test` (dry-run)**: 最初の 1 facet 値のみ fetch して終了 (selector adoption preview を保ちつつコスト膨張を防ぐ)
+
+##### Phase 1 の制限
+
+- **単一 facet のみ**: schema は record shape (`Record<string, Facet>`) を受け付けるが、adapter は `length > 1` で runtime error を出す。multi-facet (year × category 等) の composition rules は future ADR で扱う
+- **per-facet ETag tracking なし**: 上記の通り conditional GET 無効
 
 ##### `source test` の page 0 限定挙動
 
@@ -836,7 +890,7 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 | recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
 |---|---|---|---|---|---|
-| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=250`, `totalPath=$.metadata.totalHits`) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の 21,000+ 件 (cap 250 ページ = 25,000 件まで対応、totalHits 21,834 を完全カバー + 約 1 年分のヘッドルーム) を取り込み可能。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=30` per-facet, `totalPath=$.metadata.totalHits`) + `facets.year` (range 2004-2026, [ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の **totalHits 21,834 件すべて**を完全カバー（gap なし）。AWS dirs API の `(page+1)*size <= 10000` offset cap は year-by-year facet sweep で回避（[ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)）。`maxPages: 30` は per-facet inner cap（最大の年 ~2,345 件 = 24 ページに ~25% ヘッドルーム）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
 | `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
 
 > **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。
@@ -875,8 +929,8 @@ recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とす
 # AWS What's New を `aws-watch` という id で追加し、キーワードだけ上書き
 radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Quick"
 
-# 直後に過去全件を取り込む
-radar watch run --source aws-watch --backfill --max-pages 250
+# 直後に過去全件を取り込む (recipe 同梱の facet sweep で完全カバー、ADR-0017)
+radar watch run --source aws-watch --backfill
 ```
 
 `--recipe` を指定すると、`--kind` / `--url` / `--selector-*` / `--pagination-*` は **明示的に拒否される**（recipe author が責任を持つ structural フィールドだから）。上書き可能な flag は以下のみ:
