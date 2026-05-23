@@ -1112,7 +1112,7 @@ export RADAR_FETCH_HOST_ALLOWLIST=127.0.0.1,192.168.1.5,localhost
 
 ```text
 radar research <item-id> [--agent <agent-id>] [--template <id>]                            # single-item
-radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]     # digest mode
+radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agent <agent-id>] [--template <id>]  # digest mode
 ```
 
 指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)、詳細は後述「[Digest research](#digest-research)」）。
@@ -1121,6 +1121,7 @@ radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template
 |---|---|
 | `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。形式は `<title-slug>-<8 hex>`（例: `claude-code-releases-agents-438eddad`）。元のフィード GUID は `items/<sourceId>/<item-id>.yaml` の `raw` 内に保持される。`--digest` 時は 2 件以上を空白区切りで指定する |
 | `--digest` | 複数 item を 1 つの digest レポートにまとめる（ADR-0011）。2 件以上の `<item-id>` が必須。出力は `research/<YYYYMMDD>_digest_<slug>_v1.md` |
+| `--triage-group <group>` | digest mode 専用。digest ファイル名の `<slug>` をこの `triage.group` から導出する（既定の matchedKeywords 頻度ではなく）。単一キーワード source が同日に複数 group を出すと slug が衝突するため、group ごとに一意化する（[#255](https://github.com/ozzy-labs/feedradar/issues/255)）。省略時は従来の matchedKeywords slug にフォールバック |
 | `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
 | `--template` | テンプレ id（既定: 単体 = `default`、digest = `digest`、`templates/<id>.md` を参照） |
 
@@ -2487,7 +2488,7 @@ Required GitHub Actions secrets (Settings → Secrets and variables → Actions)
 | `Run watch (detect new items)` | `radar watch run` で全 source を fetch。新 item は `detected` で `items/` に書く |
 | `Triage detected items` | `radar triage --apply --triage-agent gemini-cli`。`detected` → `triaged_research` / `triaged_digest` / `triaged_unsure` / `dismissed` に振り分け |
 | `Research triaged_research items (capped at 10)` | `radar research --batch --status triaged_research --max-items 10`。triage で「重要」判定された item を 1 件 1 レポート |
-| `Research digest groups (one report per triage.group)` | `radar items list --triage-group <g>` でグループ走査し `radar research --digest` で集約 |
+| `Research digest groups (one report per triage.group)` | `radar items list --triage-group <g>` でグループ走査し `radar research --digest --triage-group "$GROUP"` で集約。`--triage-group` が digest ファイル名を group ごとに一意化するため、単一キーワード source ＋同日複数 group でもファイル名衝突しない（[#255](https://github.com/ozzy-labs/feedradar/issues/255)） |
 | `Review researched items` | `radar review --batch --status researched --agent codex-cli`。cross-agent review (ADR-0001) |
 | `Notify unsure queue` | `if: always()`。`triaged_unsure` 件数を Slack に通知（webhook 未設定なら no-op） |
 | `Create PR with research output` | `peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる。人間が PR レビューして merge |

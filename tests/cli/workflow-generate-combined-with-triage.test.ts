@@ -220,7 +220,17 @@ describe("cli/workflow generate combined-with-triage (#241 / ADR-0018 §W5)", ()
       );
       // Digest loop (per-group) walks `radar items list --triage-group ...`.
       expect(yaml).toContain("radar items list --status triaged_digest --field triage.group");
-      expect(yaml).toContain("radar research --digest");
+      // #255: the digest call passes `--triage-group "$GROUP"` so each
+      // per-group report gets a unique slug (no same-day collision), and the
+      // loop reads the group list via `mapfile` (SC2128/SC2178 clean).
+      expect(yaml).toContain(
+        'radar research --digest $IDS --triage-group "$GROUP" --agent claude-code',
+      );
+      expect(yaml).toMatch(/mapfile -t GROUPS </);
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal bash array expansion in generated YAML, not a JS template
+      expect(yaml).toContain('for GROUP in "${GROUPS[@]}"; do');
+      // The old scalar-array antipattern must be gone.
+      expect(yaml).not.toContain("GROUPS=$(");
       // Review step uses the cross-agent default.
       expect(yaml).toContain("radar review --batch --status researched --agent codex-cli");
 

@@ -107,6 +107,15 @@ interface ResearchArgs {
   /** Comma-separated allow-list matched against each item's `matchedKeywords`. */
   filterTags?: string;
   /**
+   * Digest-mode slug override (#255 / ADR-0018 §W-H): the `triage.group` key
+   * the digest belongs to. When set, the digest filename is derived from this
+   * group instead of `matchedKeywords` frequency, so a single-keyword source
+   * that emits 2+ groups on the same cron tick no longer collides on
+   * `<date>_digest_<slug>_v1.md`. Falls back to the matchedKeywords slug when
+   * omitted (back-compat).
+   */
+  triageGroup?: string;
+  /**
    * Host-agent mode (#254 / ADR-0019): emit the research payload to stdout
    * without spawning an agent. The host (interactive) session executes the
    * SKILL procedure itself, then finalizes via `--commit`.
@@ -156,6 +165,10 @@ function parseArgs(args: string[]): ResearchArgs {
       out.filterTags = args[++i];
       continue;
     }
+    if (a === "--triage-group") {
+      out.triageGroup = args[++i];
+      continue;
+    }
     if (a === "--emit-payload") {
       out.emitPayload = true;
       continue;
@@ -177,7 +190,9 @@ function parseArgs(args: string[]): ResearchArgs {
 function printHelp(log: (m: string) => void): void {
   log("Usage:");
   log("  radar research <item-id> [--agent <agent-id>] [--template <template-id>]");
-  log("  radar research --digest <item-id> <item-id> ... [--agent <agent-id>] [--template <id>]");
+  log(
+    "  radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agent <agent-id>] [--template <id>]",
+  );
   log(
     `  radar research --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
   );
@@ -195,6 +210,11 @@ function printHelp(log: (m: string) => void): void {
   );
   log("  --template <id>       Template id under templates/ (default: default; digest: digest)");
   log("  --digest              Bundle multiple items into a single digest report (ADR-0011)");
+  log("  --triage-group <group> Digest-mode slug source (ADR-0018 §W-H): name the digest");
+  log("                        file after this triage.group instead of the matchedKeywords");
+  log("                        frequency. Required to keep per-group digests unique on the");
+  log("                        same day when a single-keyword source emits multiple groups");
+  log("                        (#255). Falls back to the matchedKeywords slug when omitted.");
   log("  --batch               Research every item matching --status (and --filter-tags)");
   log("                        respecting the --max-items hard-cap (ADR-0014 D3a).");
   log("  --status <status>     Batch-mode filter: detected | triaged_research");
@@ -276,7 +296,26 @@ function clampSlug(s: string, max = 60): string {
   return lastHyphen > 0 ? cut.slice(0, lastHyphen) : cut;
 }
 
-function deriveDigestSlug(items: Item[]): string {
+/**
+ * Derive the `<slug>` segment of a digest filename
+ * (`<date>_digest_<slug>_v1.md`, ADR-0011 §2).
+ *
+ * Resolution order (#255):
+ *
+ *   1. `triageGroup` override (explicit `--triage-group`, or — when omitted —
+ *      a single `triage.group` shared by every item). The triage workflow
+ *      digests one group per `radar research --digest` call, so this is the
+ *      semantically correct discriminator. Crucially it keeps two same-day
+ *      groups distinct even when a single-keyword source gives every item the
+ *      same `matchedKeywords` (which the frequency slug below cannot).
+ *   2. `matchedKeywords` frequency (top-2). Back-compat path for callers that
+ *      do not carry triage groups (e.g. ad-hoc `radar research --digest a b`).
+ *   3. Literal `"digest"` when neither yields anything.
+ */
+function deriveDigestSlug(items: Item[], triageGroup?: string): string {
+  const groupSlug = resolveTriageGroupSlug(items, triageGroup);
+  if (groupSlug !== undefined) return clampSlug(groupSlug);
+
   const freq = new Map<string, number>();
   for (const item of items) {
     for (const kw of item.matchedKeywords) {
@@ -291,6 +330,31 @@ function deriveDigestSlug(items: Item[]): string {
   const top = ranked.slice(0, 2);
   if (top.length === 0) return "digest";
   return clampSlug(top.map(kebabCase).join("-"));
+}
+
+/**
+ * Pick the triage-group slug for {@link deriveDigestSlug}, or `undefined` when
+ * no group applies (so the matchedKeywords fallback runs).
+ *
+ * An explicit `triageGroup` always wins. Otherwise we only use a group when
+ * every item agrees on a single non-empty `triage.group`: a mixed set has no
+ * unambiguous group to name the file after, so we defer to the keyword slug.
+ */
+function resolveTriageGroupSlug(items: Item[], triageGroup?: string): string | undefined {
+  const explicit = triageGroup?.trim();
+  if (explicit !== undefined && explicit !== "") {
+    const slug = kebabCase(explicit);
+    return slug === "" ? undefined : slug;
+  }
+  const groups = new Set<string>();
+  for (const item of items) {
+    const g = item.triage?.group?.trim();
+    if (g === undefined || g === "") return undefined;
+    groups.add(g);
+  }
+  if (groups.size !== 1) return undefined;
+  const slug = kebabCase([...groups][0]);
+  return slug === "" ? undefined : slug;
 }
 
 async function findItem(cwd: string, itemId: string): Promise<{ item: Item } | null> {
@@ -367,11 +431,12 @@ async function prepareResearch(params: {
   digest: boolean;
   templateId: string;
   now: Date;
+  triageGroup?: string;
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
 }): Promise<{ outputPath: string; filename: string } | { exitCode: number }> {
-  const { cwd, items, digest, templateId, now, warn, error, progress } = params;
+  const { cwd, items, digest, templateId, now, triageGroup, warn, error, progress } = params;
 
   for (const item of items) {
     if (item.injectionFlags.length > 0) {
@@ -384,7 +449,7 @@ async function prepareResearch(params: {
   let filename: string;
   if (digest) {
     const datePrefix = buildDigestDatePrefix(now);
-    const slug = deriveDigestSlug(items);
+    const slug = deriveDigestSlug(items, triageGroup);
     filename = `${datePrefix}_digest_${slug}_v1.md`;
   } else {
     const single = items[0];
@@ -572,13 +637,26 @@ async function processResearchInvocation(params: {
   templateId: string;
   template: ResearchTemplate;
   now: Date;
+  triageGroup?: string;
   log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
 }): Promise<number> {
-  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
-    params;
+  const {
+    cwd,
+    items,
+    digest,
+    agent,
+    templateId,
+    template,
+    now,
+    triageGroup,
+    log,
+    warn,
+    error,
+    progress,
+  } = params;
 
   const prepared = await prepareResearch({
     cwd,
@@ -586,6 +664,7 @@ async function processResearchInvocation(params: {
     digest,
     templateId,
     now,
+    triageGroup,
     warn,
     error,
     progress,
@@ -648,19 +727,33 @@ async function runResearchEmitPayload(params: {
   templateId: string;
   template: ResearchTemplate;
   now: Date;
+  triageGroup?: string;
   log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
 }): Promise<number> {
-  const { cwd, items, digest, agent, templateId, template, now, log, warn, error, progress } =
-    params;
+  const {
+    cwd,
+    items,
+    digest,
+    agent,
+    templateId,
+    template,
+    now,
+    triageGroup,
+    log,
+    warn,
+    error,
+    progress,
+  } = params;
   const prepared = await prepareResearch({
     cwd,
     items,
     digest,
     templateId,
     now,
+    triageGroup,
     warn,
     error,
     progress,
@@ -756,6 +849,10 @@ async function runResearchBatch(
   }
   if (parsed.digest) {
     error("research: --batch is incompatible with --digest");
+    return 2;
+  }
+  if (parsed.triageGroup !== undefined) {
+    error("research: --batch is incompatible with --triage-group");
     return 2;
   }
 
@@ -907,6 +1004,10 @@ export async function runResearch(
       error("research: --commit is incompatible with --emit-payload");
       return 2;
     }
+    if (parsed.triageGroup !== undefined) {
+      error("research: --commit is incompatible with --triage-group");
+      return 2;
+    }
     if (parsed.itemIds.length > 0) {
       error(
         `research: --commit takes a <path>, not <item-id> arguments (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
@@ -932,6 +1033,10 @@ export async function runResearch(
   }
   if (parsed.filterTags !== undefined) {
     error("research: --filter-tags requires --batch");
+    return 2;
+  }
+  if (parsed.triageGroup !== undefined && !parsed.digest) {
+    error("research: --triage-group requires --digest");
     return 2;
   }
   if (parsed.itemIds.length === 0) {
@@ -1003,6 +1108,7 @@ export async function runResearch(
       templateId,
       template,
       now: new Date(),
+      triageGroup: parsed.triageGroup,
       log,
       warn,
       error,
@@ -1018,6 +1124,7 @@ export async function runResearch(
     templateId,
     template,
     now: new Date(),
+    triageGroup: parsed.triageGroup,
     log,
     warn,
     error,

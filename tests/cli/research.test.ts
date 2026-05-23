@@ -716,6 +716,174 @@ describe("cli/research", () => {
     });
   });
 
+  describe("digest slug from triage.group (#255 / ADR-0018 §W-H)", () => {
+    /**
+     * Reproduce the #255 bug surface: a single-keyword source whose items all
+     * carry the same `matchedKeywords`, split across 2 triage groups on the
+     * same day. The pre-fix `deriveDigestSlug` ranked only `matchedKeywords`,
+     * so both groups resolved to the same `<date>_digest_amazon-quick_v1.md`
+     * and the second `radar research --digest` call exited 1 on the
+     * already-exists guard.
+     */
+    function singleKeywordItem(id: string, group: string): Item {
+      return ItemSchema.parse({
+        id,
+        sourceId: "amazon-quick",
+        title: `Amazon Quick item ${id}`,
+        url: `https://example.com/${id}`,
+        publishedAt: "2026-05-23T00:00:00.000Z",
+        fetchedAt: "2026-05-23T01:00:00.000Z",
+        summary: "Amazon Quick update.",
+        matchedKeywords: ["Amazon Quick"],
+        status: "triaged_digest",
+        triage: {
+          decision: "digest",
+          confidence: 0.9,
+          reason: "grouped",
+          group,
+          agent: "gemini-2.5-flash-lite",
+          triagedAt: "2026-05-23T00:30:00.000Z",
+        },
+      });
+    }
+
+    async function setupSingleKeywordWorkspace(): Promise<{ workdir: string; items: Item[] }> {
+      const workdir = await mkdtemp(join(tmpdir(), "feedradar-research-group-"));
+      await mkdir(join(workdir, "items", "amazon-quick"), { recursive: true });
+      await mkdir(join(workdir, "research"), { recursive: true });
+      await mkdir(join(workdir, "templates"), { recursive: true });
+      const items = [
+        singleKeywordItem("amazon-quick-a", "billing-changes"),
+        singleKeywordItem("amazon-quick-b", "billing-changes"),
+        singleKeywordItem("amazon-quick-c", "ui-refresh"),
+        singleKeywordItem("amazon-quick-d", "ui-refresh"),
+      ];
+      for (const item of items) {
+        await writeFile(
+          join(workdir, "items", item.sourceId, `${item.id}.yaml`),
+          stringifyYaml(item),
+          "utf8",
+        );
+      }
+      return { workdir, items };
+    }
+
+    function digestFrontmatter(req: ResearchRequest): Record<string, unknown> {
+      return {
+        id: "20260523_digest_group_v1",
+        itemIds: req.items.map((i) => i.id),
+        agent: req.agent,
+        templateId: req.templateId,
+        createdAt: "2026-05-23T02:00:00.000Z",
+        updatedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      };
+    }
+
+    it("does not collide when a single-keyword source emits 2 same-day groups (core #255)", async () => {
+      const { workdir } = await setupSingleKeywordWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("# digest\n", digestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      // Group 1 (billing-changes).
+      const { io: io1, captured: cap1 } = captureIo();
+      const code1 = await runResearch(
+        ["--digest", "amazon-quick-a", "amazon-quick-b", "--triage-group", "billing-changes"],
+        { cwd: workdir, io: io1 },
+      );
+      expect(code1, `stderr: ${cap1.error.join("\n")}`).toBe(0);
+
+      // Group 2 (ui-refresh) on the SAME day. Pre-fix this exited 1 on the
+      // already-exists guard because both groups derived the same slug.
+      const { io: io2, captured: cap2 } = captureIo();
+      const code2 = await runResearch(
+        ["--digest", "amazon-quick-c", "amazon-quick-d", "--triage-group", "ui-refresh"],
+        { cwd: workdir, io: io2 },
+      );
+      expect(code2, `stderr: ${cap2.error.join("\n")}`).toBe(0);
+
+      // Two distinct digest files landed — no collision.
+      const filenames = calls.map((c) => c.outputPath);
+      expect(filenames).toHaveLength(2);
+      expect(filenames[0]).toContain("_digest_billing-changes_v1.md");
+      expect(filenames[1]).toContain("_digest_ui-refresh_v1.md");
+      expect(new Set(filenames).size).toBe(2);
+    });
+
+    it("derives the slug from triage.group when --triage-group is omitted (uniform group)", async () => {
+      const { workdir } = await setupSingleKeywordWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("# digest\n", digestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      // Both items share triage.group "billing-changes"; no explicit flag.
+      const code = await runResearch(["--digest", "amazon-quick-a", "amazon-quick-b"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code, `stderr: ${captured.error.join("\n")}`).toBe(0);
+      expect(calls[0].outputPath).toContain("_digest_billing-changes_v1.md");
+    });
+
+    it("explicit --triage-group wins over a divergent matchedKeywords slug", async () => {
+      const { workdir } = await setupSingleKeywordWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(
+          req.outputPath,
+          matter.stringify("# digest\n", digestFrontmatter(req)),
+          "utf8",
+        );
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io, captured } = captureIo();
+      const code = await runResearch(
+        ["--digest", "amazon-quick-a", "amazon-quick-b", "--triage-group", "Q3 Roadmap!"],
+        { cwd: workdir, io },
+      );
+      expect(code, `stderr: ${captured.error.join("\n")}`).toBe(0);
+      // Free-form group is kebab-cased into the slug.
+      expect(calls[0].outputPath).toContain("_digest_q3-roadmap_v1.md");
+    });
+
+    it("rejects --triage-group without --digest (exit 2)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--triage-group", "foo"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(captured.error.some((m) => m.includes("--triage-group requires --digest"))).toBe(true);
+    });
+
+    it("rejects --triage-group with --batch (exit 2)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch(["--batch", "--triage-group", "foo"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(2);
+      expect(
+        captured.error.some((m) => m.includes("--batch is incompatible with --triage-group")),
+      ).toBe(true);
+    });
+  });
+
   describe("batch mode (--batch, #189 / ADR-0014)", () => {
     /**
      * Seed a workspace with `n` `detected` items so batch mode has something to
