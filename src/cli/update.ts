@@ -686,6 +686,30 @@ async function runUpdateCommit(params: {
   // The expected new id is the basename of the committed file. finalizeUpdate
   // re-validates the frontmatter id against it (drift auto-correction).
   const newId = outputPath.replace(/^.*\//, "").replace(/\.md$/, "");
+
+  // Version monotonicity: the committed filename must be exactly one version
+  // above the predecessor of the same base, mirroring the spawn path which
+  // derives `newId = <base>_v<prev+1>` deterministically. Without this a host
+  // — possibly misled by injected content — could commit `foo_v9.md`
+  // superseding `foo_v2.md` and skip versions, breaking the ADR-0003 lineage
+  // contract. parseResearchId throws on a malformed predecessor id; that is a
+  // corrupt workspace, surfaced as an error rather than a silent pass.
+  let prevParsed: { base: string; version: number };
+  try {
+    prevParsed = parseResearchId(prevFm.id);
+  } catch (e) {
+    error(
+      `update: predecessor id '${prevFm.id}' is not a valid <base>_v<n> id: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
+  const expectedNewId = `${prevParsed.base}_v${prevParsed.version + 1}`;
+  if (newId !== expectedNewId) {
+    error(
+      `update: committed report '${newId}' must be '${expectedNewId}' — exactly v${prevParsed.version + 1} of '${prevParsed.base}' (predecessor '${prevFm.id}'). update finalizes a single version increment.`,
+    );
+    return 1;
+  }
   // The committed file's `agent` is authoritative for the commit path: there is
   // no `--agent` flag in play, so we accept whatever valid agent the host
   // stamped (still schema-validated by ResearchFrontmatterSchema above).

@@ -700,6 +700,36 @@ describe("cli/update", () => {
       expect(captured.log.some((m) => m.includes(`supersedes ${V1_ID}`))).toBe(true);
     });
 
+    it("rejects a committed report that skips versions (v9 superseding v1)", async () => {
+      const { workdir } = await setupWorkspace({ itemStatus: "researched" });
+      // A host (possibly misled by injected content) names the file v9 while
+      // superseding v1. The spawn path would have produced v2; commit must
+      // enforce the same single-version increment.
+      const skipId = `${BASE}_v9`;
+      const reportPath = join(workdir, "research", `${skipId}.md`);
+      await writeFile(
+        reportPath,
+        matter.stringify("# skip\n\n## 要約\n\nx.\n", v2Frontmatter({ id: skipId })),
+        "utf8",
+      );
+
+      const { io, captured } = captureIo();
+      const code = await runUpdate(["--commit", reportPath], { cwd: workdir, io });
+
+      expect(code).toBe(1);
+      expect(
+        captured.error.some(
+          (m) => m.includes("single version increment") || m.includes(`must be '${V2_ID}'`),
+        ),
+      ).toBe(true);
+      // items.yaml untouched (no transition on a rejected commit).
+      const itemRaw = await readFile(
+        join(workdir, "items", SAMPLE_ITEM.sourceId, `${SAMPLE_ITEM.id}.yaml`),
+        "utf8",
+      );
+      expect(parseYaml(itemRaw).status).toBe("researched");
+    });
+
     it("auto-corrects supersedes / createdAt / reviewedAt drift against the predecessor", async () => {
       const { workdir } = await setupWorkspace();
       // Host wrote drift: wrong createdAt, leaked review fields, but a valid
