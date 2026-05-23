@@ -1396,6 +1396,36 @@ radar triage feedback region-expansion --wrong --reason "actually important"
 
 事前に triage 判定が存在しない item に対してはエラー（`triage:` フィールドがない）。
 
+### `radar triage stats [--since <duration>] [--source <id>] [--json]`
+
+`items/<sourceId>/*.yaml` を walk して `triage.decision` ごとの件数、人間の override パターン、policy tuning の推奨ヒントを集計する（[ADR-0018](./adr/0018-triage-extension.md) §W5, [#242](https://github.com/ozzy-labs/feedradar/issues/242)）。月 1 ペースで回す **policy tuning workflow** の起点として使う（[後述](#policy-tuning-workflow-月-1-推奨)）。
+
+| Option | 説明 |
+|---|---|
+| `--since <duration>` | `triage.triagedAt` が cutoff 以後の item だけ集計（例: `30d`, `24h`） |
+| `--source <id>` | 単一 source に絞る（複数 source ある workspace でのドリルダウン用） |
+| `--json` | テキストレポートではなく structured JSON を出力（CI / ダッシュボード用） |
+
+```bash
+# 直近 30 日の triage 精度を全 source で確認
+radar triage stats --since 30d
+
+# AWS What's New に絞ってドリルダウン
+radar triage stats --since 30d --source aws-whats-new
+
+# 機械可読出力（jq でフィルタ）
+radar triage stats --since 30d --json | jq '.perSource[] | select(.humanOverrides.triagedDismissToResearch > 0)'
+```
+
+#### 出力に含まれる項目
+
+- **decision breakdown**: `research` / `digest` / `dismiss` / `unsure` の件数と割合。`digest` は `triage.group` の distinct 数も併記する
+- **human overrides**: `triage.feedback.correct == false` (research / digest / dismiss) と、`triaged_unsure` 後の status 遷移先 (researched / dismissed) から導出する 4 系統の override 数
+- **agent / policy**: 当該 source の dominant agent と policy file の最終編集日数
+- **Suggestions**: 3+ false negative / 3+ false positive / 5+ unsure いずれかが閾値を超えた場合のみ、対象 item の頻出 `matchedKeywords` を提示する短いヒント。閾値未満では沈黙する
+
+`triage.feedback` が空の item は overrides としては数えない（=人間レビュー未実施として扱う）。集計の正規化母数は「triage 済み item の総数」なので、feedback を一切付けていない月は decision breakdown だけが意味のある値になる。
+
 ### `radar items list [filters] [output options]`
 
 `items/<sourceId>/*.yaml` を読み込み、フィルタ条件にマッチする item を一覧表示する。
@@ -2400,6 +2430,101 @@ gh run watch
 - Slack webhook を設定していて `triaged_unsure` が > 0 なら通知が飛ぶ
 
 PR を人間がレビューして merge。これで 1 サイクル。
+
+### policy tuning workflow (月 1 推奨)
+
+triage policy は書きっぱなしでは陳腐化する（publisher が表現を変える / 自分の関心が動く）。`radar triage stats` と `radar triage feedback` を組み合わせて、**月 1 回 5 分**で精度を見直すループを回すのが推奨運用 ([ADR-0018](./adr/0018-triage-extension.md) §W5, [#242](https://github.com/ozzy-labs/feedradar/issues/242))。
+
+1. **集計を確認** — `radar triage stats --since 30d` で前月の triage 精度を一覧する:
+
+   ```bash
+   radar triage stats --since 30d
+   # [aws-whats-new] triage stats (last 30 days)
+   #   total triaged:    142
+   #   research:          48 (33.8%)
+   #   digest:            61 (43.0%) — 8 groups
+   #   dismiss:           28 (19.7%)
+   #   unsure:             5 (3.5%)
+   #
+   #   human overrides:
+   #     triaged_dismiss → research:    3 (false negatives, 6.3% recall miss)
+   #     triaged_research → dismiss:    7 (false positives, 14.6% precision miss)
+   #
+   #   agent: gemini-cli
+   #   policy: sources/aws-whats-new.yaml (last edited 12 days ago)
+   #
+   #   Suggestions:
+   #     - 3 false negatives — review dismiss criteria for sso / identity / billing topics
+   #     - 7 false positives — tighten research criteria for marketing / preview topics
+   ```
+
+   `Suggestions:` は **3 件以上の false negative / false positive または 5 件以上の unsure** が貯まった時点で出力されるヒューリスティック。出ない月は基本的にチューニング不要。
+
+2. **`human overrides` をたどる** — false negative / false positive のパターンを実 item で確認する:
+
+   ```bash
+   # 直近 30 日の false negative (= 誤って dismiss した item) を id だけ列挙
+   radar items list --status detected --since 30d --field id
+   # → undismiss 後に再 triage したものが並ぶ
+
+   # 個別 item の triage 理由 + feedback reason を見る
+   radar items list --status dismissed --json | jq '.[] | select(.triage.feedback[0].correct == false)'
+   ```
+
+   `--reason "..."` で feedback を残してあれば、なぜ誤判定だったかを後から追える。**`--reason` を残す癖をつけると tuning の根拠が一気に強くなる**。
+
+3. **`triagePolicy.rules:` を更新** — `sources/<id>.yaml` の `rules:` を書き換える。例:
+
+   ```diff
+    rules: |
+      重要 (research):
+        - 新サービス GA / Preview
+   +    - IAM / SSO / identity / billing 系の機能追加
+        - 価格改定
+      除外 (dismiss):
+        - リージョン拡張のみ
+        - SDK バージョン bump
+   +    - "Preview now available" 系のマーケティング更新
+   ```
+
+   ルール本数の目安は「重要 / 集約 / 除外」各 5-10 個（[policy 書き方ガイド](#policy-書き方ガイド)）。**項目追加よりも具体化のほうが効くことが多い**（曖昧な "新機能" → "新サービスの GA"）。
+
+4. **(オプション) dry-run で diff 確認** — 過去 7 日の item に対して新 policy を試走し、判定が変わる item を見る:
+
+   ```bash
+   radar triage --dry-run --source aws-whats-new --policy sources/aws-whats-new.yaml
+   ```
+
+   `--dry-run` は disk を触らないので、満足するまで rules を書き換えて何度でも走らせてよい (cost は agent 1 回呼び出し分のみ)。
+
+5. **apply** — diff が想定どおりなら commit + push して終わり:
+
+   ```bash
+   git add sources/aws-whats-new.yaml
+   git commit -m "chore(triage): tighten aws-whats-new policy (false positives -7)"
+   git push
+   ```
+
+   次の cron tick から新 policy が反映される。改善されたかは翌月の `radar triage stats --since 30d` で確認する。
+
+#### `--json` でダッシュボード化する
+
+`radar triage stats --json` は `{ generatedAt, sinceDays, perSource[] }` の構造化 payload を返す。Datadog / Grafana / Slack daily digest 等に流して **「人が手動で見に行かなくても異常がアラートされる」**運用にも転用できる:
+
+```bash
+radar triage stats --since 30d --json \
+  | jq '.perSource[] | select(.humanOverrides.triagedResearchToDismiss > 5)'
+```
+
+#### `radar triage stats` の suggestion 閾値
+
+| カテゴリ | 出る条件 | 推奨アクション |
+|---|---|---|
+| false negative hint | 同 source で `triage.feedback.correct == false` の dismiss 判定が 3 件以上 | dismiss 基準を見直し、頻出 `matchedKeywords` を research に昇格 |
+| false positive hint | 同 source で `triage.feedback.correct == false` の research / digest 判定が 3 件以上 | research 基準を絞り、ノイズ keyword を dismiss に追加 |
+| unsure too many | unsure 判定が 5 件以上 (status `triaged_unsure` も含む) | `confidenceThreshold` を 0.7 → 0.5 に下げるか、`rules:` に「判断困難なら …」を明記 |
+
+閾値は固定（環境差で意味が変わらないように）。3 件未満の単発エラーは通常の `triage feedback` ループで吸収される想定で、stats レイヤーでは沈黙する。
 
 ### troubleshooting
 
