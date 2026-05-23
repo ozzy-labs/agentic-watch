@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { buildSpawnArgs, STDIN_INVOCATION } from "../../../src/core/triage/adapter.js";
 import { triageItems } from "../../../src/core/triage/index.js";
+import type { AgentId } from "../../../src/schemas/research.js";
 import type { SourceTriagePolicy } from "../../../src/schemas/source.js";
 import { createTriageMock, makeItem } from "../../helpers/triage-mock.js";
 
@@ -85,6 +87,38 @@ describe("core/triage/triageItems — happy path", () => {
       expect(result.decisions.get(item.id)?.decision).toBe("unsure");
       expect(result.decisions.get(item.id)?.reason).toBe("agent-omitted");
     }
+  });
+});
+
+describe("core/triage/buildSpawnArgs — prompt never on argv (#270)", () => {
+  const AGENTS: AgentId[] = ["claude-code", "gemini-cli", "codex-cli", "copilot"];
+
+  it("carries only the fixed STDIN_INVOCATION on argv, never per-item content", () => {
+    // Regression for spawn E2BIG: a backfilled source produces a 100KB+
+    // triage prompt. If any per-item content reached argv it would blow
+    // Linux's MAX_ARG_STRLEN (128KB). buildSpawnArgs takes no prompt at all,
+    // so the only prompt-shaped argv element is the small fixed invocation.
+    for (const agent of AGENTS) {
+      const { args } = buildSpawnArgs(agent);
+      // The invocation must be present (so the agent is told to read stdin)…
+      expect(args).toContain(STDIN_INVOCATION);
+      // …and it must be the ONLY non-flag string — no <untrusted_item> blocks,
+      // no <policy>, no JSON payload riding along on the command line.
+      for (const arg of args) {
+        if (arg === STDIN_INVOCATION) continue;
+        expect(arg).not.toContain("<untrusted_item");
+        expect(arg).not.toContain("<policy>");
+        // Every other arg is a short flag/value (kept well under MAX_ARG_STRLEN).
+        expect(arg.length).toBeLessThan(64);
+      }
+    }
+  });
+
+  it("maps each agent to its expected binary", () => {
+    expect(buildSpawnArgs("claude-code").command).toBe("claude");
+    expect(buildSpawnArgs("gemini-cli").command).toBe("gemini");
+    expect(buildSpawnArgs("codex-cli").command).toBe("codex");
+    expect(buildSpawnArgs("copilot").command).toBe("copilot");
   });
 });
 

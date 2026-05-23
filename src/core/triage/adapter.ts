@@ -90,10 +90,15 @@ export function looksLikeRateLimit(text: string): boolean {
  * binaries as the research channel (claude-code → `claude`, etc.) but with
  * triage-specific flags:
  *
- * - All adapters pass the prompt as the first argument and read stdin for
- *   the trigger to start (we keep stdin empty — the prompt itself contains
- *   the full request because the response shape is just a JSON array, not a
- *   file write).
+ * - All adapters pass a short, fixed `STDIN_INVOCATION` on argv and stream the
+ *   full triage request (policy + per-item blocks + JSON schema) on stdin.
+ *   The request scales with item count — a backfilled source can produce a
+ *   135KB+ prompt — and Linux caps a *single* argv string at `MAX_ARG_STRLEN`
+ *   (128KB) independently of the larger `ARG_MAX` total, so an argv-borne
+ *   prompt dies with `spawn E2BIG` on large sources (#270). stdin has no such
+ *   limit. This mirrors how the research / review / update adapters in
+ *   `src/agents/*.ts` already feed their bulk payload (they all
+ *   `child.stdin.write(...)`); the CLIs surface piped stdin to the model.
  * - We launch each CLI in the equivalent "non-interactive, full-permission"
  *   mode that the research adapter uses, so the user does not need to
  *   re-authorize tools. See the individual `src/agents/*.ts` files for the
@@ -106,27 +111,54 @@ export function looksLikeRateLimit(text: string): boolean {
  * specific cheap model set it via `gemini config set model …` (or
  * equivalent) on their workstation.
  */
-function buildSpawnArgs(agent: AgentId, prompt: string): { command: string; args: string[] } {
+/**
+ * Fixed argv prompt handed to every triage CLI. It carries no per-item data
+ * (so its size never approaches `MAX_ARG_STRLEN`) and simply directs the
+ * agent to the real request streamed on stdin. The detailed instructions —
+ * trust-boundary rules, output schema, per-item rules — live in the stdin
+ * payload built by `buildTriagePrompt`, so this stays a thin pointer.
+ */
+export const STDIN_INVOCATION = [
+  "A triage request is provided on standard input. Read it in full and follow",
+  "its instructions exactly: classify every item it lists and respond with the",
+  "single JSON array it specifies — no prose, no Markdown fences, nothing else.",
+].join("\n");
+
+/**
+ * Build the spawn command + argv for a triage agent. The prompt is NOT an
+ * argument (it goes on stdin — see {@link runTriageAgentCli} and the
+ * module-level note on `MAX_ARG_STRLEN` / #270); argv carries only the fixed
+ * {@link STDIN_INVOCATION} plus the per-CLI non-interactive flags. Exported so
+ * tests can assert the prompt never lands on argv regardless of item count.
+ */
+export function buildSpawnArgs(agent: AgentId): { command: string; args: string[] } {
   switch (agent) {
     case "claude-code":
       return {
         command: "claude",
-        args: ["-p", prompt, "--output-format", "text", "--permission-mode", "bypassPermissions"],
+        args: [
+          "-p",
+          STDIN_INVOCATION,
+          "--output-format",
+          "text",
+          "--permission-mode",
+          "bypassPermissions",
+        ],
       };
     case "gemini-cli":
       return {
         command: "gemini",
-        args: ["-p", prompt, "-y", "--skip-trust", "--output-format", "text"],
+        args: ["-p", STDIN_INVOCATION, "-y", "--skip-trust", "--output-format", "text"],
       };
     case "codex-cli":
       return {
         command: "codex",
-        args: ["exec", "--dangerously-bypass-approvals-and-sandbox", prompt],
+        args: ["exec", "--dangerously-bypass-approvals-and-sandbox", STDIN_INVOCATION],
       };
     case "copilot":
       return {
         command: "copilot",
-        args: ["-p", prompt, "--allow-all-paths", "--allow-all-tools"],
+        args: ["-p", STDIN_INVOCATION, "--allow-all-paths", "--allow-all-tools"],
       };
   }
 }
@@ -145,7 +177,7 @@ function buildSpawnArgs(agent: AgentId, prompt: string): { command: string; args
  * workflow just because the user hasn't installed an optional CLI.
  */
 export async function runTriageAgentCli(input: TriageRunInput): Promise<TriageRunResult> {
-  const { command, args } = buildSpawnArgs(input.agent, input.prompt);
+  const { command, args } = buildSpawnArgs(input.agent);
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
@@ -184,7 +216,15 @@ export async function runTriageAgentCli(input: TriageRunInput): Promise<TriageRu
       const status: TriageRunStatus = looksLikeRateLimit(combined) ? "rate-limited" : "error";
       resolve({ status, stdout, stderr, exitCode });
     });
-    // Close stdin immediately — the prompt is on argv, not stdin.
+    // Swallow EPIPE: a missing / early-exiting CLI tears down stdin before we
+    // finish writing the (potentially 100KB+) prompt. The failure is already
+    // surfaced via the `error` / `close` handlers above, so a stray stdin
+    // write error must not become an unhandled exception.
+    child.stdin?.on("error", () => {});
+    // Stream the full triage request on stdin (#270). argv only carries the
+    // fixed STDIN_INVOCATION, so the per-item payload — which can exceed the
+    // 128KB MAX_ARG_STRLEN limit — never rides on the command line.
+    child.stdin?.write(input.prompt);
     child.stdin?.end();
   });
 }

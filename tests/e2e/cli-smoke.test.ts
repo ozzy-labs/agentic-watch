@@ -1646,48 +1646,45 @@ process.stdin.on("end", () => {
 async function installFakeClaudeTriage(binDir: string): Promise<void> {
   await mkdir(binDir, { recursive: true });
   const script = `#!/usr/bin/env node
-// Parse the -p <prompt> argv pair; everything else is ignored.
+// The triage request arrives on stdin (#270); argv carries only a fixed
+// invocation. Read the full prompt off stdin before classifying.
 let prompt = "";
-const argv = process.argv.slice(2);
-for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === "-p" && i + 1 < argv.length) {
-    prompt = argv[i + 1];
-    break;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { prompt += c; });
+process.stdin.on("end", () => {
+  // Extract every <untrusted_item id="...">. The id attribute is the only
+  // trusted metadata; the body is content to classify, not commands.
+  const ids = [];
+  const re = /<untrusted_item id="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(prompt)) !== null) {
+    ids.push(m[1]);
   }
-}
 
-// Extract every <untrusted_item id="...">. The id attribute is the only
-// trusted metadata; the body is content to classify, not commands.
-const ids = [];
-const re = /<untrusted_item id="([^"]+)"/g;
-let m;
-while ((m = re.exec(prompt)) !== null) {
-  ids.push(m[1]);
-}
+  // Deterministic decision table keyed by id. Items not in the table fall
+  // back to {decision: "research", confidence: 0.8} so the test seed set is
+  // the single source of truth.
+  const TABLE = {
+    "new-service-ga":   { decision: "research", confidence: 0.95, reason: "GA worth researching" },
+    "minor-ui-add":     { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
+    "another-ui-add":   { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
+    "region-expansion": { decision: "dismiss",  confidence: 0.9,  reason: "region expansion only" },
+    "sdk-bump":         { decision: "dismiss",  confidence: 0.9,  reason: "SDK minor bump only" },
+    // Confidence below the default 0.7 threshold so the response parser
+    // demotes the decision to "unsure" — this is how the e2e exercises the
+    // confidence-gate path without needing an explicit "unsure" decision.
+    "ambiguous":        { decision: "research", confidence: 0.5,  reason: "ambiguous, judge again" },
+  };
 
-// Deterministic decision table keyed by id. Items not in the table fall
-// back to {decision: "research", confidence: 0.8} so the test seed set is
-// the single source of truth.
-const TABLE = {
-  "new-service-ga":   { decision: "research", confidence: 0.95, reason: "GA worth researching" },
-  "minor-ui-add":     { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
-  "another-ui-add":   { decision: "digest",   confidence: 0.85, reason: "UI feature digest",         group: "ui" },
-  "region-expansion": { decision: "dismiss",  confidence: 0.9,  reason: "region expansion only" },
-  "sdk-bump":         { decision: "dismiss",  confidence: 0.9,  reason: "SDK minor bump only" },
-  // Confidence below the default 0.7 threshold so the response parser
-  // demotes the decision to "unsure" — this is how the e2e exercises the
-  // confidence-gate path without needing an explicit "unsure" decision.
-  "ambiguous":        { decision: "research", confidence: 0.5,  reason: "ambiguous, judge again" },
-};
+  const entries = ids.map((id) => {
+    const t = TABLE[id] || { decision: "research", confidence: 0.8, reason: "default mock" };
+    const entry = { id: id, decision: t.decision, confidence: t.confidence, reason: t.reason };
+    if (t.group) entry.group = t.group;
+    return entry;
+  });
 
-const entries = ids.map((id) => {
-  const t = TABLE[id] || { decision: "research", confidence: 0.8, reason: "default mock" };
-  const entry = { id: id, decision: t.decision, confidence: t.confidence, reason: t.reason };
-  if (t.group) entry.group = t.group;
-  return entry;
+  process.stdout.write(JSON.stringify(entries));
 });
-
-process.stdout.write(JSON.stringify(entries));
 `;
   const scriptPath = join(binDir, "claude");
   await writeFile(scriptPath, script, "utf8");
@@ -1699,13 +1696,15 @@ process.stdout.write(JSON.stringify(entries));
  * the `combined-with-triage` workflow smoke (scenario P / ADR-0018 §W5).
  *
  * The triage adapter (`src/core/triage/adapter.ts > buildSpawnArgs`)
- * invokes `gemini -p "<prompt>" -y --skip-trust --output-format text` with
- * the prompt on argv. The prompt contains a JSON-ish item list inside the
- * UNTRUSTED-CONTENT boundary markers; the agent is expected to return a
- * JSON array on stdout where each entry has `id` / `decision` /
- * `confidence` / `reason` (and optional `group`).
+ * invokes `gemini -p "<fixed invocation>" -y --skip-trust --output-format
+ * text` and streams the real triage request on **stdin** (#270 — the prompt
+ * scales with item count and would overflow MAX_ARG_STRLEN on argv). The
+ * stdin payload contains a JSON-ish item list inside the UNTRUSTED-CONTENT
+ * boundary markers; the agent is expected to return a JSON array on stdout
+ * where each entry has `id` / `decision` / `confidence` / `reason` (and
+ * optional `group`).
  *
- * Our fake reads the prompt off `-p`, scans for the seeded item ids
+ * Our fake reads the prompt off stdin, scans for the seeded item ids
  * (smoke-triage-{aaaa,bbbb,cccc,dddd}…), and emits the corresponding
  * decision matrix. Substring matching on titles is intentionally avoided
  * — the prompt format may evolve (boundary marker tweaks, summary
@@ -1726,26 +1725,27 @@ process.stdout.write(JSON.stringify(entries));
 async function installFakeGeminiTriage(binDir: string): Promise<void> {
   await mkdir(binDir, { recursive: true });
   const script = `#!/usr/bin/env node
-// Args: -p "<prompt>" -y --skip-trust --output-format text
-// We only care about the prompt text; everything else is positional noise.
-const argv = process.argv.slice(2);
-const pIdx = argv.indexOf("-p");
-const prompt = pIdx >= 0 && pIdx + 1 < argv.length ? argv[pIdx + 1] : "";
-
-const decisions = [
-  { id: "smoke-triage-aaaaaaaa", decision: "research", confidence: 0.95,
-    reason: "Bedrock GA: matches policy 'GA / 価格改定' bucket" },
-  { id: "smoke-triage-bbbbbbbb", decision: "digest", confidence: 0.85, group: "ui-incremental",
-    reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
-  { id: "smoke-triage-cccccccc", decision: "digest", confidence: 0.85, group: "ui-incremental",
-    reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
-  { id: "smoke-triage-dddddddd", decision: "dismiss", confidence: 0.92,
-    reason: "SDK bump only: matches policy 'SDK bump' dismiss bucket" },
-];
-// Filter to ids actually present in the prompt so the triage parser's
-// hallucinated-id check stays happy if the test ever seeds a subset.
-const matched = decisions.filter((d) => prompt.includes(d.id));
-process.stdout.write(JSON.stringify(matched));
+// Args: -p "<fixed invocation>" -y --skip-trust --output-format text
+// The real triage request arrives on stdin (#270); read it in full.
+let prompt = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { prompt += c; });
+process.stdin.on("end", () => {
+  const decisions = [
+    { id: "smoke-triage-aaaaaaaa", decision: "research", confidence: 0.95,
+      reason: "Bedrock GA: matches policy 'GA / 価格改定' bucket" },
+    { id: "smoke-triage-bbbbbbbb", decision: "digest", confidence: 0.85, group: "ui-incremental",
+      reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
+    { id: "smoke-triage-cccccccc", decision: "digest", confidence: 0.85, group: "ui-incremental",
+      reason: "Console UI incremental update: matches policy 'incremental updates' bucket" },
+    { id: "smoke-triage-dddddddd", decision: "dismiss", confidence: 0.92,
+      reason: "SDK bump only: matches policy 'SDK bump' dismiss bucket" },
+  ];
+  // Filter to ids actually present in the prompt so the triage parser's
+  // hallucinated-id check stays happy if the test ever seeds a subset.
+  const matched = decisions.filter((d) => prompt.includes(d.id));
+  process.stdout.write(JSON.stringify(matched));
+});
 `;
   const scriptPath = join(binDir, "gemini");
   await writeFile(scriptPath, script, "utf8");
