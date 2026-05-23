@@ -43,7 +43,7 @@ interface WatchRunArgs {
   backfill?: boolean;
   /**
    * Override the per-source `pagination.maxPages` cap for backfill mode
-   * (e.g. `--max-pages 200` to walk AWS What's New all the way to 2004).
+   * (e.g. `--max-pages 250` to walk AWS What's New all the way to 2004).
    * Ignored without `--backfill`.
    */
   maxPages?: number;

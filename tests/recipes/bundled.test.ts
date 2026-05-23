@@ -67,16 +67,18 @@ describe("bundled recipes :: schema", () => {
 
   it("keeps pagination.maxPages within a sane envelope (no runaway recipes)", async () => {
     // ADR-0012 §D5 defense-in-depth: a malformed `maxPages: 9999` would let
-    // a single recipe issue ~10⁴ requests. Cap bundled recipes at 200 — the
-    // ceiling chosen for AWS What's New (the largest documented case).
+    // a single recipe issue ~10⁴ requests. Cap bundled recipes at 250 — the
+    // ceiling chosen for AWS What's New (the largest documented case). The
+    // cap was raised from 200 to 250 in issue #230 so a full `--backfill`
+    // of `whats-new-v2` (totalHits ~21,834) fits with ~1 year of headroom.
     const entries = await listRecipes();
     for (const entry of entries) {
       const max = entry.recipe?.pagination?.maxPages;
       if (max === undefined) continue;
       expect(
         max,
-        `recipe '${entry.name}' pagination.maxPages=${max} exceeds the bundled-recipe cap (200)`,
-      ).toBeLessThanOrEqual(200);
+        `recipe '${entry.name}' pagination.maxPages=${max} exceeds the bundled-recipe cap (250)`,
+      ).toBeLessThanOrEqual(250);
       expect(max).toBeGreaterThan(0);
     }
   });

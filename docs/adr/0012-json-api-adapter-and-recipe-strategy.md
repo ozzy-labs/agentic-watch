@@ -260,6 +260,14 @@ recipe の `http.headers` で `Authorization: "Bearer ${GITHUB_TOKEN}"` のよ�
 
 既存 M1c (boundary marker `<untrusted_item>...</untrusted_item>`) と M1a (regex pre-filter) でカバーする。JSON body は parse 後に item content として通常経路に乗るため、`kind: json-api` 固有の追加防御は不要。
 
+#### D5e. bundled recipe の `maxPages` cap
+
+bundled recipe (`recipes/*.yaml`) は `tests/recipes/bundled.test.ts` で `pagination.maxPages` の上限を一律キャップする (D5 の defense-in-depth: 万一 malformed な `maxPages: 9999` が混入しても 1 recipe あたりの request 数を予測可能な範囲に抑える)。現状の上限は **250 ページ** (= 25,000 items at `pageSize: 100`)。
+
+- **なぜ 250 か**: 最大コンシューマである AWS What's New (`whats-new-v2`, totalHits ~21,834) を完全に backfill しつつ、AWS が観測上 ~2,500 announcements/year で増えるペースに対し約 1 年分のヘッドルームを残す数値 (250 × 100 − 21,834 ≈ 3,166 items)。historic transition: 200 → 250 は issue [#230](https://github.com/ozzy-labs/feedradar/issues/230) で実施 (200 では totalHits 21,834 に対して最古 ~1,800 件が `--backfill` で取りこぼされる問題があった)
+- **fetch 時間の見積もり**: 250 requests × ~45 ms/page ≈ **11 秒**。CI `recipes-smoke` job は page 0 のみ fetch する設計のため、cap 引き上げは smoke の time budget に影響しない (`scripts/recipes-smoke.mjs` は `dryRun: true` で adapter を page 0 に限定する)
+- **拡張ポリシー**: 250 で収まらない site が現れた場合、(1) 一律 cap の更なる引き上げ、(2) per-recipe whitelist 化 (`bundled.test.ts` を override 可能に)、(3) `totalPath` 由来の dynamic cap、のいずれかを別 ADR / issue で再評価する
+
 ### D6. ADR-0009 信頼境界表の更新
 
 ADR-0009 §A 信頼境界表 (`Source kind` 別) に **2 行追加**する:
@@ -433,7 +441,7 @@ ADR 採択直後、bundled `aws-whats-new` recipe で full backfill しても `A
 
 残課題 (follow-up):
 
-- `whats-new-v2` の totalHits 21,834 は recipe cap `maxPages: 200 × pageSize 100 = 20,000` を上回るため、最古 ~1,800 件 (~2 か月分) が `--backfill` で取り込まれない。cap 拡張は §D5 の defense-in-depth 議論と `tests/recipes/bundled.test.ts:79` の hard limit (≤200) を同時に動かす必要があり、別 issue で扱う
+- ~~`whats-new-v2` の totalHits 21,834 は recipe cap `maxPages: 200 × pageSize 100 = 20,000` を上回るため、最古 ~1,800 件 (~2 か月分) が `--backfill` で取り込まれない。cap 拡張は §D5 の defense-in-depth 議論と `tests/recipes/bundled.test.ts:79` の hard limit (≤200) を同時に動かす必要があり、別 issue で扱う~~ → **解消**: issue [#230](https://github.com/ozzy-labs/feedradar/issues/230) で bundled recipe の cap を 200 → 250 に引き上げ、`whats-new-v2` の totalHits 21,834 が完全に backfill 可能になった。`tests/recipes/bundled.test.ts` の hard limit と §D5 (新設 §D5e) の rationale も同時更新済み
 
 一般化された知見 (将来の recipe 追加 / breakage 復旧時の参考):
 
