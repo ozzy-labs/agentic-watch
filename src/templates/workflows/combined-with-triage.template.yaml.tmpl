@@ -77,12 +77,16 @@ jobs:
           # array) once the loop below treated it array-like. The pipeline still
           # de-dupes and drops the `-` sentinel that `--field` prints for
           # ungrouped items.
-          mapfile -t GROUPS < <(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
-          if [ "${#GROUPS[@]}" -eq 0 ]; then
+          #
+          # NB: the array is NOT named `GROUPS` — that is a special bash array
+          # (the caller's group IDs); reading the group list into that reserved
+          # name fails outright under `set -e`. Use a non-reserved name.
+          mapfile -t DIGEST_GROUPS < <(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
+          if [ "${#DIGEST_GROUPS[@]}" -eq 0 ]; then
             echo "no triaged_digest groups to process"
             exit 0
           fi
-          for GROUP in "${GROUPS[@]}"; do
+          for GROUP in "${DIGEST_GROUPS[@]}"; do
             [ -z "$GROUP" ] && continue
             echo "::group::digest for triage.group=$GROUP"
             IDS=$(radar items list --triage-group "$GROUP" --status triaged_digest --field id | tr '\n' ' ')
