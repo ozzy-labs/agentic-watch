@@ -15,21 +15,24 @@ import {
   renderNetworkAccessBlock,
   renderWatchRoutineTemplate,
 } from "../../src/cli/routine/generate-watch.js";
+import type { Locale } from "../../src/core/locale.js";
 
 /**
  * Contract guard for the bundled routine templates under
- * `src/templates/routines/` (epic #277 follow-up F5 / #295).
+ * `src/templates/{en,ja}/routines/` (epic #277 follow-up F5 / #295; per-locale
+ * since #315).
  *
  * Lefthook's `routines-validate` hook runs `scripts/routines/validate.py`
  * against `.claude/routines/*.yaml`, but the *bundled* templates that
  * `radar init` / `radar routine generate` emit live under
- * `src/templates/routines/` and are explicitly OUT of that hook's glob. The
- * `radar init` test only checks path existence + that the body parses as YAML;
- * nothing asserts the templates satisfy the same routine contract (required
- * fields, status enum, >= 1-hour cron) the validator enforces on user files.
+ * `src/templates/{en,ja}/routines/` and are explicitly OUT of that hook's glob.
+ * The `radar init` test only checks path existence + that the body parses as
+ * YAML; nothing asserts the templates satisfy the same routine contract
+ * (required fields, status enum, >= 1-hour cron) the validator enforces on user
+ * files.
  *
  * This test closes that gap. It runs the *same* `validate.py` the hook uses
- * against:
+ * against, for BOTH locales (#315):
  *   1. `watch-daily.yaml` directly — the ready-to-edit scaffold `radar init
  *      --with-routines` copies (it has no placeholders, so it must already be
  *      contract-clean as shipped).
@@ -37,16 +40,17 @@ import {
  *      `.tmpl` placeholders are substituted via the SAME render functions the
  *      generators use, then validated.
  *
+ * Per-locale coverage matters because the i18n change only touches the
+ * natural-language copy: the validator confirms the functional fields (status
+ * enum, cron, model, network_access) survive identically in the `ja` variant.
+ *
  * Reusing `validate.py` (rather than re-implementing its checks here) keeps the
  * bundled templates and the hook in lockstep: if the contract grows a new rule,
  * this test inherits it automatically.
  */
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
-const ROUTINES_TEMPLATES = join(REPO_ROOT, "src", "templates", "routines");
-const WATCH_DAILY = join(ROUTINES_TEMPLATES, "watch-daily.yaml");
-const WATCH_TMPL = join(ROUTINES_TEMPLATES, "watch.yaml.tmpl");
-const PIPELINE_TMPL = join(ROUTINES_TEMPLATES, "pipeline.yaml.tmpl");
+const routinesDir = (locale: Locale) => join(REPO_ROOT, "src", "templates", locale, "routines");
 const VALIDATE_SCRIPT = join(REPO_ROOT, "scripts", "routines", "validate.py");
 
 /**
@@ -68,7 +72,14 @@ function validate(path: string): string {
   return execFileSync("uv", ["run", VALIDATE_SCRIPT, path], { encoding: "utf8" });
 }
 
-describe("bundled routine templates :: contract", () => {
+describe.each<Locale>([
+  "en",
+  "ja",
+] as Locale[])("bundled routine templates :: contract [%s]", (locale) => {
+  const WATCH_DAILY = join(routinesDir(locale), "watch-daily.yaml");
+  const WATCH_TMPL = join(routinesDir(locale), "watch.yaml.tmpl");
+  const PIPELINE_TMPL = join(routinesDir(locale), "pipeline.yaml.tmpl");
+
   it("watch-daily.yaml passes validate.py as shipped (no placeholders)", async () => {
     // The scaffold ships with concrete <owner>/<repo> placeholder *values* but
     // a structurally complete shape — there are no `{{...}}` template tokens to
@@ -100,7 +111,7 @@ describe("bundled routine templates :: contract", () => {
     expect(parseYaml(rendered)).toMatchObject({ name: "feedradar-watch", status: "draft" });
 
     if (!uvAvailable()) return;
-    const dir = await mkdtemp(join(tmpdir(), "feedradar-tmpl-watch-"));
+    const dir = await mkdtemp(join(tmpdir(), `feedradar-tmpl-watch-${locale}-`));
     const dest = join(dir, "watch.yaml");
     await writeFile(dest, rendered, "utf8");
     const out = validate(dest);
@@ -121,16 +132,16 @@ describe("bundled routine templates :: contract", () => {
       model: "claude-sonnet-4-6",
       maxItems: 10,
       networkAccessBlock: renderNetworkAccessBlock(["example.com"]),
-      landingStep: buildPipelineLandingStep(mode),
-      outputGateConstraint: buildOutputGateConstraint(mode),
-      outputGateNote: buildOutputGateNote(mode),
+      landingStep: buildPipelineLandingStep(mode, locale),
+      outputGateConstraint: buildOutputGateConstraint(mode, locale),
+      outputGateNote: buildOutputGateNote(mode, locale),
       allowUnrestrictedGitPush: mode === "auto-merge",
     });
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
     expect(parseYaml(rendered)).toMatchObject({ name: "feedradar-pipeline", status: "draft" });
 
     if (!uvAvailable()) return;
-    const dir = await mkdtemp(join(tmpdir(), "feedradar-tmpl-pipeline-"));
+    const dir = await mkdtemp(join(tmpdir(), `feedradar-tmpl-pipeline-${locale}-`));
     const dest = join(dir, "pipeline.yaml");
     await writeFile(dest, rendered, "utf8");
     const out = validate(dest);

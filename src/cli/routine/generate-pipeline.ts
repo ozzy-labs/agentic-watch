@@ -1,6 +1,8 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "../../core/locale.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import {
   collectSourceHosts,
   isSafeRoutinePath,
@@ -74,7 +76,7 @@ export type OutputMode = (typeof OUTPUT_MODES)[number];
  * step (the placeholder sits where the step body starts). Exported for unit
  * testing (mirrors the GHA generator's `buildFinalStep`).
  */
-export function buildPipelineLandingStep(mode: OutputMode): string {
+export function buildPipelineLandingStep(mode: OutputMode, locale: Locale = "en"): string {
   // The `${...}` / `$(...)` tokens below are bash expansions in the GENERATED
   // YAML, not JS template placeholders, so they are assembled by concatenation
   // to keep biome's noTemplateCurlyInString quiet (same convention as the GHA
@@ -91,27 +93,57 @@ export function buildPipelineLandingStep(mode: OutputMode): string {
     `       gh pr create --fill --base main --head "${BR}" || true`,
   ];
   if (mode === "auto-merge") {
+    const prose =
+      locale === "ja"
+        ? [
+            "  6. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
+            "     コミットし、プルリクエストを開き、`main` へ squash-merge する（auto-merge は",
+            "     ここではオプトイン — 手順 5 のレビューが PR をレビュー完了にする）:",
+          ]
+        : [
+            "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+            "     branch, open a pull request, then squash-merge it to `main` (auto-merge is",
+            "     opt-in here — the step-5 review makes the PR review-complete):",
+          ];
+    const mergeComment =
+      locale === "ja"
+        ? [
+            "       # マージを堅牢にするため --delete-branch の前に head ブランチから離れ、",
+            "       # 即座に squash-merge する（--auto ではない: 必須チェックのない repo では",
+            "       # --auto は決してマージしない）。一時的なマージ失敗で実行を中断せず PR を",
+            "       # 開いたまま残すよう fail-soft にする。",
+          ]
+        : [
+            "       # Switch off the head branch before --delete-branch so the merge is",
+            "       # robust, then squash-merge immediately (NOT --auto: on a repo with no",
+            "       # required checks --auto never merges). Fail-soft so a transient merge",
+            "       # failure leaves the PR open rather than aborting the run.",
+          ];
     return [
-      "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
-      "     branch, open a pull request, then squash-merge it to `main` (auto-merge is",
-      "     opt-in here — the step-5 review makes the PR review-complete):",
+      ...prose,
       "",
       "     ```bash",
       "     if ! git diff --quiet items/ state/ research/; then",
       ...common,
-      "       # Switch off the head branch before --delete-branch so the merge is",
-      "       # robust, then squash-merge immediately (NOT --auto: on a repo with no",
-      "       # required checks --auto never merges). Fail-soft so a transient merge",
-      "       # failure leaves the PR open rather than aborting the run.",
+      ...mergeComment,
       "       git switch main",
       `       gh pr merge "${BR}" --squash --delete-branch || true`,
       "     fi",
       "     ```",
     ].join("\n");
   }
+  const prose =
+    locale === "ja"
+      ? [
+          "  6. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
+          "     コミットし、プルリクエストを開く（`main` へは push しない）:",
+        ]
+      : [
+          "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+          "     branch and open a pull request (do NOT push to `main`):",
+        ];
   return [
-    "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
-    "     branch and open a pull request (do NOT push to `main`):",
+    ...prose,
     "",
     "     ```bash",
     "     if ! git diff --quiet items/ state/ research/; then",
@@ -133,12 +165,24 @@ export function buildPipelineLandingStep(mode: OutputMode): string {
  *
  * Exported for unit testing (mirrors the GHA generator's exported builders).
  */
-export function buildOutputGateConstraint(mode: OutputMode): string {
+export function buildOutputGateConstraint(mode: OutputMode, locale: Locale = "en"): string {
   if (mode === "auto-merge") {
+    if (locale === "ja") {
+      return [
+        "  - auto-merge はここでは意図的: この routine は `claude/pipeline/...` PR を開いてから",
+        "    `main` へ squash-merge する。手順 5 のレビューが PR をレビュー完了にする。",
+      ].join("\n");
+    }
     return [
       "  - Auto-merge is intentional here: this routine opens a `claude/pipeline/...`",
       "    PR then squash-merges it to `main`. The step-5 review makes the PR",
       "    review-complete.",
+    ].join("\n");
+  }
+  if (locale === "ja") {
+    return [
+      "  - `main` へ直接 push しない。常に `claude/pipeline/...` ブランチと PR を使う",
+      "    （出力ゲート。auto-merge なし）。",
     ].join("\n");
   }
   return [
@@ -151,13 +195,28 @@ export function buildOutputGateConstraint(mode: OutputMode): string {
  * Build the `notes:` output-gate sentence for the given output mode. Mirrors
  * `buildOutputGateConstraint` but phrased for the ops `notes` block.
  */
-export function buildOutputGateNote(mode: OutputMode): string {
+export function buildOutputGateNote(mode: OutputMode, locale: Locale = "en"): string {
   if (mode === "auto-merge") {
+    if (locale === "ja") {
+      return [
+        "  出力は `claude/*` ブランチ / PR にコミットされ、その後 main へ squash-merge される",
+        "  （auto-merge はオプトイン。手順 5 のレビューが PR をレビュー完了にする）。",
+        "  単一の Claude セッション、spawn なし: GHA パイプラインのクロスエージェント",
+        "  レビューはここには存在しない。",
+      ].join("\n");
+    }
     return [
       "  Output is committed to a `claude/*` branch / PR, then squash-merged to main",
       "  (auto-merge is opt-in; the step-5 review makes the PR review-complete).",
       "  Single Claude session, no spawn: the cross-agent review",
       "  of the GHA pipeline is NOT present here.",
+    ].join("\n");
+  }
+  if (locale === "ja") {
+    return [
+      "  出力は `claude/*` ブランチ / PR のみにコミットされる（main へ直接ではない）。",
+      "  単一の Claude セッション、spawn なし: GHA パイプラインのクロスエージェント",
+      "  レビューはここには存在しない。",
     ].join("\n");
   }
   return [
@@ -241,6 +300,11 @@ export interface GeneratePipelineRoutineOptions {
   outputMode: OutputMode;
   output: string;
   force: boolean;
+  /**
+   * UI locale selecting the per-locale template subtree and the locale of the
+   * code-rendered landing step / output-gate blocks. Defaults to `en` (#315).
+   */
+  locale?: Locale;
   /** Test seam: override the templates root location. */
   templatesRoot?: string;
   io?: RoutineIO;
@@ -267,6 +331,7 @@ export async function generatePipelineRoutine(
 ): Promise<GeneratePipelineRoutineResult> {
   const { cwd, name, repository, cron, timezone, model, maxItems, outputMode, output, force } =
     options;
+  const locale: Locale = options.locale ?? "en";
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -300,7 +365,7 @@ export async function generatePipelineRoutine(
   }
 
   const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
-  const templatePath = join(templatesRoot, "routines", "pipeline.yaml.tmpl");
+  const templatePath = join(templatesRoot, locale, "routines", "pipeline.yaml.tmpl");
   if (!(await pathExists(templatePath))) {
     throw new Error(`bundled template not found: ${templatePath}`);
   }
@@ -314,9 +379,9 @@ export async function generatePipelineRoutine(
     model,
     maxItems,
     networkAccessBlock: renderNetworkAccessBlock(hosts),
-    landingStep: buildPipelineLandingStep(outputMode),
-    outputGateConstraint: buildOutputGateConstraint(outputMode),
-    outputGateNote: buildOutputGateNote(outputMode),
+    landingStep: buildPipelineLandingStep(outputMode, locale),
+    outputGateConstraint: buildOutputGateConstraint(outputMode, locale),
+    outputGateNote: buildOutputGateNote(outputMode, locale),
     allowUnrestrictedGitPush: outputMode === "auto-merge",
   });
 
@@ -532,6 +597,8 @@ export function printGeneratePipelineRoutineHelp(log: (m: string) => void): void
   log("  --output <path>       Output file under .claude/routines/");
   log("                        (default: .claude/routines/<name>.yaml)");
   log("  --force, -f           Overwrite existing output file");
+  log("  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments");
+  log("                        (default: en; also honors RADAR_LANG and config.locale)");
 }
 
 /**
@@ -548,9 +615,24 @@ export async function runGeneratePipelineRoutine(
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors `init`).
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`routine generate pipeline: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseGeneratePipelineRoutineArgs(args);
+    parsed = parseGeneratePipelineRoutineArgs(rest);
   } catch (e) {
     error(`routine generate pipeline: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -559,6 +641,8 @@ export async function runGeneratePipelineRoutine(
     printGeneratePipelineRoutineHelp(log);
     return 0;
   }
+
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generatePipelineRoutine({
@@ -572,6 +656,7 @@ export async function runGeneratePipelineRoutine(
       outputMode: parsed.outputMode,
       output: parsed.output,
       force: parsed.force,
+      locale,
       io,
     });
     return 0;

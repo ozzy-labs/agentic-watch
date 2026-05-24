@@ -1,7 +1,9 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "../../core/locale.js";
 import { loadSources } from "../../core/watcher.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 
 /**
  * Sinks for the `routine generate watch` command's user-facing output.
@@ -263,6 +265,13 @@ export interface GenerateWatchRoutineOptions {
   model: SupportedModel;
   output: string;
   force: boolean;
+  /**
+   * UI locale selecting the per-locale template subtree
+   * (`<templatesRoot>/<locale>/routines/`). Defaults to `en` (#315). Only the
+   * `notes:` / `instructions:` prose and comments differ; the cron / model /
+   * network_access functional fields are identical across locales.
+   */
+  locale?: Locale;
   /** Test seam: override the templates root location. */
   templatesRoot?: string;
   io?: RoutineIO;
@@ -287,6 +296,7 @@ export async function generateWatchRoutine(
   options: GenerateWatchRoutineOptions,
 ): Promise<GenerateWatchRoutineResult> {
   const { cwd, name, repository, cron, timezone, model, output, force } = options;
+  const locale: Locale = options.locale ?? "en";
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -312,7 +322,7 @@ export async function generateWatchRoutine(
   }
 
   const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
-  const templatePath = join(templatesRoot, "routines", "watch.yaml.tmpl");
+  const templatePath = join(templatesRoot, locale, "routines", "watch.yaml.tmpl");
   if (!(await pathExists(templatePath))) {
     throw new Error(`bundled template not found: ${templatePath}`);
   }
@@ -485,6 +495,8 @@ export function printGenerateWatchRoutineHelp(log: (m: string) => void): void {
   log("  --output <path>       Output file under .claude/routines/");
   log("                        (default: .claude/routines/<name>.yaml)");
   log("  --force, -f           Overwrite existing output file");
+  log("  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments");
+  log("                        (default: en; also honors RADAR_LANG and config.locale)");
 }
 
 /**
@@ -501,9 +513,24 @@ export async function runGenerateWatchRoutine(
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors `init`).
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`routine generate watch: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseGenerateWatchRoutineArgs(args);
+    parsed = parseGenerateWatchRoutineArgs(rest);
   } catch (e) {
     error(`routine generate watch: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -512,6 +539,8 @@ export async function runGenerateWatchRoutine(
     printGenerateWatchRoutineHelp(log);
     return 0;
   }
+
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateWatchRoutine({
@@ -523,6 +552,7 @@ export async function runGenerateWatchRoutine(
       model: parsed.model,
       output: parsed.output,
       force: parsed.force,
+      locale,
       io,
     });
     return 0;

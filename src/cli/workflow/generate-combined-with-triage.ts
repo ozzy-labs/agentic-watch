@@ -1,6 +1,8 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "../../core/locale.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import { RESEARCH_BATCH_DEFAULT_MAX_ITEMS } from "../research.js";
 import type { SupportedAgent, WorkflowIO } from "./generate-watch.js";
 import { SUPPORTED_AGENTS } from "./generate-watch.js";
@@ -239,19 +241,41 @@ export function buildPermissionsBlock(outputMode: OutputMode): string {
  * surrounding steps in the template (the placeholder sits at column 0 where a
  * `- name:` step would normally start). Exported for unit testing.
  */
-export function buildFinalStep(outputMode: OutputMode): string {
+export function buildFinalStep(outputMode: OutputMode, locale: Locale = "en"): string {
+  // The `${...}` tokens below are bash parameter expansions in the generated
+  // YAML, not JS template placeholders, so they are assembled by concatenation
+  // to keep biome's noTemplateCurlyInString quiet (same convention as the
+  // `${{ ... }}` Actions expressions). Only the `- name:` step header and the
+  // `# ...` comments differ by locale (#315); every `run:` command, the
+  // peter-evans inputs, and the bash body stay identical across locales.
   if (outputMode === "direct-commit") {
+    const header =
+      locale === "ja"
+        ? [
+            "      - name: リトライ付きで research 出力をコミットして push",
+            "        # direct-commit 出力モード（#258）: PR を開かず、デフォルトブランチへ",
+            "        # 直接 push する。items/ state/ research/ が実際に変わったときだけ",
+            "        # コミットし、各試行のあいだに `git pull --rebase --autostash` を挟んで",
+            "        # push を最大 3 回リトライする（watch / combined ジェネレータに倣う）。",
+            "        #",
+            "        # 注意: このモードは人間のレビューゲートなしで push するため、デフォルト",
+            "        # ブランチに PR 必須の branch protection を設定しないこと — bot の commit",
+            "        # が拒否され、毎回の実行が失敗する。",
+          ]
+        : [
+            "      - name: Commit and push research output with retry",
+            "        # direct-commit output mode (#258): push straight to the default",
+            "        # branch instead of opening a PR. Commit only when items/ state/",
+            "        # research/ actually changed, then retry the push up to 3 times with",
+            "        # `git pull --rebase --autostash` between attempts,",
+            "        # mirroring the watch / combined generators.",
+            "        #",
+            "        # NB: this mode pushes without a human review gate, so do NOT put a",
+            "        # PR-required branch protection rule on the default branch — the bot",
+            "        # commit would be rejected and every run would fail.",
+          ];
     return [
-      "      - name: Commit and push research output with retry",
-      "        # direct-commit output mode (#258): push straight to the default",
-      "        # branch instead of opening a PR. Commit only when items/ state/",
-      "        # research/ actually changed, then retry the push up to 3 times with",
-      "        # `git pull --rebase --autostash` between attempts,",
-      "        # mirroring the watch / combined generators.",
-      "        #",
-      "        # NB: this mode pushes without a human review gate, so do NOT put a",
-      "        # PR-required branch protection rule on the default branch — the bot",
-      "        # commit would be rejected and every run would fail.",
+      ...header,
       "        run: |",
       "          set -euo pipefail",
       '          git config user.name "feedradar-bot"',
@@ -263,10 +287,6 @@ export function buildFinalStep(outputMode: OutputMode): string {
       "          fi",
       '          git commit -m "chore(feedradar): daily watch + triage + research $(date -u +%Y-%m-%d)"',
       "          for attempt in 1 2 3; do",
-      // The `${...}` tokens below are bash parameter expansions in the
-      // generated YAML, not JS template placeholders, so they are assembled
-      // by concatenation to keep biome's noTemplateCurlyInString quiet
-      // (same convention as the `${{ ... }}` Actions expressions above).
       '            if git push origin "$' + '{GITHUB_REF_NAME}"; then',
       '              echo "push succeeded on attempt $' + '{attempt}"',
       "              exit 0",
@@ -278,22 +298,53 @@ export function buildFinalStep(outputMode: OutputMode): string {
       "          exit 1",
     ].join("\n");
   }
+  const prHeader =
+    locale === "ja"
+      ? [
+          "      - name: research 出力で PR を作成",
+          "        # `peter-evans/create-pull-request@v6` は items/ state/ research/ を",
+          "        # cron ティックごとに 1 つの PR にまとめる。research/ が main に入る前に",
+          "        # 人間が PR をレビューし、自動生成コンテンツに明示的なゲートを設ける。",
+        ]
+      : [
+          "      - name: Create PR with research output",
+          "        # `peter-evans/create-pull-request@v6` stages items/ state/ research/",
+          "        # into a single PR per cron tick. Human reviews the PR before",
+          "        # research/ lands on main, giving an explicit gate on auto-generated",
+          "        # content.",
+        ];
+  const dateComment =
+    locale === "ja"
+      ? [
+          "          # peter-evans/create-pull-request はこれらのフィールドで shell を",
+          "          # 実行しないため、`$(date ...)` は PR タイトルにそのまま残ってしまう。",
+          "          # 実行ごとにタイトルを一意に保つには `github.run_id` 式を使う。",
+        ]
+      : [
+          "          # peter-evans/create-pull-request does not run shell on these",
+          "          # fields, so `$(date ...)` would land literally in the PR title.",
+          "          # Use the `github.run_id` expression to keep titles unique per run.",
+        ];
+  const body =
+    locale === "ja"
+      ? [
+          "          body: |",
+          "            feedradar パイプラインの自動出力。マージ前に research/ の Markdown を",
+          "            レビューすること — 生成されたコンテンツは信頼できない。",
+        ]
+      : [
+          "          body: |",
+          "            Automated feedradar pipeline output. Review the research/ Markdown",
+          "            before merging — generated content is untrusted.",
+        ];
   return [
-    "      - name: Create PR with research output",
-    "        # `peter-evans/create-pull-request@v6` stages items/ state/ research/",
-    "        # into a single PR per cron tick. Human reviews the PR before",
-    "        # research/ lands on main, giving an explicit gate on auto-generated",
-    "        # content.",
+    ...prHeader,
     "        uses: peter-evans/create-pull-request@v6",
     "        with:",
     '          commit-message: "chore(feedradar): daily watch + triage + research"',
-    "          # peter-evans/create-pull-request does not run shell on these",
-    "          # fields, so `$(date ...)` would land literally in the PR title.",
-    "          # Use the `github.run_id` expression to keep titles unique per run.",
+    ...dateComment,
     '          title: "feedradar: daily triage + research (run $' + '{{ github.run_id }})"',
-    "          body: |",
-    "            Automated feedradar pipeline output. Review the research/ Markdown",
-    "            before merging — generated content is untrusted.",
+    ...body,
     "          branch: feedradar/daily",
     "          base: $" + "{{ github.ref_name }}",
     "          delete-branch: true",
@@ -349,6 +400,11 @@ export interface GenerateCombinedWithTriageOptions {
   /** Final-step output mode (#258). Defaults to `pr`. */
   outputMode: OutputMode;
   force: boolean;
+  /**
+   * UI locale selecting the per-locale template subtree and the locale of the
+   * code-rendered final step (`buildFinalStep`). Defaults to `en` (#315).
+   */
+  locale?: Locale;
   templatesRoot?: string;
   io?: WorkflowIO;
 }
@@ -380,6 +436,7 @@ export async function generateCombinedWithTriage(
     outputMode,
     force,
   } = options;
+  const locale: Locale = options.locale ?? "en";
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -408,7 +465,12 @@ export async function generateCombinedWithTriage(
   }
 
   const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
-  const templatePath = join(templatesRoot, "workflows", "combined-with-triage.template.yaml.tmpl");
+  const templatePath = join(
+    templatesRoot,
+    locale,
+    "workflows",
+    "combined-with-triage.template.yaml.tmpl",
+  );
   if (!(await pathExists(templatePath))) {
     throw new Error(`bundled template not found: ${templatePath}`);
   }
@@ -417,7 +479,7 @@ export async function generateCombinedWithTriage(
   const envBlock = buildEnvBlock(triageAgent, researchAgent, reviewAgent);
   const slackWebhookExpr = buildSlackWebhookExpr(options.slackWebhook);
   const permissionsBlock = buildPermissionsBlock(outputMode);
-  const finalStep = buildFinalStep(outputMode);
+  const finalStep = buildFinalStep(outputMode, locale);
 
   const rendered = renderCombinedWithTriageTemplate(template, {
     watchCron,
@@ -634,6 +696,8 @@ export function printGenerateCombinedWithTriageHelp(log: (m: string) => void): v
   log("                             review PR; 'direct-commit' commits & pushes straight");
   log("                             to the default branch (drops pull-requests: write)");
   log("  --force, -f                Overwrite existing output file");
+  log("  --lang <en|ja>             Language for the generated YAML's comments / step names");
+  log("                             (default: en; also honors RADAR_LANG and config.locale)");
   log("");
   log("Required secrets (Settings → Secrets and variables → Actions):");
   log("  ANTHROPIC_API_KEY  when any role uses --agent claude-code");
@@ -654,9 +718,24 @@ export async function runGenerateCombinedWithTriage(
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors `init`).
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`workflow generate combined-with-triage: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseGenerateCombinedWithTriageArgs(args);
+    parsed = parseGenerateCombinedWithTriageArgs(rest);
   } catch (e) {
     error(`workflow generate combined-with-triage: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -665,6 +744,8 @@ export async function runGenerateCombinedWithTriage(
     printGenerateCombinedWithTriageHelp(log);
     return 0;
   }
+
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateCombinedWithTriage({
@@ -678,6 +759,7 @@ export async function runGenerateCombinedWithTriage(
       slackWebhook: parsed.slackWebhook,
       outputMode: parsed.outputMode,
       force: parsed.force,
+      locale,
       io,
     });
     return 0;

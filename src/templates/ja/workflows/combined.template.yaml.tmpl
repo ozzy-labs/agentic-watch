@@ -1,0 +1,109 @@
+# `radar workflow generate combined` テンプレート。
+#
+# `radar watch run` -> 「新規アイテムがなければスキップ」ガード -> `radar research
+# --batch` -> `git commit/push --rebase` リトライを単一ジョブ内で連結し、検出から
+# リサーチまでの遅延を 2 つに分かれたワークフローではなく cron 1 ティックに収める。
+#
+# `src/cli/workflow/generate-combined.ts` が差し込むプレースホルダ:
+#   {{cron}}        — スケジュールの cron 式（デフォルト "0 0 * * *"）
+#   {{maxItems}}    — `--max-items` のハードキャップ（デフォルト 10）
+#   {{filterTags}}  — `--filter-tags` 引数を単一の CLI リテラルとして（フィルタが
+#                     無効なときは空になり、行は素の `--batch` に縮む）
+#   {{agent}}       — エージェント ID リテラル（claude-code|codex-cli|gemini-cli|copilot）
+#   {{secretsBlock}} — エージェント固有の `env:` 本体（共通デフォルトはなく、CLI
+#                     ジェネレータが 4 種のプリビルト断片から 1 つを選ぶ。OAuth
+#                     トークンは決して注入しない）
+#
+# ハードキャップの根拠: この YAML は `--max-items {{maxItems}}` をリテラルで埋め込み、
+# ワークフローを監査すれば CLI ソースを読み直さずともキャップが分かるようにしている。
+# CLI 側もキャップを再強制する（`src/cli/research.ts` の
+# `RESEARCH_BATCH_DEFAULT_MAX_ITEMS`）ため、手で編集した YAML でも 1 回の呼び出し内で
+# 超過できない（多層防御: YAML リテラル + CLI デフォルト）。
+
+name: feedradar-combined
+
+on:
+  schedule:
+    - cron: "{{cron}}"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  # 種別スコープの concurrency グループ。watch のみと combined のワークフローは
+  # 互いを直列化してはならない（cadence もスコープも異なる）ため、種別ごとに
+  # 独自の `feedradar-<type>-${{ github.ref }}` グループを持つ。
+  group: feedradar-combined-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: ワークスペースをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.21"
+
+      - name: FeedRadar をインストール
+        run: npm install -g @ozzylabs/feedradar
+
+      - name: watch を実行
+        env:
+{{secretsBlock}}
+        run: radar watch run
+
+      - name: 新規アイテムがなければ research をスキップ
+        id: detect_changes
+        # `watch run` が新規アイテムを生まなかったときは research ステップを
+        # まるごとスキップする。さもないと、暴走検出キャップがあっても空のキューに対して
+        # 丸ごと 1 回の `radar research --batch` 呼び出し（テンプレ読み込み・アイテム走査）を
+        # 消費してしまう。
+        run: |
+          if [ -z "$(git status --porcelain items/)" ]; then
+            echo "no new items in items/; skipping research step"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 検出したアイテムを research（最大 {{maxItems}} 件, agent={{agent}}）
+        if: steps.detect_changes.outputs.has_changes == 'true'
+        env:
+{{secretsBlock}}
+        # `--batch` は items/ を status=detected で走査し、filter-tags の許可リストを
+        # 適用し、`--max-items` 件のレポートを書き終えたら停止する。CLI 側もキャップを
+        # 再強制するため、手で編集した YAML でも超過できない。
+        run: radar research --batch --status detected --max-items {{maxItems}}{{filterTags}} --agent {{agent}}
+
+      - name: リトライ付きでコミットして push
+        if: steps.detect_changes.outputs.has_changes == 'true'
+        # 失敗のあいだに `git pull --rebase --autostash` を挟む 3 回試行 push。
+        # items/ / state/ / research/ を奪い合う 2 つの並行 feedradar ワークフロー
+        # （例: watch-hourly + combined-weekly）向けに調整している。
+        run: |
+          git config user.name "feedradar-bot"
+          git config user.email "feedradar-bot@users.noreply.github.com"
+          git add items/ state/ research/
+          if git diff --cached --quiet; then
+            echo "nothing staged; exiting cleanly"
+            exit 0
+          fi
+          git commit -m "chore(feedradar): combined watch + research $(date -u +%Y-%m-%d)"
+          for attempt in 1 2 3; do
+            if git push origin "${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "push failed (attempt ${attempt}/3), rebasing..."
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          done
+          echo "push failed after 3 attempts" >&2
+          exit 1

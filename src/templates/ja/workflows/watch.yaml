@@ -1,0 +1,73 @@
+# `radar init --with-actions` が生成する GitHub Actions の雛形。
+# cron スケジュール・sources・コミットメッセージは自分のワークフローに合わせて編集する。
+# 認証ポリシー: API キーのみ。Claude Code の OAuth トークンは
+# Anthropic の利用規約により無人ワークフローでは禁止。
+
+name: feedradar
+
+on:
+  schedule:
+    # 毎日 00:00 UTC。自分のペースに合わせて調整する。
+    - cron: "0 0 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  # 検出したアイテム / state をワークスペースのブランチへコミットするのに必要。
+  contents: write
+
+concurrency:
+  group: feedradar-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: ワークスペースをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          # 同じブランチへコミットを push し戻せるよう履歴が必要。
+          fetch-depth: 0
+          # push 時に GITHUB_TOKEN の identity を使う — 下記の
+          # "Commit state" ステップを参照。
+          persist-credentials: true
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          # radar が HTTPS_PROXY / HTTP_PROXY を自動検出して --use-env-proxy で
+          # 再起動するには Node 22.21+（または 24.5+）が必要。
+          # 古い 22.x はこのフラグを欠くため、HTTPS_PROXY を設定しても
+          # `radar` は proxy サポートなしで動作してしまう。
+          node-version: "22.21"
+
+      - name: FeedRadar をインストール
+        # バージョンを決めたらリリースに固定する。この雛形では
+        # 最新の公開ビルドをインストールする。
+        run: npm install -g @ozzylabs/feedradar
+
+      - name: watch を実行
+        env:
+          # Anthropic API に対して認証する。このワークフローは `watch run` しか
+          # 呼ばないが、後続の `research`/`review`/`update` コマンドに必要。
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # github-releases アダプタの GitHub REST API レート上限を
+          # 60 → 5000 req/h に引き上げる。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: radar watch run
+
+      - name: state をコミット
+        # items/ と state/ の更新を永続化し、次回の定期実行が前回の
+        # lastSeenIds と差分を取れるようにする。Routines / Actions はどちらも
+        # 毎回クリーンに clone するため、state は git に置く必要がある。
+        run: |
+          if git diff --quiet items/ state/; then
+            echo "no changes detected; skipping commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add items/ state/
+          git commit -m "chore(watch): detected items $(date -u +%Y-%m-%d)"
+          git push

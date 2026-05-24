@@ -1,6 +1,8 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "../../core/locale.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 
 /**
  * Sinks for the `workflow generate watch` command's user-facing output.
@@ -187,6 +189,13 @@ export interface GenerateWatchOptions {
   output: string;
   agent: SupportedAgent;
   force: boolean;
+  /**
+   * UI locale selecting which per-locale template subtree
+   * (`<templatesRoot>/<locale>/workflows/`) the generator reads (#315).
+   * Defaults to `en`. Only the natural-language copy (step `name:`, comments)
+   * differs across locales; cron / secret names / `run:` commands are identical.
+   */
+  locale?: Locale;
   /** Test seam: override the templates root location. */
   templatesRoot?: string;
   io?: WorkflowIO;
@@ -209,6 +218,7 @@ export interface GenerateWatchResult {
  */
 export async function generateWatch(options: GenerateWatchOptions): Promise<GenerateWatchResult> {
   const { cwd, cron, output, agent, force } = options;
+  const locale: Locale = options.locale ?? "en";
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -230,7 +240,7 @@ export async function generateWatch(options: GenerateWatchOptions): Promise<Gene
   // key and rewrites it into syntactically valid but semantically broken
   // YAML, destroying the placeholder. `.tmpl` keeps the file out of the
   // **/*.{yaml,yml} glob while still being browseable on GitHub.
-  const templatePath = join(templatesRoot, "workflows", "watch.template.yaml.tmpl");
+  const templatePath = join(templatesRoot, locale, "workflows", "watch.template.yaml.tmpl");
   if (!(await pathExists(templatePath))) {
     throw new Error(`bundled template not found: ${templatePath}`);
   }
@@ -348,6 +358,8 @@ export function printGenerateWatchHelp(log: (m: string) => void): void {
   );
   log("                        Determines which secret name the workflow references.");
   log("  --force, -f           Overwrite existing output file");
+  log("  --lang <en|ja>        Language for the generated YAML's comments / step names");
+  log("                        (default: en; also honors RADAR_LANG and config.locale)");
   log("");
   log("Required secrets (Settings → Secrets and variables → Actions):");
   log("  ANTHROPIC_API_KEY    when --agent claude-code (default)");
@@ -370,9 +382,25 @@ export async function runGenerateWatch(
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors `init`),
+  // then resolve the effective locale from --lang > RADAR_LANG > config.locale.
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`workflow generate watch: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseGenerateWatchArgs(args);
+    parsed = parseGenerateWatchArgs(rest);
   } catch (e) {
     error(`workflow generate watch: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -382,6 +410,8 @@ export async function runGenerateWatch(
     return 0;
   }
 
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+
   try {
     await generateWatch({
       cwd,
@@ -389,6 +419,7 @@ export async function runGenerateWatch(
       output: parsed.output,
       agent: parsed.agent,
       force: parsed.force,
+      locale,
       io,
     });
     return 0;

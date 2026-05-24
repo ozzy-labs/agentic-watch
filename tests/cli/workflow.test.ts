@@ -243,6 +243,51 @@ describe("cli/workflow/generate-watch", () => {
       expect(written).toContain('cron: "0 */6 * * *"');
     });
 
+    // #315: the `--lang ja` (locale: "ja") path selects the Japanese template
+    // subtree so the generated YAML's comments / step names switch language,
+    // while every functional field (cron, secret, run: command) is identical.
+    it("emits Japanese comments / step names for locale 'ja' but keeps functional fields", async () => {
+      const common = {
+        cwd: workdir,
+        cron: "0 0 * * *",
+        agent: "claude-code" as const,
+        force: false,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+      };
+      await generateWatch({
+        ...common,
+        output: ".github/workflows/en.yaml",
+        locale: "en",
+        io: io(),
+      });
+      await generateWatch({
+        ...common,
+        output: ".github/workflows/ja.yaml",
+        locale: "ja",
+        io: io(),
+      });
+      const en = await readFile(join(workdir, ".github", "workflows", "en.yaml"), "utf8");
+      const ja = await readFile(join(workdir, ".github", "workflows", "ja.yaml"), "utf8");
+
+      // Natural-language copy differs: ja carries a localized step name, en does not.
+      expect(ja).toContain("- name: watch を実行");
+      expect(en).toContain("- name: Run watch");
+      expect(ja).not.toContain("- name: Run watch");
+
+      // Functional fields are locale-independent.
+      for (const yaml of [en, ja]) {
+        expect(yaml).toContain('cron: "0 0 * * *"');
+        // The secret line embeds a GHA `${{ secrets.X }}` expression; assert on
+        // the env-key prefix to avoid a literal `${{ }}` in the test source.
+        expect(yaml).toMatch(/ANTHROPIC_API_KEY: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+        expect(yaml).toContain("run: radar watch run");
+        expect(yaml).toContain("git pull --rebase");
+        // No unsubstituted `{{token}}` placeholders (GHA `${{ ... }}` has a `$`
+        // prefix + spaces, so it does not match this no-space token shape).
+        expect(yaml).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+      }
+    });
+
     it("uses the agent-specific secret name", async () => {
       await generateWatch({
         cwd: workdir,

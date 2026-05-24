@@ -15,6 +15,9 @@
  * "supported locales" lists.
  */
 
+import { loadRadarConfig, RadarConfigError } from "../core/config.js";
+import { type Locale, resolveLocale } from "../core/locale.js";
+
 /** Environment variable name carrying the locale override. */
 export const RADAR_LANG_ENV = "RADAR_LANG";
 
@@ -80,4 +83,46 @@ export function parseLangFlag(argv: string[]): LangFlagState {
 export function readLangEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const value = env[RADAR_LANG_ENV];
   return value === undefined || value === "" ? undefined : value;
+}
+
+/**
+ * Resolve the effective UI locale for a command that runs *inside* an
+ * initialized workspace (workflow / routine generators), honoring all three
+ * layers per ADR-0021:
+ *
+ *   `--lang` flag  >  `RADAR_LANG` env  >  `config.locale`  >  default (`en`)
+ *
+ * Unlike `init` — which deliberately ignores `config.locale` because it is the
+ * command that *establishes* the workspace locale — these commands run against
+ * an existing workspace, so a persisted `config.locale` should select the
+ * language of the generated YAML's user-facing copy (#315).
+ *
+ * A malformed `radar.config.yaml` is tolerated here: the config layer is
+ * dropped (treated as absent) and resolution falls through to flag/env/default.
+ * The generators surface their own config errors when they actually need the
+ * config; locale selection alone should not hard-fail a generate run.
+ */
+export async function resolveWorkspaceLocale(args: {
+  flag: string | undefined;
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  warn?: (message: string) => void;
+}): Promise<Locale> {
+  const { flag, cwd, warn } = args;
+  const env = args.env ?? process.env;
+  let configLocale: string | undefined;
+  try {
+    configLocale = (await loadRadarConfig(cwd)).locale;
+  } catch (e) {
+    if (!(e instanceof RadarConfigError)) {
+      throw e;
+    }
+    // Malformed config: skip the config layer rather than abort locale
+    // resolution. The command's own config consumer (if any) reports the error.
+    configLocale = undefined;
+  }
+  return resolveLocale(
+    { flag, env: readLangEnv(env), config: configLocale },
+    { warn: warn ?? ((m: string) => console.warn(m)) },
+  );
 }
