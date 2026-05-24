@@ -728,12 +728,14 @@ Run \`radar routine generate <type> --help\` for type-specific options.`,
   "cli.items.noItemsDir": "items list: no items/ directory (run `radar init` first)",
   "cli.items.noMatch": "items list: no items match the filter",
 
-  // watch (#312)
-  // NOTE: the `--bootstrap`/`--backfill`/`--max-pages`/`--verbose`/`--quiet`
-  // mutual-exclusion errors are thrown from the sync `parseWatchArgs` (before a
-  // translator is in scope) and re-wrapped opaquely at the catch boundary, so
-  // they are left untranslated here (recorded as a cross-cutting gap for a
-  // follow-up that refactors the parser to thread `t`).
+  // watch (#312 / #336)
+  // The `--bootstrap`/`--backfill` mutual-exclusion + `--max-pages requires
+  // --backfill` errors are thrown from the sync `parseRunArgs` (before a
+  // translator is in scope). #336 keys the errors (`WatchArgError.key`) so the
+  // caller translates them once the locale is resolved.
+  "cli.watch.bootstrapBackfillExclusive": "--bootstrap and --backfill are mutually exclusive",
+  "cli.watch.maxPagesRequiresBackfill": "--max-pages requires --backfill",
+  "cli.watch.verboseQuietExclusive": "--verbose and --quiet are mutually exclusive",
   "cli.watch.unknownSubcommand": ({ sub }: { sub: string }): string =>
     `watch: unknown subcommand '${sub}'`,
   "cli.watch.bootstrapComplete": ({ sources }: { sources: number }): string =>
@@ -752,6 +754,324 @@ Run \`radar routine generate <type> --help\` for type-specific options.`,
     `failed to read ${file}: ${reason}`,
   "cli.config.failedParse": ({ file, reason }: { file: string; reason: string }): string =>
     `failed to parse ${file} as YAML: ${reason}`,
+
+  // --- remaining user-facing errors & notifications (#336) ------------------
+  // Catalogue of the user-facing validation errors, file/state errors needing
+  // user action, and completion notices emitted by research / review / update /
+  // source / triage. Internal debug logs / traces (frontmatter parse failures,
+  // adapter rollback diagnostics, schema-issue dumps) stay untranslated per the
+  // ADR-0021 boundary. The `<cmd>:` prefix is kept verbatim so existing scripts
+  // and the test suite key off the stable command tag.
+
+  // shared: invalid --agent (research / review / update / triage all reuse the
+  // same adapter id allow-list)
+  "cli.agent.invalid": ({ cmd, agent }: { cmd: string; agent: string }): string =>
+    `${cmd}: invalid --agent '${agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
+
+  // research (#336)
+  "cli.research.batchIncompatiblePositional": ({ count }: { count: number }): string =>
+    `research: --batch is incompatible with positional <item-id> arguments (got ${count})`,
+  "cli.research.batchIncompatibleDigest": "research: --batch is incompatible with --digest",
+  "cli.research.batchIncompatibleTriageGroup":
+    "research: --batch is incompatible with --triage-group",
+  "cli.research.invalidStatus": ({
+    status,
+    allowed,
+  }: {
+    status: string;
+    allowed: string;
+  }): string => `research: invalid --status '${status}' (expected: ${allowed})`,
+  "cli.research.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `research: invalid --max-items '${raw}' (expected positive integer)`,
+  "cli.research.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `research: invalid --max-items '${raw}' (must be > 0)`,
+  "cli.research.commitIncompatibleBatch": "research: --commit is incompatible with --batch",
+  "cli.research.commitIncompatibleDigest": "research: --commit is incompatible with --digest",
+  "cli.research.commitIncompatibleEmitPayload":
+    "research: --commit is incompatible with --emit-payload",
+  "cli.research.commitIncompatibleTriageGroup":
+    "research: --commit is incompatible with --triage-group",
+  "cli.research.commitTakesPath": ({ count, ids }: { count: number; ids: string }): string =>
+    `research: --commit takes a <path>, not <item-id> arguments (got ${count}: ${ids})`,
+  "cli.research.emitPayloadIncompatibleBatch":
+    "research: --emit-payload is incompatible with --batch",
+  "cli.research.statusRequiresBatch": "research: --status requires --batch",
+  "cli.research.maxItemsRequiresBatch": "research: --max-items requires --batch",
+  "cli.research.filterTagsRequiresBatch": "research: --filter-tags requires --batch",
+  "cli.research.triageGroupRequiresDigest": "research: --triage-group requires --digest",
+  "cli.research.missingItemId": "research: missing <item-id>",
+  "cli.research.multipleRequireDigest": ({ count, ids }: { count: number; ids: string }): string =>
+    `research: multiple <item-id> arguments require --digest (got ${count}: ${ids})`,
+  "cli.research.digestRequiresTwo": ({ count }: { count: number }): string =>
+    `research: --digest requires 2 or more <item-id> arguments (got ${count})`,
+  "cli.research.itemNotFound": ({ id }: { id: string }): string =>
+    `research: item '${id}' not found under items/`,
+  "cli.research.digestDismissed": ({ ids }: { ids: string }): string =>
+    `research: cannot include dismissed items in a digest: ${ids}`,
+  "cli.research.alreadyExists": ({ path }: { path: string }): string =>
+    `research: ${path} already exists (use \`radar update\` to re-research)`,
+  "cli.research.noItemsMatched": ({ status, tags }: { status: string; tags: string }): string =>
+    `research: no items matched --batch filters (status=${status}${tags})`,
+  "cli.research.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `research: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matched})`,
+  "cli.research.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    agent,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    agent: string;
+    cap: number;
+  }): string =>
+    `research: --batch will process ${count} item(s) (status=${status}${tags}, agent=${agent}, cap=${cap})`,
+  "cli.research.batchHalted": ({ id, exitCode }: { id: string; exitCode: number }): string =>
+    `research: --batch halted on item '${id}' (exit ${exitCode})`,
+  "cli.research.batchCompleted": ({ count }: { count: number }): string =>
+    `research: --batch completed ${count} item(s)`,
+  "cli.research.wrote": ({ path }: { path: string }): string => `research: wrote ${path}`,
+  "cli.research.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `research: items/${sourceId}/${id}.yaml status -> researched`,
+
+  // review (#336)
+  "cli.review.batchIncompatiblePositional": ({ researchId }: { researchId: string }): string =>
+    `review: --batch is incompatible with positional <research-id> ('${researchId}')`,
+  "cli.review.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `review: invalid --status '${status}' (expected: ${allowed})`,
+  "cli.review.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `review: invalid --max-items '${raw}' (expected positive integer)`,
+  "cli.review.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `review: invalid --max-items '${raw}' (must be > 0)`,
+  "cli.review.commitIncompatibleBatch": "review: --commit is incompatible with --batch",
+  "cli.review.commitIncompatibleEmitPayload":
+    "review: --commit is incompatible with --emit-payload",
+  "cli.review.commitTakesPath": ({ researchId }: { researchId: string }): string =>
+    `review: --commit takes a <path>, not a <research-id> argument (got '${researchId}')`,
+  "cli.review.emitPayloadIncompatibleBatch": "review: --emit-payload is incompatible with --batch",
+  "cli.review.statusRequiresBatch": "review: --status requires --batch",
+  "cli.review.maxItemsRequiresBatch": "review: --max-items requires --batch",
+  "cli.review.filterTagsRequiresBatch": "review: --filter-tags requires --batch",
+  "cli.review.missingResearchId": "review: missing <research-id>",
+  "cli.review.fileNotFound": ({ path }: { path: string }): string =>
+    `review: research file not found: ${path}`,
+  "cli.review.batchFoundNone": "review: --batch found no un-reviewed research/*.md files",
+  "cli.review.batchMatchedZero": ({ status, tags }: { status: string; tags: string }): string =>
+    `review: --batch matched 0 research file(s) (status=${status}${tags})`,
+  "cli.review.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `review: --max-items ${maxItems} cap reached; dropping ${dropped} excess research file(s) (matched ${matched})`,
+  "cli.review.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    agent,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    agent: string;
+    cap: number;
+  }): string =>
+    `review: --batch will process ${count} research file(s) (status=${status}${tags}, agent=${agent}, cap=${cap})`,
+  "cli.review.batchHalted": ({
+    researchId,
+    exitCode,
+  }: {
+    researchId: string;
+    exitCode: number;
+  }): string => `review: --batch halted on research '${researchId}' (exit ${exitCode})`,
+  "cli.review.batchCompleted": ({ count }: { count: number }): string =>
+    `review: --batch completed ${count} research file(s)`,
+  "cli.review.commitNotStamped": ({
+    id,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    id: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string =>
+    `review: --commit report '${id}' is not stamped (reviewedAt=${reviewedAt}, reviewedBy=${reviewedBy}); the host session must stamp the review before committing`,
+  "cli.review.alreadyReviewed": ({
+    id,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    id: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string =>
+    `review: research '${id}' is already reviewed (reviewedAt=${reviewedAt}, reviewedBy=${reviewedBy})`,
+  "cli.review.wroteCommit": ({ path }: { path: string }): string => `review: wrote ${path}`,
+  "cli.review.stamped": ({
+    path,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    path: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string => `review: stamped ${path} reviewedAt=${reviewedAt} reviewedBy=${reviewedBy}`,
+  "cli.review.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `review: items/${sourceId}/${id}.yaml status -> reviewed`,
+
+  // update (#336)
+  "cli.update.commitIncompatibleEmitPayload":
+    "update: --commit is incompatible with --emit-payload",
+  "cli.update.commitTakesPath": ({ researchId }: { researchId: string }): string =>
+    `update: --commit takes a <path>, not a <research-id> (got '${researchId}')`,
+  "cli.update.missingResearchId": "update: missing <research-id>",
+  "cli.update.fileNotFound": ({ path }: { path: string }): string =>
+    `update: research file not found: ${path}`,
+  "cli.update.alreadyExists": ({ path, version }: { path: string; version: number }): string =>
+    `update: ${path} already exists. v${version} was already generated — pick a different predecessor or remove the stale file.`,
+  "cli.update.commitSupersedesNull":
+    "update: --commit report has `supersedes: null`. update finalizes a v+1 (use `radar research --commit` for a v1).",
+  "cli.update.wrote": ({ path }: { path: string }): string => `update: wrote ${path}`,
+  "cli.update.supersedes": ({ prevId }: { prevId: string }): string =>
+    `update: supersedes ${prevId} (items.yaml status unchanged)`,
+
+  // source (#336)
+  "cli.source.missingId": ({ sub }: { sub: string }): string => `source ${sub}: missing <id>`,
+  "cli.source.invalidId": ({ sub, id }: { sub: string; id: string }): string =>
+    `source ${sub}: invalid <id> '${id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`,
+  "cli.source.kindRequired": "source add: --kind is required",
+  "cli.source.urlRequired": "source add: --url is required",
+  "cli.source.invalidKind": ({ kind }: { kind: string }): string =>
+    `source add: invalid --kind '${kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed | json-api)`,
+  "cli.source.paginationOnlyJsonApi": ({ kind }: { kind: string }): string =>
+    `source add: --pagination-* flags are only valid with --kind json-api (got --kind '${kind}')`,
+  "cli.source.validationFailed": "source add: validation failed",
+  "cli.source.recipeForbiddenFlags": ({
+    recipe,
+    flags,
+  }: {
+    recipe: string;
+    flags: string;
+  }): string =>
+    `source add: --recipe '${recipe}' supplies kind / url / structural fields; the following flags are not allowed with --recipe: ${flags}`,
+  "cli.source.recipeInvalidSource": ({ recipe }: { recipe: string }): string =>
+    `source add: recipe '${recipe}' produced an invalid source`,
+  "cli.source.alreadyExists": ({ id }: { id: string }): string =>
+    `source add: '${id}' already exists (sources/${id}.yaml)`,
+  "cli.source.created": ({ id }: { id: string }): string =>
+    `source add: created sources/${id}.yaml`,
+  "cli.source.createdFromRecipe": ({ id, recipe }: { id: string; recipe: string }): string =>
+    `source add: created sources/${id}.yaml from recipe '${recipe}'`,
+  "cli.source.noKeywordsWarn": ({ id }: { id: string }): string =>
+    `source add: warning — '${id}' has no keywords; all fetched items will be filtered out. Edit sources/${id}.yaml or re-add with --keywords to start ingesting.`,
+  "cli.source.noKeywordsWarnRecipe": ({ id }: { id: string }): string =>
+    `source add: warning — '${id}' has no keywords; all fetched items will be filtered out. Re-add with --keywords or edit sources/${id}.yaml to start ingesting.`,
+  "cli.source.listNoDir": "source list: no sources directory (run `radar init` first)",
+  "cli.source.listNoSources": "source list: no sources defined (use `radar source add ...`)",
+  "cli.source.removeNotFound": ({ id }: { id: string }): string =>
+    `source remove: '${id}' not found (sources/${id}.yaml)`,
+  "cli.source.deleted": ({ id }: { id: string }): string =>
+    `source remove: deleted sources/${id}.yaml`,
+  "cli.source.testNotFound": ({ id }: { id: string }): string =>
+    `source test: '${id}' not found (sources/${id}.yaml)`,
+  "cli.source.recipesNone": "source recipes: no recipes bundled (recipes/ is empty or absent)",
+  "cli.source.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `source: unknown subcommand '${sub}'`,
+
+  // triage (#336)
+  "cli.triage.modesExclusive": "--dry-run / --apply / --interactive are mutually exclusive",
+  "cli.triage.verboseQuietExclusive": "--verbose and --quiet are mutually exclusive",
+  "cli.triage.commitIncompatibleModes":
+    "triage: --commit is incompatible with --dry-run / --apply / --interactive",
+  "cli.triage.commitIncompatibleEmitPayload":
+    "triage: --commit is incompatible with --emit-payload",
+  "cli.triage.emitPayloadIncompatibleModes":
+    "triage: --emit-payload is incompatible with --dry-run / --apply / --interactive",
+  "cli.triage.emitPayloadSingleSource": ({
+    count,
+    sources,
+  }: {
+    count: number;
+    sources: string;
+  }): string =>
+    `triage: --emit-payload requires a single source group, but ${count} sources have detected items (${sources}). Narrow with --source <id>.`,
+  "cli.triage.invalidTriageAgent": ({ agent }: { agent: string }): string =>
+    `triage: --triage-agent '${agent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
+  "cli.triage.noSourcesDir": "triage: no sources/ directory (run `radar init` first)",
+  "cli.triage.noSourcesDefined": "triage: no sources defined; nothing to triage",
+  "cli.triage.noItemsDir": "triage: no items/ directory; nothing to triage",
+  "cli.triage.noDetectedMatch": "triage: no detected items match the filter (nothing to do)",
+  "cli.triage.maxItemsExceeded": ({
+    detected,
+    maxItems,
+  }: {
+    detected: number;
+    maxItems: number;
+  }): string =>
+    `triage: ${detected} detected item(s) exceed --max-items ${maxItems}; processing the first ${maxItems} only`,
+  "cli.triage.skippingNoPolicy": ({
+    count,
+    sourceId,
+  }: {
+    count: number;
+    sourceId: string;
+  }): string =>
+    `triage: skipping ${count} item(s) from source '${sourceId}' (no triagePolicy configured)`,
+  "cli.triage.noItemsTriaged": "triage: no items were triaged (all sources skipped)",
+  "cli.triage.dryRunNoChanges": "triage: dry-run — no changes written",
+  "cli.triage.abortedByUser": "triage: aborted by user",
+  "cli.triage.applied": ({ count }: { count: number }): string =>
+    `triage: applied ${count} decision(s)`,
+  "cli.triage.committed": ({ count, sourceId }: { count: number; sourceId: string }): string =>
+    `triage: committed ${count} decision(s) for source '${sourceId}'`,
+  "cli.triage.decisionsFileNotFound": ({ path }: { path: string }): string =>
+    `triage: decisions file not found: ${path}`,
+  "cli.triage.unknownSource": ({ sourceId }: { sourceId: string }): string =>
+    `triage: decisions file references unknown source '${sourceId}'`,
+  "cli.triage.sourceNoPolicy": ({ sourceId }: { sourceId: string }): string =>
+    `triage: source '${sourceId}' has no triagePolicy (cannot validate decisions; pass --policy <path>)`,
+  "cli.triage.noItemsDirCommit": "triage: no items/ directory; nothing to commit",
+  "cli.triage.noDetectedForSource": ({ sourceId }: { sourceId: string }): string =>
+    `triage: no detected items remain for source '${sourceId}' (already triaged, or wrong source?)`,
+  "cli.triage.invalidDecisionsAgent": ({ agent }: { agent: string }): string =>
+    `triage: decisions file agent '${agent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
+  "cli.triage.feedbackMissingItemId": "triage feedback: missing <item-id>",
+  "cli.triage.feedbackModesExclusive":
+    "triage feedback: --correct and --wrong are mutually exclusive",
+  "cli.triage.feedbackModeRequired": "triage feedback: one of --correct | --wrong is required",
+  "cli.triage.feedbackItemsDirNotFound": "triage feedback: items/ not found (run `radar init`)",
+  "cli.triage.feedbackItemNotFound": ({ id }: { id: string }): string =>
+    `triage feedback: item '${id}' not found under items/`,
+  "cli.triage.feedbackNoPriorDecision": ({ id }: { id: string }): string =>
+    `triage feedback: item '${id}' has no prior triage decision to give feedback on`,
+  "cli.triage.feedbackRecorded": ({
+    sourceId,
+    id,
+    verdict,
+  }: {
+    sourceId: string;
+    id: string;
+    verdict: string;
+  }): string => `triage feedback: items/${sourceId}/${id}.yaml feedback -> ${verdict}`,
+  "cli.triage.statsInvalidSince": ({ since }: { since: string }): string =>
+    `triage stats: invalid --since '${since}' (expected Ns | Nm | Nh | Nd)`,
+  "cli.triage.statsNoItemsDir": "triage stats: no items/ directory (run `radar init` first)",
+  "cli.triage.statsNoMatch": "triage stats: no triaged items match the filter (nothing to report)",
 
   // --- init help (#311) -----------------------------------------------------
   "cli.init.help": `Usage: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]

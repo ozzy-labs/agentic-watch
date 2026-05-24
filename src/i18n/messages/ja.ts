@@ -682,7 +682,10 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     "items list: items/ ディレクトリがありません (まず `radar init` を実行してください)",
   "cli.items.noMatch": "items list: フィルタに一致するアイテムがありません",
 
-  // watch (#312)
+  // watch (#312 / #336)
+  "cli.watch.bootstrapBackfillExclusive": "--bootstrap と --backfill は併用できません",
+  "cli.watch.maxPagesRequiresBackfill": "--max-pages には --backfill が必要です",
+  "cli.watch.verboseQuietExclusive": "--verbose と --quiet は併用できません",
   "cli.watch.unknownSubcommand": ({ sub }: { sub: string }): string =>
     `watch: 不明なサブコマンド '${sub}' です`,
   "cli.watch.bootstrapComplete": ({ sources }: { sources: number }): string =>
@@ -699,6 +702,327 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     `${file} の読み込みに失敗しました: ${reason}`,
   "cli.config.failedParse": ({ file, reason }: { file: string; reason: string }): string =>
     `${file} の YAML としての解析に失敗しました: ${reason}`,
+
+  // --- remaining user-facing errors & notifications (#336) ------------------
+
+  // shared: invalid --agent
+  "cli.agent.invalid": ({ cmd, agent }: { cmd: string; agent: string }): string =>
+    `${cmd}: 不正な --agent '${agent}' (有効値: claude-code | codex-cli | gemini-cli | copilot)`,
+
+  // research (#336)
+  "cli.research.batchIncompatiblePositional": ({ count }: { count: number }): string =>
+    `research: --batch と位置引数の <item-id> は併用できません (${count} 件指定)`,
+  "cli.research.batchIncompatibleDigest": "research: --batch と --digest は併用できません",
+  "cli.research.batchIncompatibleTriageGroup":
+    "research: --batch と --triage-group は併用できません",
+  "cli.research.invalidStatus": ({
+    status,
+    allowed,
+  }: {
+    status: string;
+    allowed: string;
+  }): string => `research: 不正な --status '${status}' (有効値: ${allowed})`,
+  "cli.research.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `research: 不正な --max-items '${raw}' (正の整数を指定してください)`,
+  "cli.research.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `research: 不正な --max-items '${raw}' (0 より大きい値を指定してください)`,
+  "cli.research.commitIncompatibleBatch": "research: --commit と --batch は併用できません",
+  "cli.research.commitIncompatibleDigest": "research: --commit と --digest は併用できません",
+  "cli.research.commitIncompatibleEmitPayload":
+    "research: --commit と --emit-payload は併用できません",
+  "cli.research.commitIncompatibleTriageGroup":
+    "research: --commit と --triage-group は併用できません",
+  "cli.research.commitTakesPath": ({ count, ids }: { count: number; ids: string }): string =>
+    `research: --commit は <path> を取ります。<item-id> 引数ではありません (${count} 件: ${ids})`,
+  "cli.research.emitPayloadIncompatibleBatch":
+    "research: --emit-payload と --batch は併用できません",
+  "cli.research.statusRequiresBatch": "research: --status には --batch が必要です",
+  "cli.research.maxItemsRequiresBatch": "research: --max-items には --batch が必要です",
+  "cli.research.filterTagsRequiresBatch": "research: --filter-tags には --batch が必要です",
+  "cli.research.triageGroupRequiresDigest": "research: --triage-group には --digest が必要です",
+  "cli.research.missingItemId": "research: <item-id> が指定されていません",
+  "cli.research.multipleRequireDigest": ({ count, ids }: { count: number; ids: string }): string =>
+    `research: 複数の <item-id> 引数には --digest が必要です (${count} 件: ${ids})`,
+  "cli.research.digestRequiresTwo": ({ count }: { count: number }): string =>
+    `research: --digest には 2 つ以上の <item-id> 引数が必要です (${count} 件指定)`,
+  "cli.research.itemNotFound": ({ id }: { id: string }): string =>
+    `research: アイテム '${id}' が items/ 配下に見つかりません`,
+  "cli.research.digestDismissed": ({ ids }: { ids: string }): string =>
+    `research: dismiss 済みのアイテムをダイジェストに含めることはできません: ${ids}`,
+  "cli.research.alreadyExists": ({ path }: { path: string }): string =>
+    `research: ${path} は既に存在します (再 research には \`radar update\` を使用してください)`,
+  "cli.research.noItemsMatched": ({ status, tags }: { status: string; tags: string }): string =>
+    `research: --batch フィルタに一致するアイテムがありません (status=${status}${tags})`,
+  "cli.research.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `research: --max-items ${maxItems} の上限に達しました。超過した ${dropped} 件を除外します (一致 ${matched} 件)`,
+  "cli.research.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    agent,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    agent: string;
+    cap: number;
+  }): string =>
+    `research: --batch で ${count} 件を処理します (status=${status}${tags}, agent=${agent}, 上限=${cap})`,
+  "cli.research.batchHalted": ({ id, exitCode }: { id: string; exitCode: number }): string =>
+    `research: --batch がアイテム '${id}' で停止しました (exit ${exitCode})`,
+  "cli.research.batchCompleted": ({ count }: { count: number }): string =>
+    `research: --batch で ${count} 件を処理しました`,
+  "cli.research.wrote": ({ path }: { path: string }): string =>
+    `research: ${path} を書き込みました`,
+  "cli.research.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `research: items/${sourceId}/${id}.yaml のステータスを researched に変更しました`,
+
+  // review (#336)
+  "cli.review.batchIncompatiblePositional": ({ researchId }: { researchId: string }): string =>
+    `review: --batch と位置引数の <research-id> は併用できません ('${researchId}')`,
+  "cli.review.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `review: 不正な --status '${status}' (有効値: ${allowed})`,
+  "cli.review.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `review: 不正な --max-items '${raw}' (正の整数を指定してください)`,
+  "cli.review.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `review: 不正な --max-items '${raw}' (0 より大きい値を指定してください)`,
+  "cli.review.commitIncompatibleBatch": "review: --commit と --batch は併用できません",
+  "cli.review.commitIncompatibleEmitPayload": "review: --commit と --emit-payload は併用できません",
+  "cli.review.commitTakesPath": ({ researchId }: { researchId: string }): string =>
+    `review: --commit は <path> を取ります。<research-id> 引数ではありません ('${researchId}')`,
+  "cli.review.emitPayloadIncompatibleBatch": "review: --emit-payload と --batch は併用できません",
+  "cli.review.statusRequiresBatch": "review: --status には --batch が必要です",
+  "cli.review.maxItemsRequiresBatch": "review: --max-items には --batch が必要です",
+  "cli.review.filterTagsRequiresBatch": "review: --filter-tags には --batch が必要です",
+  "cli.review.missingResearchId": "review: <research-id> が指定されていません",
+  "cli.review.fileNotFound": ({ path }: { path: string }): string =>
+    `review: research ファイルが見つかりません: ${path}`,
+  "cli.review.batchFoundNone":
+    "review: --batch で未レビューの research/*.md ファイルが見つかりません",
+  "cli.review.batchMatchedZero": ({ status, tags }: { status: string; tags: string }): string =>
+    `review: --batch に一致する research ファイルがありません (status=${status}${tags})`,
+  "cli.review.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `review: --max-items ${maxItems} の上限に達しました。超過した ${dropped} 件の research ファイルを除外します (一致 ${matched} 件)`,
+  "cli.review.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    agent,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    agent: string;
+    cap: number;
+  }): string =>
+    `review: --batch で ${count} 件の research ファイルを処理します (status=${status}${tags}, agent=${agent}, 上限=${cap})`,
+  "cli.review.batchHalted": ({
+    researchId,
+    exitCode,
+  }: {
+    researchId: string;
+    exitCode: number;
+  }): string => `review: --batch が research '${researchId}' で停止しました (exit ${exitCode})`,
+  "cli.review.batchCompleted": ({ count }: { count: number }): string =>
+    `review: --batch で ${count} 件の research ファイルを処理しました`,
+  "cli.review.commitNotStamped": ({
+    id,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    id: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string =>
+    `review: --commit レポート '${id}' にスタンプがありません (reviewedAt=${reviewedAt}, reviewedBy=${reviewedBy})。commit 前にホストセッションがレビューをスタンプする必要があります`,
+  "cli.review.alreadyReviewed": ({
+    id,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    id: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string =>
+    `review: research '${id}' は既にレビュー済みです (reviewedAt=${reviewedAt}, reviewedBy=${reviewedBy})`,
+  "cli.review.wroteCommit": ({ path }: { path: string }): string =>
+    `review: ${path} を書き込みました`,
+  "cli.review.stamped": ({
+    path,
+    reviewedAt,
+    reviewedBy,
+  }: {
+    path: string;
+    reviewedAt: string;
+    reviewedBy: string;
+  }): string =>
+    `review: ${path} に reviewedAt=${reviewedAt} reviewedBy=${reviewedBy} をスタンプしました`,
+  "cli.review.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `review: items/${sourceId}/${id}.yaml のステータスを reviewed に変更しました`,
+
+  // update (#336)
+  "cli.update.commitIncompatibleEmitPayload": "update: --commit と --emit-payload は併用できません",
+  "cli.update.commitTakesPath": ({ researchId }: { researchId: string }): string =>
+    `update: --commit は <path> を取ります。<research-id> ではありません ('${researchId}')`,
+  "cli.update.missingResearchId": "update: <research-id> が指定されていません",
+  "cli.update.fileNotFound": ({ path }: { path: string }): string =>
+    `update: research ファイルが見つかりません: ${path}`,
+  "cli.update.alreadyExists": ({ path, version }: { path: string; version: number }): string =>
+    `update: ${path} は既に存在します。v${version} は既に生成済みです — 別の predecessor を選ぶか、古いファイルを削除してください。`,
+  "cli.update.commitSupersedesNull":
+    "update: --commit レポートの `supersedes` が null です。update は v+1 を確定します (v1 には `radar research --commit` を使用してください)。",
+  "cli.update.wrote": ({ path }: { path: string }): string => `update: ${path} を書き込みました`,
+  "cli.update.supersedes": ({ prevId }: { prevId: string }): string =>
+    `update: ${prevId} を supersede しました (items.yaml のステータスは変更なし)`,
+
+  // source (#336)
+  "cli.source.missingId": ({ sub }: { sub: string }): string =>
+    `source ${sub}: <id> が指定されていません`,
+  "cli.source.invalidId": ({ sub, id }: { sub: string; id: string }): string =>
+    `source ${sub}: 不正な <id> '${id}' ([A-Za-z0-9][A-Za-z0-9._-]* に一致する必要があります)`,
+  "cli.source.kindRequired": "source add: --kind が必要です",
+  "cli.source.urlRequired": "source add: --url が必要です",
+  "cli.source.invalidKind": ({ kind }: { kind: string }): string =>
+    `source add: 不正な --kind '${kind}' (有効値: rss | html | html-js | github-releases | npm-registry | json-feed | json-api)`,
+  "cli.source.paginationOnlyJsonApi": ({ kind }: { kind: string }): string =>
+    `source add: --pagination-* フラグは --kind json-api でのみ有効です (--kind '${kind}' が指定されています)`,
+  "cli.source.validationFailed": "source add: 検証に失敗しました",
+  "cli.source.recipeForbiddenFlags": ({
+    recipe,
+    flags,
+  }: {
+    recipe: string;
+    flags: string;
+  }): string =>
+    `source add: --recipe '${recipe}' が kind / url / 構造フィールドを供給します。--recipe と併用できないフラグ: ${flags}`,
+  "cli.source.recipeInvalidSource": ({ recipe }: { recipe: string }): string =>
+    `source add: レシピ '${recipe}' が不正な source を生成しました`,
+  "cli.source.alreadyExists": ({ id }: { id: string }): string =>
+    `source add: '${id}' は既に存在します (sources/${id}.yaml)`,
+  "cli.source.created": ({ id }: { id: string }): string =>
+    `source add: sources/${id}.yaml を作成しました`,
+  "cli.source.createdFromRecipe": ({ id, recipe }: { id: string; recipe: string }): string =>
+    `source add: レシピ '${recipe}' から sources/${id}.yaml を作成しました`,
+  "cli.source.noKeywordsWarn": ({ id }: { id: string }): string =>
+    `source add: 警告 — '${id}' にキーワードがありません。取得した全アイテムが除外されます。取り込みを始めるには sources/${id}.yaml を編集するか --keywords 付きで再追加してください。`,
+  "cli.source.noKeywordsWarnRecipe": ({ id }: { id: string }): string =>
+    `source add: 警告 — '${id}' にキーワードがありません。取得した全アイテムが除外されます。取り込みを始めるには --keywords 付きで再追加するか sources/${id}.yaml を編集してください。`,
+  "cli.source.listNoDir":
+    "source list: sources ディレクトリがありません (まず `radar init` を実行してください)",
+  "cli.source.listNoSources":
+    "source list: source が定義されていません (`radar source add ...` を使用してください)",
+  "cli.source.removeNotFound": ({ id }: { id: string }): string =>
+    `source remove: '${id}' が見つかりません (sources/${id}.yaml)`,
+  "cli.source.deleted": ({ id }: { id: string }): string =>
+    `source remove: sources/${id}.yaml を削除しました`,
+  "cli.source.testNotFound": ({ id }: { id: string }): string =>
+    `source test: '${id}' が見つかりません (sources/${id}.yaml)`,
+  "cli.source.recipesNone":
+    "source recipes: バンドルされたレシピがありません (recipes/ が空または存在しません)",
+  "cli.source.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `source: 不明なサブコマンド '${sub}' です`,
+
+  // triage (#336)
+  "cli.triage.modesExclusive": "--dry-run / --apply / --interactive は併用できません",
+  "cli.triage.verboseQuietExclusive": "--verbose と --quiet は併用できません",
+  "cli.triage.commitIncompatibleModes":
+    "triage: --commit と --dry-run / --apply / --interactive は併用できません",
+  "cli.triage.commitIncompatibleEmitPayload": "triage: --commit と --emit-payload は併用できません",
+  "cli.triage.emitPayloadIncompatibleModes":
+    "triage: --emit-payload と --dry-run / --apply / --interactive は併用できません",
+  "cli.triage.emitPayloadSingleSource": ({
+    count,
+    sources,
+  }: {
+    count: number;
+    sources: string;
+  }): string =>
+    `triage: --emit-payload は単一の source グループが必要ですが、${count} 個の source に detected アイテムがあります (${sources})。--source <id> で絞り込んでください。`,
+  "cli.triage.invalidTriageAgent": ({ agent }: { agent: string }): string =>
+    `triage: --triage-agent '${agent}' は有効な agent id ではありません (claude-code | codex-cli | gemini-cli | copilot)`,
+  "cli.triage.noSourcesDir":
+    "triage: sources/ ディレクトリがありません (まず `radar init` を実行してください)",
+  "cli.triage.noSourcesDefined": "triage: source が定義されていません。triage 対象がありません",
+  "cli.triage.noItemsDir": "triage: items/ ディレクトリがありません。triage 対象がありません",
+  "cli.triage.noDetectedMatch":
+    "triage: フィルタに一致する detected アイテムがありません (処理対象なし)",
+  "cli.triage.maxItemsExceeded": ({
+    detected,
+    maxItems,
+  }: {
+    detected: number;
+    maxItems: number;
+  }): string =>
+    `triage: detected アイテム ${detected} 件が --max-items ${maxItems} を超えています。先頭の ${maxItems} 件のみ処理します`,
+  "cli.triage.skippingNoPolicy": ({
+    count,
+    sourceId,
+  }: {
+    count: number;
+    sourceId: string;
+  }): string =>
+    `triage: source '${sourceId}' の ${count} 件をスキップします (triagePolicy が設定されていません)`,
+  "cli.triage.noItemsTriaged": "triage: triage されたアイテムがありません (全 source をスキップ)",
+  "cli.triage.dryRunNoChanges": "triage: dry-run — 変更は書き込まれていません",
+  "cli.triage.abortedByUser": "triage: ユーザーにより中止されました",
+  "cli.triage.applied": ({ count }: { count: number }): string =>
+    `triage: ${count} 件の判定を適用しました`,
+  "cli.triage.committed": ({ count, sourceId }: { count: number; sourceId: string }): string =>
+    `triage: source '${sourceId}' の ${count} 件の判定を commit しました`,
+  "cli.triage.decisionsFileNotFound": ({ path }: { path: string }): string =>
+    `triage: decisions ファイルが見つかりません: ${path}`,
+  "cli.triage.unknownSource": ({ sourceId }: { sourceId: string }): string =>
+    `triage: decisions ファイルが未知の source '${sourceId}' を参照しています`,
+  "cli.triage.sourceNoPolicy": ({ sourceId }: { sourceId: string }): string =>
+    `triage: source '${sourceId}' に triagePolicy がありません (decisions を検証できません。--policy <path> を指定してください)`,
+  "cli.triage.noItemsDirCommit": "triage: items/ ディレクトリがありません。commit 対象がありません",
+  "cli.triage.noDetectedForSource": ({ sourceId }: { sourceId: string }): string =>
+    `triage: source '${sourceId}' に残っている detected アイテムがありません (既に triage 済みか、source が間違っていませんか?)`,
+  "cli.triage.invalidDecisionsAgent": ({ agent }: { agent: string }): string =>
+    `triage: decisions ファイルの agent '${agent}' は有効な agent id ではありません (claude-code | codex-cli | gemini-cli | copilot)`,
+  "cli.triage.feedbackMissingItemId": "triage feedback: <item-id> が指定されていません",
+  "cli.triage.feedbackModesExclusive": "triage feedback: --correct と --wrong は併用できません",
+  "cli.triage.feedbackModeRequired": "triage feedback: --correct | --wrong のいずれかが必要です",
+  "cli.triage.feedbackItemsDirNotFound":
+    "triage feedback: items/ が見つかりません (`radar init` を実行してください)",
+  "cli.triage.feedbackItemNotFound": ({ id }: { id: string }): string =>
+    `triage feedback: アイテム '${id}' が items/ 配下に見つかりません`,
+  "cli.triage.feedbackNoPriorDecision": ({ id }: { id: string }): string =>
+    `triage feedback: アイテム '${id}' にフィードバック対象の triage 判定がありません`,
+  "cli.triage.feedbackRecorded": ({
+    sourceId,
+    id,
+    verdict,
+  }: {
+    sourceId: string;
+    id: string;
+    verdict: string;
+  }): string =>
+    `triage feedback: items/${sourceId}/${id}.yaml のフィードバックを ${verdict} に設定しました`,
+  "cli.triage.statsInvalidSince": ({ since }: { since: string }): string =>
+    `triage stats: 不正な --since '${since}' (形式: Ns | Nm | Nh | Nd)`,
+  "cli.triage.statsNoItemsDir":
+    "triage stats: items/ ディレクトリがありません (まず `radar init` を実行してください)",
+  "cli.triage.statsNoMatch":
+    "triage stats: フィルタに一致する triage 済みアイテムがありません (報告対象なし)",
 
   // --- init help (#311) -----------------------------------------------------
   "cli.init.help": `使い方: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]

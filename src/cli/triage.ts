@@ -17,7 +17,7 @@ import {
   triageItems,
 } from "../core/triage/index.js";
 import { loadSources } from "../core/watcher.js";
-import { createTranslator, type Translator } from "../i18n/index.js";
+import { createTranslator, type MessageKey, type Translator } from "../i18n/index.js";
 import type { DismissedBy, Item, TriageDecision } from "../schemas/item.js";
 import { TriageDecisionValueSchema } from "../schemas/item.js";
 import { AgentIdSchema } from "../schemas/research.js";
@@ -106,6 +106,20 @@ interface TriageFeedbackArgs {
   help?: boolean;
 }
 
+/**
+ * Validation error thrown by the sync `parseTriageRunArgs` that carries a
+ * message *key* instead of pre-rendered English (#336). The parser runs before
+ * the locale is resolved, so it tags the error with a catalog key and the
+ * caller renders it once the translator is in scope. Raw-token errors (unknown
+ * option / unexpected argument) stay plain `Error`s and echo verbatim.
+ */
+class TriageArgError extends Error {
+  constructor(readonly key: MessageKey) {
+    super(key);
+    this.name = "TriageArgError";
+  }
+}
+
 function splitCsv(value: string): string[] {
   return value
     .split(",")
@@ -131,17 +145,17 @@ function parseTriageRunArgs(args: string[]): TriageRunArgs {
       continue;
     }
     if (a === "--dry-run") {
-      if (out.mode) throw new Error("--dry-run / --apply / --interactive are mutually exclusive");
+      if (out.mode) throw new TriageArgError("cli.triage.modesExclusive");
       out.mode = "dry-run";
       continue;
     }
     if (a === "--apply") {
-      if (out.mode) throw new Error("--dry-run / --apply / --interactive are mutually exclusive");
+      if (out.mode) throw new TriageArgError("cli.triage.modesExclusive");
       out.mode = "apply";
       continue;
     }
     if (a === "--interactive") {
-      if (out.mode) throw new Error("--dry-run / --apply / --interactive are mutually exclusive");
+      if (out.mode) throw new TriageArgError("cli.triage.modesExclusive");
       out.mode = "interactive";
       continue;
     }
@@ -203,7 +217,7 @@ function parseTriageRunArgs(args: string[]): TriageRunArgs {
     throw new Error(`unexpected positional argument: ${a}`);
   }
   if (out.verbose && out.quiet) {
-    throw new Error("--verbose and --quiet are mutually exclusive");
+    throw new TriageArgError("cli.triage.verboseQuietExclusive");
   }
   return out;
 }
@@ -447,17 +461,18 @@ async function prepareTriageGroups(
   parsed: TriageRunArgs,
   cwd: string,
   io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+  t: Translator,
 ): Promise<PrepareTriageGroupsResult> {
   const { log, warn, error } = io;
 
   const sourcesDir = join(cwd, "sources");
   if (!(await pathExists(sourcesDir))) {
-    error("triage: no sources/ directory (run `radar init` first)");
+    error(t("cli.triage.noSourcesDir"));
     return { exitCode: 1 };
   }
   const sources = await loadSources(sourcesDir, error);
   if (sources.length === 0) {
-    log("triage: no sources defined; nothing to triage");
+    log(t("cli.triage.noSourcesDefined"));
     return { exitCode: 0 };
   }
 
@@ -469,7 +484,7 @@ async function prepareTriageGroups(
 
   const itemsDir = join(cwd, "items");
   if (!(await pathExists(itemsDir))) {
-    log("triage: no items/ directory; nothing to triage");
+    log(t("cli.triage.noItemsDir"));
     return { exitCode: 0 };
   }
   let allItems: Item[];
@@ -487,12 +502,12 @@ async function prepareTriageGroups(
     detected = detected.filter((i) => i.matchedKeywords.some((k) => tags.has(k)));
   }
   if (detected.length === 0) {
-    log("triage: no detected items match the filter (nothing to do)");
+    log(t("cli.triage.noDetectedMatch"));
     return { exitCode: 0 };
   }
   if (parsed.maxItems !== undefined && detected.length > parsed.maxItems) {
     warn(
-      `triage: ${detected.length} detected item(s) exceed --max-items ${parsed.maxItems}; processing the first ${parsed.maxItems} only`,
+      t("cli.triage.maxItemsExceeded", { detected: detected.length, maxItems: parsed.maxItems }),
     );
     detected = detected.slice(0, parsed.maxItems);
   }
@@ -510,9 +525,7 @@ async function prepareTriageGroups(
     const source = sourcesById.get(sourceId);
     const policy = policyOverride ?? source?.triagePolicy;
     if (!policy) {
-      warn(
-        `triage: skipping ${groupItems.length} item(s) from source '${sourceId}' (no triagePolicy configured)`,
-      );
+      warn(t("cli.triage.skippingNoPolicy", { count: groupItems.length, sourceId }));
       continue;
     }
     const triageAgent = parsed.triageAgent ?? policy.agent;
@@ -520,9 +533,7 @@ async function prepareTriageGroups(
     // agent call (or emitting a payload) — typos like `gemnini-cli` fail fast.
     const validated = AgentIdSchema.safeParse(triageAgent);
     if (!validated.success) {
-      error(
-        `triage: --triage-agent '${triageAgent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
-      );
+      error(t("cli.triage.invalidTriageAgent", { agent: triageAgent }));
       return { exitCode: 2 };
     }
     groups.push({ sourceId, items: groupItems, policy, triageAgent });
@@ -574,21 +585,23 @@ async function runTriageEmitPayload(
   parsed: TriageRunArgs,
   cwd: string,
   io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+  t: Translator,
 ): Promise<number> {
   const { log, error } = io;
-  const prepared = await prepareTriageGroups(parsed, cwd, io);
+  const prepared = await prepareTriageGroups(parsed, cwd, io, t);
   if ("exitCode" in prepared) return prepared.exitCode;
   const { groups } = prepared;
 
   if (groups.length === 0) {
-    log("triage: no items were triaged (all sources skipped)");
+    log(t("cli.triage.noItemsTriaged"));
     return 0;
   }
   if (groups.length > 1) {
     error(
-      `triage: --emit-payload requires a single source group, but ${groups.length} sources have detected items (${groups
-        .map((g) => g.sourceId)
-        .join(", ")}). Narrow with --source <id>.`,
+      t("cli.triage.emitPayloadSingleSource", {
+        count: groups.length,
+        sources: groups.map((g) => g.sourceId).join(", "),
+      }),
     );
     return 2;
   }
@@ -627,6 +640,7 @@ async function runTriageCommit(
   cwd: string,
   options: TriageCommandOptions,
   io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+  t: Translator,
 ): Promise<number> {
   const { log, warn, error } = io;
   const now = options.now ?? defaultNow;
@@ -639,7 +653,7 @@ async function runTriageCommit(
   const resolved = guard.resolved;
 
   if (!(await pathExists(resolved))) {
-    error(`triage: decisions file not found: ${resolved}`);
+    error(t("cli.triage.decisionsFileNotFound", { path: resolved }));
     return 1;
   }
   let raw: string;
@@ -672,9 +686,7 @@ async function runTriageCommit(
   // `triage.agent`). Reject upfront rather than persisting a bogus origin.
   const agentValid = AgentIdSchema.safeParse(file.agent);
   if (!agentValid.success) {
-    error(
-      `triage: decisions file agent '${file.agent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
-    );
+    error(t("cli.triage.invalidDecisionsAgent", { agent: file.agent }));
     return 1;
   }
   const triageAgent = file.agent;
@@ -690,7 +702,7 @@ async function runTriageCommit(
   }
   const sourcesDir = join(cwd, "sources");
   if (!policyOverride && !(await pathExists(sourcesDir))) {
-    error("triage: no sources/ directory (run `radar init` first)");
+    error(t("cli.triage.noSourcesDir"));
     return 1;
   }
   let policy = policyOverride;
@@ -698,13 +710,11 @@ async function runTriageCommit(
     const sources = await loadSources(sourcesDir, error);
     const source = sources.find((s) => s.id === file.sourceId);
     if (!source) {
-      error(`triage: decisions file references unknown source '${file.sourceId}'`);
+      error(t("cli.triage.unknownSource", { sourceId: file.sourceId }));
       return 1;
     }
     if (!source.triagePolicy) {
-      error(
-        `triage: source '${file.sourceId}' has no triagePolicy (cannot validate decisions; pass --policy <path>)`,
-      );
+      error(t("cli.triage.sourceNoPolicy", { sourceId: file.sourceId }));
       return 1;
     }
     policy = source.triagePolicy;
@@ -717,7 +727,7 @@ async function runTriageCommit(
   // spawn path's behavior.
   const itemsDir = join(cwd, "items");
   if (!(await pathExists(itemsDir))) {
-    error("triage: no items/ directory; nothing to commit");
+    error(t("cli.triage.noItemsDirCommit"));
     return 1;
   }
   let allItems: Item[];
@@ -729,9 +739,7 @@ async function runTriageCommit(
   }
   const detected = allItems.filter((i) => i.status === "detected");
   if (detected.length === 0) {
-    error(
-      `triage: no detected items remain for source '${file.sourceId}' (already triaged, or wrong source?)`,
-    );
+    error(t("cli.triage.noDetectedForSource", { sourceId: file.sourceId }));
     return 1;
   }
 
@@ -791,7 +799,7 @@ async function runTriageCommit(
     error(`triage: failed to write items: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  log(`triage: committed ${updated.length} decision(s) for source '${file.sourceId}'`);
+  log(t("cli.triage.committed", { count: updated.length, sourceId: file.sourceId }));
   for (const row of formatDecisionTable(detected, decisions)) log(row);
   return 0;
 }
@@ -872,7 +880,11 @@ async function runTriageRun(
   try {
     parsed = parseTriageRunArgs(langState.rest);
   } catch (e) {
-    error(`triage: ${e instanceof Error ? e.message : String(e)}`);
+    // Keyed validation errors are translated now that the locale is resolved;
+    // raw-token errors (unknown option / unexpected argument) echo verbatim.
+    const message =
+      e instanceof TriageArgError ? t(e.key) : e instanceof Error ? e.message : String(e);
+    error(`triage: ${message}`);
     return 2;
   }
   if (parsed.help) {
@@ -885,24 +897,24 @@ async function runTriageRun(
   // it must not be confused with `--dry-run` / `--apply` / `--interactive`.
   if (parsed.commit !== undefined) {
     if (parsed.mode) {
-      error("triage: --commit is incompatible with --dry-run / --apply / --interactive");
+      error(t("cli.triage.commitIncompatibleModes"));
       return 2;
     }
     if (parsed.emitPayload) {
-      error("triage: --commit is incompatible with --emit-payload");
+      error(t("cli.triage.commitIncompatibleEmitPayload"));
       return 2;
     }
-    return runTriageCommit(parsed, parsed.commit, cwd, options, io);
+    return runTriageCommit(parsed, parsed.commit, cwd, options, io, t);
   }
 
   // Host-agent emit (#279 / ADR-0019). Mutually exclusive with the apply / dry
   // / interactive run modes — it prints a payload instead of running an agent.
   if (parsed.emitPayload) {
     if (parsed.mode) {
-      error("triage: --emit-payload is incompatible with --dry-run / --apply / --interactive");
+      error(t("cli.triage.emitPayloadIncompatibleModes"));
       return 2;
     }
-    return runTriageEmitPayload(parsed, cwd, io);
+    return runTriageEmitPayload(parsed, cwd, io, t);
   }
 
   const mode: TriageMode = parsed.mode ?? "dry-run";
@@ -917,7 +929,7 @@ async function runTriageRun(
 
   // Shared PRE block: load + filter + group detected items and resolve each
   // group's policy / agent (also used by `--emit-payload`).
-  const prepared = await prepareTriageGroups(parsed, cwd, io);
+  const prepared = await prepareTriageGroups(parsed, cwd, io, t);
   if ("exitCode" in prepared) return prepared.exitCode;
   const { groups, detected, itemsDir } = prepared;
 
@@ -961,7 +973,7 @@ async function runTriageRun(
   }
 
   if (allDecisions.size === 0) {
-    log("triage: no items were triaged (all sources skipped)");
+    log(t("cli.triage.noItemsTriaged"));
     return 0;
   }
 
@@ -969,7 +981,7 @@ async function runTriageRun(
   const rows = formatDecisionTable(detected, allDecisions);
 
   if (mode === "dry-run") {
-    log("triage: dry-run — no changes written");
+    log(t("cli.triage.dryRunNoChanges"));
     for (const row of rows) log(row);
     return 0;
   }
@@ -998,7 +1010,7 @@ async function runTriageRun(
     const confirm = options.confirm ?? promptConfirm;
     const confirmed = await confirm("Apply these decisions? [y/N]");
     if (!confirmed) {
-      log("triage: aborted by user");
+      log(t("cli.triage.abortedByUser"));
       return 0;
     }
   }
@@ -1010,7 +1022,7 @@ async function runTriageRun(
     error(`triage: failed to write items: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  log(`triage: applied ${allUpdated.length} decision(s)`);
+  log(t("cli.triage.applied", { count: allUpdated.length }));
   for (const row of rows) log(row);
   return 0;
 }
@@ -1055,22 +1067,22 @@ async function runTriageFeedback(args: string[], options: TriageCommandOptions):
     return 0;
   }
   if (!parsed.itemId) {
-    error("triage feedback: missing <item-id>");
+    error(t("cli.triage.feedbackMissingItemId"));
     printFeedbackHelp(t, error);
     return 2;
   }
   if (parsed.correct && parsed.wrong) {
-    error("triage feedback: --correct and --wrong are mutually exclusive");
+    error(t("cli.triage.feedbackModesExclusive"));
     return 2;
   }
   if (!parsed.correct && !parsed.wrong) {
-    error("triage feedback: one of --correct | --wrong is required");
+    error(t("cli.triage.feedbackModeRequired"));
     return 2;
   }
 
   const itemsDir = join(cwd, "items");
   if (!(await pathExists(itemsDir))) {
-    error(`triage feedback: items/ not found (run \`radar init\`)`);
+    error(t("cli.triage.feedbackItemsDirNotFound"));
     return 1;
   }
 
@@ -1083,11 +1095,11 @@ async function runTriageFeedback(args: string[], options: TriageCommandOptions):
   }
   const item = items.find((i) => i.id === parsed.itemId);
   if (!item) {
-    error(`triage feedback: item '${parsed.itemId}' not found under items/`);
+    error(t("cli.triage.feedbackItemNotFound", { id: parsed.itemId }));
     return 1;
   }
   if (!item.triage) {
-    error(`triage feedback: item '${item.id}' has no prior triage decision to give feedback on`);
+    error(t("cli.triage.feedbackNoPriorDecision", { id: item.id }));
     return 1;
   }
 
@@ -1116,7 +1128,7 @@ async function runTriageFeedback(args: string[], options: TriageCommandOptions):
     return 1;
   }
   const verdict = parsed.correct ? "correct" : "wrong";
-  log(`triage feedback: items/${item.sourceId}/${item.id}.yaml feedback -> ${verdict}`);
+  log(t("cli.triage.feedbackRecorded", { sourceId: item.sourceId, id: item.id, verdict }));
   return 0;
 }
 
@@ -1562,7 +1574,7 @@ async function runTriageStats(
   if (parsed.since) {
     sinceCutoff = parseSinceCutoffForStats(parsed.since, now);
     if (!sinceCutoff) {
-      error(`triage stats: invalid --since '${parsed.since}' (expected Ns | Nm | Nh | Nd)`);
+      error(t("cli.triage.statsInvalidSince", { since: parsed.since }));
       return 2;
     }
   }
@@ -1582,7 +1594,7 @@ async function runTriageStats(
         ),
       );
     } else {
-      log("triage stats: no items/ directory (run `radar init` first)");
+      log(t("cli.triage.statsNoItemsDir"));
     }
     return 0;
   }
@@ -1641,7 +1653,7 @@ async function runTriageStats(
   }
 
   if (perSource.length === 0) {
-    log("triage stats: no triaged items match the filter (nothing to report)");
+    log(t("cli.triage.statsNoMatch"));
     return 0;
   }
 

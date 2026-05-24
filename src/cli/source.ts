@@ -475,12 +475,12 @@ export async function addSource(
     return 0;
   }
   if (!parsed.id) {
-    error("source add: missing <id>");
+    error(t("cli.source.missingId", { sub: "add" }));
     printAddHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
-    error(`source add: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
+    error(t("cli.source.invalidId", { sub: "add", id: parsed.id }));
     return 2;
   }
 
@@ -492,23 +492,21 @@ export async function addSource(
   // `--pagination-*`) is rejected so the user gets an immediate, targeted
   // error instead of silently-ignored flags. ADR-0012 §D3.
   if (parsed.recipe !== undefined) {
-    return addSourceFromRecipe(parsed, cwd, options, log, warn, error);
+    return addSourceFromRecipe(parsed, cwd, options, log, warn, error, t);
   }
 
   if (!parsed.kind) {
-    error("source add: --kind is required");
+    error(t("cli.source.kindRequired"));
     return 2;
   }
   if (!parsed.url) {
-    error("source add: --url is required");
+    error(t("cli.source.urlRequired"));
     return 2;
   }
 
   const kindResult = SourceKindSchema.safeParse(parsed.kind);
   if (!kindResult.success) {
-    error(
-      `source add: invalid --kind '${parsed.kind}' (expected: rss | html | html-js | github-releases | npm-registry | json-feed | json-api)`,
-    );
+    error(t("cli.source.invalidKind", { kind: parsed.kind }));
     return 2;
   }
 
@@ -541,7 +539,7 @@ export async function addSource(
       const issues = selectorsResult.error.issues.map(
         (i) => `selectors.${i.path.join(".") || "<root>"}: ${i.message}`,
       );
-      error(`source add: validation failed`);
+      error(t("cli.source.validationFailed"));
       for (const issue of issues) {
         error(`  - ${issue}`);
       }
@@ -592,9 +590,7 @@ export async function addSource(
     // Reject pagination flags on non-json-api kinds early so the user sees
     // a targeted hint instead of a deep schema refinement error ("pagination
     // is required when kind is 'json-api'" makes no sense for `kind: rss`).
-    error(
-      `source add: --pagination-* flags are only valid with --kind json-api (got --kind '${kindResult.data}')`,
-    );
+    error(t("cli.source.paginationOnlyJsonApi", { kind: kindResult.data }));
     return 2;
   }
 
@@ -603,7 +599,7 @@ export async function addSource(
     const issues = validated.error.issues.map(
       (i) => `${i.path.join(".") || "<root>"}: ${i.message}`,
     );
-    error(`source add: validation failed`);
+    error(t("cli.source.validationFailed"));
     for (const issue of issues) {
       error(`  - ${issue}`);
     }
@@ -612,12 +608,12 @@ export async function addSource(
 
   const file = sourceFile(cwd, validated.data.id);
   if (await pathExists(file)) {
-    error(`source add: '${validated.data.id}' already exists (sources/${validated.data.id}.yaml)`);
+    error(t("cli.source.alreadyExists", { id: validated.data.id }));
     return 1;
   }
 
   await writeFile(file, stringifyYaml(validated.data), "utf8");
-  log(`source add: created sources/${validated.data.id}.yaml`);
+  log(t("cli.source.created", { id: validated.data.id }));
 
   // ADR-0006 / src/core/filter.ts treats an empty include-keyword list as
   // "match nothing" (firehose guard). A source with no keywords is therefore
@@ -627,9 +623,7 @@ export async function addSource(
   // (stderr) so scripts that parse stdout are unaffected and the exit code
   // stays 0.
   if (validated.data.filters.keywords.length === 0) {
-    warn(
-      `source add: warning — '${validated.data.id}' has no keywords; all fetched items will be filtered out. Edit sources/${validated.data.id}.yaml or re-add with --keywords to start ingesting.`,
-    );
+    warn(t("cli.source.noKeywordsWarn", { id: validated.data.id }));
   }
 
   return 0;
@@ -658,6 +652,7 @@ async function addSourceFromRecipe(
   log: (m: string) => void,
   warn: (m: string) => void,
   error: (m: string) => void,
+  t: Translator,
 ): Promise<number> {
   const recipeName = parsed.recipe;
   // Defensive — should be guaranteed by the caller, but `parsed.recipe`
@@ -689,7 +684,7 @@ async function addSourceFromRecipe(
   }
   if (forbidden.length > 0) {
     error(
-      `source add: --recipe '${recipeName}' supplies kind / url / structural fields; the following flags are not allowed with --recipe: ${forbidden.join(", ")}`,
+      t("cli.source.recipeForbiddenFlags", { recipe: recipeName, flags: forbidden.join(", ") }),
     );
     return 2;
   }
@@ -724,7 +719,7 @@ async function addSourceFromRecipe(
     const issues = validated.error.issues.map(
       (i) => `${i.path.join(".") || "<root>"}: ${i.message}`,
     );
-    error(`source add: recipe '${recipeName}' produced an invalid source`);
+    error(t("cli.source.recipeInvalidSource", { recipe: recipeName }));
     for (const issue of issues) {
       error(`  - ${issue}`);
     }
@@ -733,21 +728,19 @@ async function addSourceFromRecipe(
 
   const file = sourceFile(cwd, validated.data.id);
   if (await pathExists(file)) {
-    error(`source add: '${validated.data.id}' already exists (sources/${validated.data.id}.yaml)`);
+    error(t("cli.source.alreadyExists", { id: validated.data.id }));
     return 1;
   }
 
   await writeFile(file, stringifyYaml(validated.data), "utf8");
-  log(`source add: created sources/${validated.data.id}.yaml from recipe '${recipeName}'`);
+  log(t("cli.source.createdFromRecipe", { id: validated.data.id, recipe: recipeName }));
 
   // Same firehose-guard hint as the flag-based path: an empty
   // include-keyword list silently drops every fetched item, which
   // surprises users when they thought the recipe came with sensible
   // defaults.
   if (validated.data.filters.keywords.length === 0) {
-    warn(
-      `source add: warning — '${validated.data.id}' has no keywords; all fetched items will be filtered out. Re-add with --keywords or edit sources/${validated.data.id}.yaml to start ingesting.`,
-    );
+    warn(t("cli.source.noKeywordsWarnRecipe", { id: validated.data.id }));
   }
 
   return 0;
@@ -842,7 +835,7 @@ export async function listSources(
 
   const dir = sourcesDir(cwd);
   if (!(await pathExists(dir))) {
-    log("source list: no sources directory (run `radar init` first)");
+    log(t("cli.source.listNoDir"));
     return 0;
   }
 
@@ -856,7 +849,7 @@ export async function listSources(
 
   const yamlFiles = entries.filter((f) => f.endsWith(".yaml")).sort();
   if (yamlFiles.length === 0) {
-    log("source list: no sources defined (use `radar source add ...`)");
+    log(t("cli.source.listNoSources"));
     return 0;
   }
 
@@ -978,23 +971,23 @@ export async function removeSource(
     return 0;
   }
   if (!parsed.id) {
-    error("source remove: missing <id>");
+    error(t("cli.source.missingId", { sub: "remove" }));
     printRemoveHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
-    error(`source remove: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
+    error(t("cli.source.invalidId", { sub: "remove", id: parsed.id }));
     return 2;
   }
 
   const file = sourceFile(cwd, parsed.id);
   if (!(await pathExists(file))) {
-    error(`source remove: '${parsed.id}' not found (sources/${parsed.id}.yaml)`);
+    error(t("cli.source.removeNotFound", { id: parsed.id }));
     return 1;
   }
 
   await unlink(file);
-  log(`source remove: deleted sources/${parsed.id}.yaml`);
+  log(t("cli.source.deleted", { id: parsed.id }));
   return 0;
 }
 
@@ -1056,12 +1049,12 @@ export async function testSource(
     return 0;
   }
   if (!parsed.id) {
-    error("source test: missing <id>");
+    error(t("cli.source.missingId", { sub: "test" }));
     printTestHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
-    error(`source test: invalid <id> '${parsed.id}' (must match [A-Za-z0-9][A-Za-z0-9._-]*)`);
+    error(t("cli.source.invalidId", { sub: "test", id: parsed.id }));
     return 2;
   }
 
@@ -1071,7 +1064,7 @@ export async function testSource(
   // the user typed the id explicitly.
   const file = sourceFile(cwd, parsed.id);
   if (!(await pathExists(file))) {
-    error(`source test: '${parsed.id}' not found (sources/${parsed.id}.yaml)`);
+    error(t("cli.source.testNotFound", { id: parsed.id }));
     return 1;
   }
 
@@ -1260,7 +1253,7 @@ export async function recipesSubcommand(
   }
 
   if (entries.length === 0) {
-    log("source recipes: no recipes bundled (recipes/ is empty or absent)");
+    log(t("cli.source.recipesNone"));
     return 0;
   }
 
@@ -1347,7 +1340,7 @@ export async function runSource(
     case "test":
       return testSource(rest, options);
     default:
-      error(`source: unknown subcommand '${sub}'`);
+      error(t("cli.source.unknownSubcommand", { sub }));
       printSourceHelp(t, error);
       return 2;
   }

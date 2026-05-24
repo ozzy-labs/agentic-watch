@@ -285,7 +285,7 @@ async function runReviewCommit(params: {
   const researchPath = guard.resolved;
 
   if (!(await pathExists(researchPath))) {
-    error(`review: research file not found: ${researchPath}`);
+    error(t("cli.review.fileNotFound", { path: researchPath }));
     return 1;
   }
   let body: string;
@@ -319,7 +319,11 @@ async function runReviewCommit(params: {
   // them reviewed against an un-reviewed report.
   if (fm.reviewedAt === null || fm.reviewedBy === null) {
     error(
-      `review: --commit report '${fm.id}' is not stamped (reviewedAt=${fm.reviewedAt}, reviewedBy=${fm.reviewedBy}); the host session must stamp the review before committing`,
+      t("cli.review.commitNotStamped", {
+        id: fm.id,
+        reviewedAt: String(fm.reviewedAt),
+        reviewedBy: String(fm.reviewedBy),
+      }),
     );
     return 1;
   }
@@ -362,7 +366,7 @@ async function runReviewCommit(params: {
     return 1;
   }
 
-  log(`review: wrote ${researchPath}`);
+  log(t("cli.review.wroteCommit", { path: researchPath }));
   for (const item of updated) {
     const from = transitions.get(item.id);
     if (from !== undefined && item.status === "reviewed") {
@@ -370,21 +374,25 @@ async function runReviewCommit(params: {
         t("cli.progress.statusTransition", { from, to: "reviewed" }),
         `items/${item.sourceId}/${item.id}.yaml`,
       );
-      log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
+      log(t("cli.review.transitioned", { sourceId: item.sourceId, id: item.id }));
     }
   }
   return 0;
 }
 
-function parseBatchMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+function parseBatchMaxItems(
+  raw: string | undefined,
+  error: (m: string) => void,
+  t: Translator,
+): number | null {
   if (raw === undefined) return REVIEW_BATCH_DEFAULT_MAX_ITEMS;
   if (!/^[0-9]+$/.test(raw)) {
-    error(`review: invalid --max-items '${raw}' (expected positive integer)`);
+    error(t("cli.review.invalidMaxItemsInteger", { raw }));
     return null;
   }
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) {
-    error(`review: invalid --max-items '${raw}' (must be > 0)`);
+    error(t("cli.review.invalidMaxItemsPositive", { raw }));
     return null;
   }
   return n;
@@ -484,21 +492,25 @@ async function runReviewBatch(
   warn: (m: string) => void,
   error: (m: string) => void,
   progress: ProgressReporter,
+  t: Translator,
 ): Promise<number> {
   if (parsed.researchId !== undefined) {
-    error(`review: --batch is incompatible with positional <research-id> ('${parsed.researchId}')`);
+    error(t("cli.review.batchIncompatiblePositional", { researchId: parsed.researchId }));
     return 2;
   }
   const rawStatus = parsed.status ?? "researched";
   if (!(REVIEW_BATCH_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
     error(
-      `review: invalid --status '${rawStatus}' (expected: ${REVIEW_BATCH_ALLOWED_STATUSES.join(" | ")})`,
+      t("cli.review.invalidStatus", {
+        status: rawStatus,
+        allowed: REVIEW_BATCH_ALLOWED_STATUSES.join(" | "),
+      }),
     );
     return 2;
   }
   const status: ReviewBatchStatus = rawStatus as ReviewBatchStatus;
 
-  const maxItems = parseBatchMaxItems(parsed.maxItems, error);
+  const maxItems = parseBatchMaxItems(parsed.maxItems, error, t);
   if (maxItems === null) return 2;
   const filterTags = parseBatchFilterTags(parsed.filterTags);
 
@@ -510,9 +522,7 @@ async function runReviewBatch(
   if (parsed.agent !== undefined) {
     const agentResult = AgentIdSchema.safeParse(parsed.agent);
     if (!agentResult.success) {
-      error(
-        `review: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-      );
+      error(t("cli.agent.invalid", { cmd: "review", agent: parsed.agent }));
       return 2;
     }
     explicitAgent = agentResult.data;
@@ -531,7 +541,7 @@ async function runReviewBatch(
 
   const candidates = await discoverBatchCandidates(cwd);
   if (candidates.length === 0) {
-    log(`review: --batch found no un-reviewed research/*.md files`);
+    log(t("cli.review.batchFoundNone"));
     return 0;
   }
 
@@ -575,28 +585,27 @@ async function runReviewBatch(
     matches.push({ researchId: cand.id, createdAt: cand.createdAt, itemIds: fm.data.itemIds });
   }
 
+  const tagsSuffix = filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : "";
   if (matches.length === 0) {
-    log(
-      `review: --batch matched 0 research file(s) (status=${status}${
-        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-      })`,
-    );
+    log(t("cli.review.batchMatchedZero", { status, tags: tagsSuffix }));
     return 0;
   }
 
   let selected = matches;
   if (matches.length > maxItems) {
     const dropped = matches.length - maxItems;
-    warn(
-      `review: --max-items ${maxItems} cap reached; dropping ${dropped} excess research file(s) (matched ${matches.length})`,
-    );
+    warn(t("cli.review.capReached", { maxItems, dropped, matched: matches.length }));
     selected = matches.slice(0, maxItems);
   }
 
   log(
-    `review: --batch will process ${selected.length} research file(s) (status=${status}${
-      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-    }, agent=${agent}, cap=${maxItems})`,
+    t("cli.review.batchWillProcess", {
+      count: selected.length,
+      status,
+      tags: tagsSuffix,
+      agent,
+      cap: maxItems,
+    }),
   );
 
   // Dispatch each candidate through the single-review path. We pass the
@@ -618,11 +627,11 @@ async function runReviewBatch(
     }
     const code = await runReview(innerArgs, innerOptions);
     if (code !== 0) {
-      error(`review: --batch halted on research '${m.researchId}' (exit ${code})`);
+      error(t("cli.review.batchHalted", { researchId: m.researchId, exitCode: code }));
       return code;
     }
   }
-  log(`review: --batch completed ${selected.length} research file(s)`);
+  log(t("cli.review.batchCompleted", { count: selected.length }));
   return 0;
 }
 
@@ -716,45 +725,43 @@ export async function runReview(
   // Handled before the other modes since it takes a path, not a <research-id>.
   if (parsed.commit !== undefined) {
     if (parsed.batch) {
-      error("review: --commit is incompatible with --batch");
+      error(t("cli.review.commitIncompatibleBatch"));
       return 2;
     }
     if (parsed.emitPayload) {
-      error("review: --commit is incompatible with --emit-payload");
+      error(t("cli.review.commitIncompatibleEmitPayload"));
       return 2;
     }
     if (parsed.researchId !== undefined) {
-      error(
-        `review: --commit takes a <path>, not a <research-id> argument (got '${parsed.researchId}')`,
-      );
+      error(t("cli.review.commitTakesPath", { researchId: parsed.researchId }));
       return 2;
     }
     return runReviewCommit({ cwd, commitPath: parsed.commit, log, error, progress, t });
   }
   if (parsed.emitPayload && parsed.batch) {
-    error("review: --emit-payload is incompatible with --batch");
+    error(t("cli.review.emitPayloadIncompatibleBatch"));
     return 2;
   }
   if (parsed.batch) {
-    return runReviewBatch(parsed, cwd, locale, options, log, warn, error, progress);
+    return runReviewBatch(parsed, cwd, locale, options, log, warn, error, progress, t);
   }
   // Surface the batch-only flags when used outside `--batch`; matches
   // `research.ts`'s "no silent ignore" stance so a typo in scheduled YAML
   // does not become a no-op.
   if (parsed.status !== undefined) {
-    error("review: --status requires --batch");
+    error(t("cli.review.statusRequiresBatch"));
     return 2;
   }
   if (parsed.maxItems !== undefined) {
-    error("review: --max-items requires --batch");
+    error(t("cli.review.maxItemsRequiresBatch"));
     return 2;
   }
   if (parsed.filterTags !== undefined) {
-    error("review: --filter-tags requires --batch");
+    error(t("cli.review.filterTagsRequiresBatch"));
     return 2;
   }
   if (!parsed.researchId) {
-    error("review: missing <research-id>");
+    error(t("cli.review.missingResearchId"));
     printHelp(t, error);
     return 2;
   }
@@ -768,9 +775,7 @@ export async function runReview(
   if (parsed.agent !== undefined) {
     const agentResult = AgentIdSchema.safeParse(parsed.agent);
     if (!agentResult.success) {
-      error(
-        `review: invalid --agent '${parsed.agent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-      );
+      error(t("cli.agent.invalid", { cmd: "review", agent: parsed.agent }));
       return 2;
     }
     explicitAgent = agentResult.data;
@@ -801,7 +806,7 @@ export async function runReview(
     return 2;
   }
   if (!(await pathExists(researchPath))) {
-    error(`review: research file not found: ${researchPath}`);
+    error(t("cli.review.fileNotFound", { path: researchPath }));
     return 1;
   }
 
@@ -835,7 +840,11 @@ export async function runReview(
   // overwrite an existing review stamp.
   if (preFm.reviewedAt !== null || preFm.reviewedBy !== null) {
     error(
-      `review: research '${preFm.id}' is already reviewed (reviewedAt=${preFm.reviewedAt}, reviewedBy=${preFm.reviewedBy})`,
+      t("cli.review.alreadyReviewed", {
+        id: preFm.id,
+        reviewedAt: String(preFm.reviewedAt),
+        reviewedBy: String(preFm.reviewedBy),
+      }),
     );
     return 1;
   }
@@ -1065,7 +1074,13 @@ export async function runReview(
     return 1;
   }
 
-  log(`review: stamped ${researchPath} reviewedAt=${postFm.reviewedAt} reviewedBy=${agent}`);
+  log(
+    t("cli.review.stamped", {
+      path: researchPath,
+      reviewedAt: String(postFm.reviewedAt),
+      reviewedBy: agent,
+    }),
+  );
   for (const item of updatedItems) {
     // Phase marker per item so the digest case (multiple itemIds) is still
     // explicit about which yaml files moved. Uses the same `Status: a → b`
@@ -1074,7 +1089,7 @@ export async function runReview(
       t("cli.progress.statusTransition", { from: "researched", to: "reviewed" }),
       `items/${item.sourceId}/${item.id}.yaml`,
     );
-    log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
+    log(t("cli.review.transitioned", { sourceId: item.sourceId, id: item.id }));
   }
   return 0;
 }
