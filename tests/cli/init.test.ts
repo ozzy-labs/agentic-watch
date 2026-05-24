@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { initWorkspace } from "../../src/cli/init.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
@@ -156,8 +157,10 @@ describe("cli/init", () => {
       expect(body).toMatch(/^---/);
       expect(body).toMatch(new RegExp(`name:\\s*${skill}`));
     }
-    // 3 engine SKILLs + 4 .gitkeep placeholders (sources/items/state/research).
-    expect(result.copiedFiles).toHaveLength(7);
+    // 3 engine SKILLs + 4 .gitkeep placeholders (sources/items/state/research)
+    // + radar.config.yaml (locale persisted on every init).
+    expect(result.copiedFiles).toHaveLength(8);
+    expect(result.copiedFiles).toContain("radar.config.yaml");
     expect(result.skippedFiles).toHaveLength(0);
   });
 
@@ -917,7 +920,7 @@ describe("cli/init", () => {
       expect(result.copiedFiles).toContain("templates/default.md");
     });
 
-    it("default.md mirrors the research SKILL fallback structure (no frontmatter)", async () => {
+    it("default.md mirrors the research SKILL fallback structure (no frontmatter, default en)", async () => {
       await initWorkspace({
         cwd: workdir,
         force: false,
@@ -935,14 +938,15 @@ describe("cli/init", () => {
       // per ADR-0003, so the bundled template must not start with `---`.
       expect(body).not.toMatch(/^---/);
       // Mirrors the engine `research` SKILL fallback structure
-      // (src/skills/research/SKILL.md §3): 要約 / 詳細 / 出典.
+      // (src/skills/research/SKILL.md §3). Default locale is en (ADR-0021 D1):
+      // Summary / Details / Sources.
       // Placeholders are wrapped in backticks (code spans) so the template
       // passes markdownlint MD033 (no inline HTML) while keeping the
       // "fill these in" intent visible to the editing user.
       expect(body).toContain("# `<Title>`");
-      expect(body).toContain("## 要約");
-      expect(body).toContain("## 詳細");
-      expect(body).toContain("## 出典");
+      expect(body).toContain("## Summary");
+      expect(body).toContain("## Details");
+      expect(body).toContain("## Sources");
     });
   });
 
@@ -1057,14 +1061,14 @@ describe("cli/init", () => {
       // Body only — frontmatter is constructed by the CLI per ADR-0003 /
       // ADR-0011, so the bundled template must not start with `---`.
       expect(body).not.toMatch(/^---/);
-      // ADR-0011 §Issue #139 suggested sections: per-item summaries,
-      // common themes, differences, recommended actions.
-      expect(body).toContain("## 要約");
-      expect(body).toContain("## 各 item の要点");
-      expect(body).toContain("## 共通テーマ");
-      expect(body).toContain("## 差分");
-      expect(body).toContain("## 推奨アクション");
-      expect(body).toContain("## 出典");
+      // ADR-0011 §Issue #139 suggested sections (default locale en, ADR-0021):
+      // per-item summaries, common themes, differences, recommended actions.
+      expect(body).toContain("## Summary");
+      expect(body).toContain("## Per-item highlights");
+      expect(body).toContain("## Common themes");
+      expect(body).toContain("## Differences");
+      expect(body).toContain("## Recommended actions");
+      expect(body).toContain("## Sources");
       // Untrusted-content boundary editorial guidance must be present
       // so users editing this template understand the untrusted-content
       // contract enforced by the prompt builder at runtime.
@@ -1097,8 +1101,8 @@ describe("cli/init", () => {
       const body = await readFile(dest, "utf8");
       expect(body).toContain("# FeedRadar workspace");
       // Body should advertise natural-language / slash usage as the primary
-      // path (not CLI direct invocation).
-      expect(body).toContain("自然言語");
+      // path (not CLI direct invocation). Default locale is en (ADR-0021 D1).
+      expect(body).toContain("natural language");
       expect(body).toContain("/research");
       expect(result.copiedFiles).toContain("FEEDRADAR.md");
     });
@@ -1206,6 +1210,231 @@ describe("cli/init", () => {
       });
 
       expect(infoMessages.some((m) => m.includes("next steps"))).toBe(false);
+    });
+  });
+
+  describe("per-locale templates (--lang / locale, ADR-0021 D7)", () => {
+    // ADR-0021 D1/D7/D10: report templates and workspace operational docs are
+    // bundled under src/templates/{en,ja}/ and selected at init time by the
+    // resolved locale. Default is en; --lang ja switches placement. Engine
+    // SKILLs / triage / research prompts stay English-canonical (D5) and are
+    // intentionally NOT per-locale, so they are not exercised here.
+
+    async function readConfig(cwd: string): Promise<Record<string, unknown>> {
+      const raw = await readFile(join(cwd, "radar.config.yaml"), "utf8");
+      const parsed = parseYaml(raw);
+      return (parsed ?? {}) as Record<string, unknown>;
+    }
+
+    it("places English report templates + docs by default (no locale passed)", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const defaultBody = await readFile(join(workdir, "templates", "default.md"), "utf8");
+      expect(defaultBody).toContain("## Summary");
+      expect(defaultBody).not.toContain("## 要約");
+
+      const feedradar = await readFile(join(workdir, "FEEDRADAR.md"), "utf8");
+      expect(feedradar).toContain("natural language");
+
+      const agents = await readFile(join(workdir, "AGENTS.md"), "utf8");
+      expect(agents).toContain("What this directory is");
+      expect(agents).not.toContain("このディレクトリは何か");
+    });
+
+    it("places Japanese report templates + docs with locale: ja", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const defaultBody = await readFile(join(workdir, "templates", "default.md"), "utf8");
+      expect(defaultBody).toContain("## 要約");
+      expect(defaultBody).not.toContain("## Summary");
+
+      const digestBody = await readFile(join(workdir, "templates", "digest.md"), "utf8");
+      expect(digestBody).toContain("## 各 item の要点");
+
+      const feedradar = await readFile(join(workdir, "FEEDRADAR.md"), "utf8");
+      expect(feedradar).toContain("自然言語");
+
+      const agents = await readFile(join(workdir, "AGENTS.md"), "utf8");
+      expect(agents).toContain("このディレクトリは何か");
+    });
+
+    it("en and ja report templates share the same section structure", async () => {
+      // Headings (## ...) carry the report contract; the two locales must keep
+      // structural parity so a workspace behaves the same regardless of language.
+      const enWork = await mkdtemp(join(tmpdir(), "feedradar-init-en-"));
+      const jaWork = await mkdtemp(join(tmpdir(), "feedradar-init-ja-"));
+      await initWorkspace({
+        cwd: enWork,
+        force: false,
+        locale: "en",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      await initWorkspace({
+        cwd: jaWork,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const countHeadings = (body: string): number =>
+        body.split("\n").filter((l) => /^##\s/.test(l)).length;
+
+      for (const file of ["default.md", "digest.md"]) {
+        const enBody = await readFile(join(enWork, "templates", file), "utf8");
+        const jaBody = await readFile(join(jaWork, "templates", file), "utf8");
+        // Same number of `## ` sections in both locales.
+        expect(countHeadings(enBody)).toBe(countHeadings(jaBody));
+        expect(countHeadings(enBody)).toBeGreaterThan(0);
+      }
+    });
+
+    it("persists locale: en to radar.config.yaml by default", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await pathExists(join(workdir, "radar.config.yaml"))).toBe(true);
+      expect((await readConfig(workdir)).locale).toBe("en");
+      expect(result.copiedFiles).toContain("radar.config.yaml");
+    });
+
+    it("persists locale: ja to radar.config.yaml when locale: ja", async () => {
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect((await readConfig(workdir)).locale).toBe("ja");
+    });
+
+    it("merges locale into an existing config without clobbering other keys", async () => {
+      await writeFile(
+        join(workdir, "radar.config.yaml"),
+        "defaultResearchAgent: codex-cli\n",
+        "utf8",
+      );
+
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const cfg = await readConfig(workdir);
+      expect(cfg.defaultResearchAgent).toBe("codex-cli");
+      expect(cfg.locale).toBe("ja");
+    });
+
+    it("does not flip an existing differing locale without --force (warn + skip)", async () => {
+      await writeFile(join(workdir, "radar.config.yaml"), "locale: en\n", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      // Persisted locale is left as-is; the template placement still follows
+      // the requested locale (only the config write is protected).
+      expect((await readConfig(workdir)).locale).toBe("en");
+      expect(result.skippedFiles).toContain("radar.config.yaml");
+      expect(warnings.some((m) => m.includes("locale") && m.includes("--force"))).toBe(true);
+    });
+
+    it("overwrites a differing locale with --force", async () => {
+      await writeFile(join(workdir, "radar.config.yaml"), "locale: en\n", "utf8");
+
+      await initWorkspace({
+        cwd: workdir,
+        force: true,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect((await readConfig(workdir)).locale).toBe("ja");
+    });
+
+    it("is a no-op when the existing locale already matches (idempotent)", async () => {
+      await writeFile(join(workdir, "radar.config.yaml"), "locale: ja\n", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect((await readConfig(workdir)).locale).toBe("ja");
+      // No write recorded (neither copied nor skipped) — pure no-op.
+      const entries = [...result.copiedFiles, ...result.skippedFiles].filter(
+        (p) => p === "radar.config.yaml",
+      );
+      expect(entries).toEqual([]);
     });
   });
 });
