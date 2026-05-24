@@ -605,6 +605,30 @@ describe("html-js adapter — progress reporter phase markers (#198)", () => {
     ]);
   });
 
+  it("localizes the whole Playwright lifecycle sequence via `translate` (#340)", async () => {
+    const { playwright } = makeFakePlaywright();
+    const { reporter, phases } = recordingReporter();
+    await htmlJsAdapter.fetch(makeSource(), {
+      playwright,
+      onProgress: reporter,
+      translate: createTranslator("ja"),
+    } as HtmlJsAdapterOptions);
+    const names = phases.map((p) => p.name);
+    // Same order, localized prose. Functional fields (url, selector, timeout)
+    // stay verbatim across locales.
+    expect(names).toEqual([
+      "Chromium を起動中…",
+      "https://example.com/changelog へ移動中…",
+      'セレクタ "article.post" を待機中 (タイムアウト: 30000ms)…',
+      "ページ内容を取得中…",
+      "ブラウザを終了中…",
+    ]);
+    // No English source string leaks under ja.
+    expect(
+      names.some((n) => /Launching|Navigating|Waiting for selector|Capturing|Closing/.test(n)),
+    ).toBe(false);
+  });
+
   it("emits Still waiting reminder when waitForSelector exceeds stillWaitingMs", async () => {
     vi.useFakeTimers();
     try {
@@ -695,7 +719,13 @@ describe("html-js adapter — progress reporter phase markers (#198)", () => {
       await vi.advanceTimersByTimeAsync(40);
       await fetchPromise;
       // Japanese prose; selector + [mm:ss] stay verbatim as functional fields.
-      const jaHits = phases.filter((p) => p.name.startsWith("セレクタ"));
+      // The reminder is the localized `セレクタ … を待機中…` line carrying the
+      // `[mm:ss]` elapsed suffix — distinct from the lifecycle "Waiting for
+      // selector" phase which is now also ja but carries `(タイムアウト: …)`
+      // instead (#340).
+      const jaHits = phases.filter(
+        (p) => p.name.startsWith("セレクタ") && /\[\d{2}:\d{2}\]/.test(p.name),
+      );
       expect(jaHits.length).toBeGreaterThanOrEqual(1);
       expect(jaHits[0]?.name).toContain('"article.post"');
       expect(jaHits[0]?.name).toMatch(/\[\d{2}:\d{2}\]/);

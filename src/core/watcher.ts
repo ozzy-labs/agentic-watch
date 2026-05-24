@@ -397,7 +397,10 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     // sub-phases (html-js Chromium lifecycle, json-api page x/n) between
     // here and `Completed`. Side metrics for the spinner row default to
     // the source kind so even non-paginating adapters surface useful info.
-    progress?.phase(`[${source.id}] Fetching…`, `kind: ${source.kind}`);
+    progress?.phase(
+      t("cli.progress.watchFetching", { sourceId: source.id }),
+      t("cli.progress.watchKindInfo", { kind: source.kind }),
+    );
     progress?.start(`[${source.id}] ${source.kind}`);
     const sourceStartedAt = Date.now();
     try {
@@ -462,7 +465,7 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      progress?.fail(`[${source.id}] Failed`, message);
+      progress?.fail(t("cli.progress.watchFailed", { sourceId: source.id }), message);
       error(`watch run: '${source.id}' fetch failed: ${message}`);
       result.errors.push({ sourceId: source.id, message });
       continue;

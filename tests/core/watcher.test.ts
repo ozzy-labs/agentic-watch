@@ -469,18 +469,51 @@ describe("watchRun progress integration (#198)", () => {
       progress: reporter,
       translate: createTranslator("ja"),
     });
-    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    const phaseEvents = events.filter((e) => e.kind === "phase");
+    const phaseNames = phaseEvents.map((e) => e.arg1 ?? "");
     // The functional fields (source id, page counters, item counts) stay
     // verbatim; only the "Page … items fetched" prose is localized.
     expect(phaseNames).toContain("[aws] ページ 1/2: 2 件取得");
     expect(phaseNames).toContain("[aws] ページ 2/2: 1 件取得");
     // The English source string must not leak under ja.
     expect(phaseNames.some((n) => n.includes("items fetched"))).toBe(false);
+    // Per-source start marker + its `kind:` side info are localized too (#340).
+    expect(phaseNames).toContain("[aws] 取得中…");
+    const fetchingPhase = phaseEvents.find((e) => e.arg1 === "[aws] 取得中…");
+    expect(fetchingPhase?.arg2).toBe("種別: json-api");
+    expect(phaseNames.some((n) => n.includes("Fetching"))).toBe(false);
     // Per-source completion line is localized too.
     const succeed = events.find((e) => e.kind === "succeed");
     expect(succeed?.arg1).toContain("[aws] 完了:");
     expect(succeed?.arg1).toContain("全 3 件");
     expect(succeed?.arg1).toContain("新規 3 件");
+  });
+
+  it("localizes the per-source Failed marker via the `translate` option (#340)", async () => {
+    await writeJsonApiSource("aws");
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    const { createTranslator } = await import("../../src/i18n/index.js");
+    // A fetch that throws so the catch-branch `progress.fail(...)` fires. The
+    // json-api source keeps the progress heuristic on (slow-kind gate).
+    const throwingFetch: FetchLike = async () => {
+      throw new Error("network down");
+    };
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 1,
+      fetch: throwingFetch as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+      translate: createTranslator("ja"),
+    });
+    const fail = events.find((e) => e.kind === "fail");
+    // Label localized; the dynamic error message stays verbatim as the reason.
+    expect(fail?.arg1).toBe("[aws] 失敗");
+    expect(fail?.arg2).toBe("network down");
   });
 
   it("defaults page / completion markers to English when `translate` is unset (#337)", async () => {
@@ -497,8 +530,13 @@ describe("watchRun progress integration (#198)", () => {
       error: io.error,
       progress: reporter,
     });
-    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    const phaseEvents = events.filter((e) => e.kind === "phase");
+    const phaseNames = phaseEvents.map((e) => e.arg1 ?? "");
     expect(phaseNames).toContain("[aws] Page 1/1: 2 items fetched");
+    // Per-source start marker + `kind:` side info default to English (#340).
+    expect(phaseNames).toContain("[aws] Fetching…");
+    const fetchingPhase = phaseEvents.find((e) => e.arg1 === "[aws] Fetching…");
+    expect(fetchingPhase?.arg2).toBe("kind: json-api");
     const succeed = events.find((e) => e.kind === "succeed");
     expect(succeed?.arg1).toContain("[aws] Completed:");
   });
