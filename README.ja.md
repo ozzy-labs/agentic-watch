@@ -16,6 +16,7 @@
 - **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
 - **定期実行 workflow 後追い生成**: `radar workflow generate watch` / `combined` で GitHub Actions YAML を CLI から後追い生成。`combined` は watch + 自動 research を `--max-items` ハードキャップ付きで実行し、暴走 feed による LLM cost 爆発を設計レベルで遮断 ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
+- **Claude Routines 生成**: `radar routine generate watch` / `pipeline` で Anthropic クラウド向けの無人実行設定 `.claude/routines/*.yaml` を生成。Claude 単一セッションで完結し（spawn しない・追加 API キー不要）、出力は PR か `claude/*` ブランチに限定する ([ADR-0020](./docs/adr/0020-claude-routines-generation.md))。
 - **進捗表示と verbose mode**: 長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) が phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を stderr に出力する。`--verbose` で agent CLI の stdout/stderr を pass-through、`--quiet`（CI なら `RADAR_NO_PROGRESS=1`）で reporter を完全に黙らせる ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md))。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
@@ -77,10 +78,12 @@ radar doctor                  # workspace / agent CLI / Playwright / proxy / TLS
                               #   --no-proxy-check で live proxy round-trip をスキップ (offline 環境向け)
 radar workflow generate watch     # GitHub Actions watch workflow を後追い生成 (ADR-0014)
 radar workflow generate combined  # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
+radar routine generate watch      # Claude Routines watch YAML を生成（自セッション・spawn しない）(ADR-0020)
+radar routine generate pipeline   # watch -> triage -> research -> review の自セッション routine (ADR-0020)
 radar --help                  # ヘルプ
 ```
 
-全 9 サブコマンド (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow`) が実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
+全 10 サブコマンド (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow` / `routine`) が実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
 
 ## 開発
 
@@ -102,7 +105,7 @@ node dist/index.js --help        # 等価
 ```text
 src/
   index.ts              CLI entry point (#!/usr/bin/env node)
-  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow
+  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow / routine
   core/
     watcher.ts          source → adapter → items
     filter.ts           keyword / excludeKeyword
@@ -126,7 +129,7 @@ src/
 - [docs/user-guide.md](./docs/user-guide.md) — インストール / クイックスタート / コマンド仕様
 - [docs/user-guide/proxy-setup.ja.md](./docs/user-guide/proxy-setup.ja.md) — 企業プロキシ / TLS 中継 / NTLM ブリッジ / WSL2 環境のセットアップ
 - [docs/release.md](./docs/release.md) — リリース手順（初回手動 publish + Trusted Publisher 登録 + 以降の OIDC 自動化）
-- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting）
+- [docs/adr/](./docs/adr/README.md) — FeedRadar 内部の設計判断記録（Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting / Triage Extension / Host-agent Execution / Claude Routines Generation）
 
 ## 規約
 

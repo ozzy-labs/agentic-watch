@@ -16,6 +16,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 - **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
 - **Scheduled workflows**: `radar workflow generate watch` / `combined` emits GitHub Actions YAML on demand — combine watch with auto-research under a hard-capped `--max-items` budget so a runaway feed cannot blow your LLM bill ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md)).
+- **Claude Routines**: `radar routine generate watch` / `pipeline` emits `.claude/routines/*.yaml` for unattended runs on Anthropic's cloud — one self-session Claude (no spawn, no extra API key), output gated to PR / `claude/*` branches only ([ADR-0020](./docs/adr/0020-claude-routines-generation.md)).
 - **Progress reporting & verbose mode**: long-running commands (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) stream phase markers + a spinner + side metrics (`stdout` / `output` / `page x/N`) on stderr. Pass `--verbose` to also stream the agent CLI's stdout/stderr, `--quiet` (or `RADAR_NO_PROGRESS=1` for CI) to silence the reporter ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md)).
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
@@ -78,10 +79,12 @@ radar doctor                  # check workspace / agent CLI / Playwright / proxy
                               #   --no-proxy-check skips the live proxy round-trip (offline-friendly)
 radar workflow generate watch     # emit a GitHub Actions watch workflow on demand (ADR-0014)
 radar workflow generate combined  # watch + auto-research with --max-items hard cap (ADR-0014)
+radar routine generate watch      # emit a Claude Routines watch YAML (self-session, no spawn) (ADR-0020)
+radar routine generate pipeline   # full watch -> triage -> research -> review self-session routine (ADR-0020)
 radar --help                  # help
 ```
 
-All 9 subcommands are implemented (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow`). See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
+All 10 subcommands are implemented (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow` / `routine`). See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
 
 ## Development
 
@@ -103,7 +106,7 @@ node dist/index.js --help        # equivalent
 ```text
 src/
   index.ts              CLI entry point (#!/usr/bin/env node)
-  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow
+  cli/                  init / source / watch / research / dismiss / review / update / doctor / workflow / routine
   core/
     watcher.ts          source → adapter → items
     filter.ts           keyword / excludeKeyword
@@ -127,7 +130,7 @@ src/
 - [docs/user-guide.md](./docs/user-guide.md) — install / quickstart / command reference
 - [docs/user-guide/proxy-setup.md](./docs/user-guide/proxy-setup.md) — corporate proxy / TLS interception / NTLM bridge / WSL2 setup
 - [docs/release.md](./docs/release.md) — release procedure (manual initial publish + Trusted Publisher registration + subsequent OIDC automation)
-- [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting)
+- [docs/adr/](./docs/adr/README.md) — FeedRadar design-decision records (Agent / Source / Output / Schedule / User Data / Filter / Skill Bundling / Status State Machine / Untrusted External Content Handling / html-js Adapter / Digest Research / JSON API & Recipes / Workflow Generate / Progress Reporting / Triage Extension / Host-agent Execution / Claude Routines Generation)
 
 ## Conventions
 
