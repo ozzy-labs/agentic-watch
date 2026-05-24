@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.2](https://github.com/ozzy-labs/feedradar/compare/v0.2.1...v0.2.2) (2026-05-24)
+
+
+### Features
+
+* **agents:** research/review/update のレポート出力言語を locale 追従（プロンプトは英語正本維持） ([#324](https://github.com/ozzy-labs/feedradar/issues/324)) ([7facfd2](https://github.com/ozzy-labs/feedradar/commit/7facfd2d53ff7ba63ca7a9feb1ede47fc608312b))
+* **cli:** i18n remaining per-type help and watch progress text ([#339](https://github.com/ozzy-labs/feedradar/issues/339)) ([fa70bc0](https://github.com/ozzy-labs/feedradar/commit/fa70bc0a297f9971ef25228b89a98247f0d1d2e7))
+* **cli:** i18n の残り user-facing エラー・通知を移行 ([#336](https://github.com/ozzy-labs/feedradar/issues/336)) ([#338](https://github.com/ozzy-labs/feedradar/issues/338)) ([eb450f6](https://github.com/ozzy-labs/feedradar/commit/eb450f66b03fd8a7d2127f8c71260bb91aba907c))
+* **cli:** user-facing エラー・結果通知を i18n 化（内部ログは対象外） ([#334](https://github.com/ozzy-labs/feedradar/issues/334)) ([0f609be](https://github.com/ozzy-labs/feedradar/commit/0f609be0bd9ae1a3196d166693e8e985cec608b0))
+* **cli:** 各コマンドの help/usage を i18n 化 ([#330](https://github.com/ozzy-labs/feedradar/issues/330)) ([d4beeb4](https://github.com/ozzy-labs/feedradar/commit/d4beeb438381ed48d422c7f69e62b9b2fe66b05b))
+* **cli:** 進捗レポート(ProgressReporter)のフェーズ文言を i18n 化 ([#329](https://github.com/ozzy-labs/feedradar/issues/329)) ([12da40d](https://github.com/ozzy-labs/feedradar/commit/12da40d013520a993525fe3c27cb63ac7b10dca6))
+* **core:** i18n all watch-flow progress markers in watcher/html-js ([#341](https://github.com/ozzy-labs/feedradar/issues/341)) ([4e0170c](https://github.com/ozzy-labs/feedradar/commit/4e0170cf50841f9fd73935621ff3e1f430016c8e))
+* **core:** locale 解決基盤 + config.locale + zod locale 連携 ([#319](https://github.com/ozzy-labs/feedradar/issues/319)) ([c15c282](https://github.com/ozzy-labs/feedradar/commit/c15c282042fb533457b4d44d00bdce7179454480))
+* **i18n:** close audit-gap user-facing localization (A1-A6) + tests (B1-B6) + fire doc (C1) ([#343](https://github.com/ozzy-labs/feedradar/issues/343)) ([2b9965f](https://github.com/ozzy-labs/feedradar/commit/2b9965f92c648c2ffd2874b890681ab599c82668))
+* **i18n:** メッセージカタログ + translator 基盤（global help/共通エラーで実証） ([#321](https://github.com/ozzy-labs/feedradar/issues/321)) ([35c4897](https://github.com/ozzy-labs/feedradar/commit/35c48975910b2feb93b78a567d3cafd85c94c37b))
+* **init:** per-locale templates (en/ja) + --lang flag ([#322](https://github.com/ozzy-labs/feedradar/issues/322)) ([7705881](https://github.com/ozzy-labs/feedradar/commit/77058813e14a4481fd967d3c3dd9edb1adcb1a67))
+* **workflow:** 生成 YAML(workflow/routine)の user-facing 文言を per-locale 化 ([#325](https://github.com/ozzy-labs/feedradar/issues/325)) ([4ba3247](https://github.com/ozzy-labs/feedradar/commit/4ba32475fe809ee1bd3b0e8c0f885b58513f9e01))
+
+
+### Bug Fixes
+
+* **ci:** drop backticks in pack-verify comment to satisfy shellcheck ([#328](https://github.com/ozzy-labs/feedradar/issues/328)) ([db6cd2f](https://github.com/ozzy-labs/feedradar/commit/db6cd2f3d2a7366edb8304026420ab431a9b77b5))
+* **ci:** point pack-verify at per-locale template paths ([#323](https://github.com/ozzy-labs/feedradar/issues/323)) ([d2d7b30](https://github.com/ozzy-labs/feedradar/commit/d2d7b30bbfea94f0c7d2681d86ba907a4fe4c047))
+
 ## [0.2.1](https://github.com/ozzy-labs/feedradar/compare/v0.2.0...v0.2.1) (2026-05-24)
 
 
