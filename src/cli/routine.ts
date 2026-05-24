@@ -72,7 +72,7 @@ export async function runRoutine(
   }
 
   if (sub === "fire") {
-    return runFireRoutine(rest, options.io ?? {});
+    return runFireRoutine(rest, options.io ?? {}, process.env, undefined, cwd);
   }
 
   if (sub !== "generate") {

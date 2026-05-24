@@ -450,6 +450,59 @@ describe("watchRun progress integration (#198)", () => {
     ]);
   });
 
+  it("localizes per-page / completion markers via the `translate` option (#337)", async () => {
+    await writeJsonApiSource("aws");
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    const { createTranslator } = await import("../../src/i18n/index.js");
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 2,
+      fetch: mockPagedFetch([
+        { items: 2, idStart: 1 },
+        { items: 1, idStart: 3 },
+      ]) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+      translate: createTranslator("ja"),
+    });
+    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    // The functional fields (source id, page counters, item counts) stay
+    // verbatim; only the "Page … items fetched" prose is localized.
+    expect(phaseNames).toContain("[aws] ページ 1/2: 2 件取得");
+    expect(phaseNames).toContain("[aws] ページ 2/2: 1 件取得");
+    // The English source string must not leak under ja.
+    expect(phaseNames.some((n) => n.includes("items fetched"))).toBe(false);
+    // Per-source completion line is localized too.
+    const succeed = events.find((e) => e.kind === "succeed");
+    expect(succeed?.arg1).toContain("[aws] 完了:");
+    expect(succeed?.arg1).toContain("全 3 件");
+    expect(succeed?.arg1).toContain("新規 3 件");
+  });
+
+  it("defaults page / completion markers to English when `translate` is unset (#337)", async () => {
+    await writeJsonApiSource("aws");
+    const io = silentIo();
+    const { reporter, events } = recordingReporter();
+    await watchRun({
+      cwd: workdir,
+      backfill: true,
+      maxPagesOverride: 1,
+      fetch: mockPagedFetch([{ items: 2, idStart: 1 }]) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+      progress: reporter,
+    });
+    const phaseNames = events.filter((e) => e.kind === "phase").map((e) => e.arg1 ?? "");
+    expect(phaseNames).toContain("[aws] Page 1/1: 2 items fetched");
+    const succeed = events.find((e) => e.kind === "succeed");
+    expect(succeed?.arg1).toContain("[aws] Completed:");
+  });
+
   it("no-ops when the heuristic is off (single rss source, no backfill)", async () => {
     // Single rss source ≠ html-js/json-api ≠ 3+ sources: the heuristic
     // gate must drop the reporter so the typical small workspace stays

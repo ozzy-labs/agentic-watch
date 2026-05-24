@@ -8,6 +8,7 @@ import {
   htmlJsAdapter,
   type PlaywrightLike,
 } from "../../src/core/feeds/html-js.js";
+import { createTranslator } from "../../src/i18n/index.js";
 import type { Source } from "../../src/schemas/index.js";
 
 /**
@@ -653,6 +654,53 @@ describe("html-js adapter — progress reporter phase markers (#198)", () => {
       // Reminder must include the elapsed-time prefix [mm:ss] so the user
       // can gauge whether to wait or Ctrl+C.
       expect(stillWaitingHits[0]?.name).toMatch(/\[\d{2}:\d{2}\]/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("localizes the Still waiting reminder via the `translate` option (#337)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { playwright } = makeFakePlaywright();
+      const realLaunch = playwright.chromium.launch;
+      playwright.chromium.launch = async (opts) => {
+        const browser = await realLaunch.call(playwright.chromium, opts);
+        const realNewContext = browser.newContext.bind(browser);
+        browser.newContext = async (ctxOpts) => {
+          const ctx = await realNewContext(ctxOpts);
+          const realNewPage = ctx.newPage.bind(ctx);
+          ctx.newPage = async () => {
+            const page = await realNewPage();
+            page.waitForSelector = async (_sel: string, _opts?: { timeout?: number }) => {
+              await new Promise<void>((resolve) => {
+                setTimeout(resolve, 50);
+              });
+              return null;
+            };
+            return page;
+          };
+          return ctx;
+        };
+        return browser;
+      };
+      const { reporter, phases } = recordingReporter();
+      const fetchPromise = htmlJsAdapter.fetch(makeSource(), {
+        playwright,
+        onProgress: reporter,
+        stillWaitingMs: 10,
+        translate: createTranslator("ja"),
+      } as HtmlJsAdapterOptions);
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(40);
+      await fetchPromise;
+      // Japanese prose; selector + [mm:ss] stay verbatim as functional fields.
+      const jaHits = phases.filter((p) => p.name.startsWith("セレクタ"));
+      expect(jaHits.length).toBeGreaterThanOrEqual(1);
+      expect(jaHits[0]?.name).toContain('"article.post"');
+      expect(jaHits[0]?.name).toMatch(/\[\d{2}:\d{2}\]/);
+      // The English source string must not leak under ja.
+      expect(phases.some((p) => p.name.startsWith("Still waiting"))).toBe(false);
     } finally {
       vi.useRealTimers();
     }

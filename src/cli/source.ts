@@ -1089,6 +1089,9 @@ export async function testSource(
       warn,
       error,
       progress,
+      // Localize the watch-flow progress markers on the same path as the
+      // reporter (#337).
+      translate: t,
     });
   } catch (e) {
     error(`source test: ${e instanceof Error ? e.message : String(e)}`);

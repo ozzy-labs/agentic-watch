@@ -1,3 +1,4 @@
+import type { Translator } from "../../i18n/index.js";
 import type { Item, Source, SourceState } from "../../schemas/index.js";
 import type { ProgressReporter } from "../progress.js";
 
@@ -164,6 +165,14 @@ export interface FeedAdapterOptions {
    * Unset is byte-equivalent to the pre-#198 behaviour (no progress output).
    */
   onProgress?: ProgressReporter;
+  /**
+   * Translator for the adapter's user-facing progress markers (#337 / ADR-0021).
+   * Currently consumed only by `kind: html-js` for the `Still waiting for
+   * "<sel>"… [mm:ss]` reminder; other adapters ignore it. The watcher passes
+   * the run's resolved-locale translator on the same path as {@link onProgress}.
+   * Unset means English (the adapter falls back to an `en` translator).
+   */
+  translate?: Translator;
   /**
    * Per-page progress callback for paginating adapters (json-api / future
    * github-releases / npm-registry). Fired after each page is fetched and

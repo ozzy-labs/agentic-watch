@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Locale } from "../../core/locale.js";
+import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import { RESEARCH_BATCH_DEFAULT_MAX_ITEMS } from "../research.js";
 import type { SupportedAgent, WorkflowIO } from "./generate-watch.js";
@@ -392,34 +393,8 @@ export function parseGenerateCombinedArgs(args: string[]): ParsedFlags {
   return { watchCron, output, agent, maxItems, filterTags, force, help };
 }
 
-export function printGenerateCombinedHelp(log: (m: string) => void): void {
-  log("Usage: radar workflow generate combined [options]");
-  log("");
-  log("Generates a GitHub Actions workflow that chains `radar watch run` ->");
-  log("a no-new-items guard -> `radar research --batch` with hard-capped cost");
-  log("controls.");
-  log("");
-  log("Options:");
-  log('  --watch-cron <expression>  5-field cron expression (default: "0 0 * * *")');
-  log("  --output <path>            Output file under .github/workflows/");
-  log("                             (default: .github/workflows/feedradar-combined.yaml)");
-  log(
-    "  --agent <name>             claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log(
-    `  --max-items N              Hard cap on auto-research per run (default: ${RESEARCH_BATCH_DEFAULT_MAX_ITEMS})`,
-  );
-  log("  --filter-tags <list>       Comma-separated allow-list of matchedKeywords");
-  log("                             (default: unset, matches every detected item)");
-  log("  --force, -f                Overwrite existing output file");
-  log("  --lang <en|ja>             Language for the generated YAML's comments / step names");
-  log("                             (default: en; also honors RADAR_LANG and config.locale)");
-  log("");
-  log("Required secrets (Settings → Secrets and variables → Actions):");
-  log("  ANTHROPIC_API_KEY    when --agent claude-code (default)");
-  log("  OPENAI_API_KEY       when --agent codex-cli");
-  log("  GEMINI_API_KEY       when --agent gemini-cli");
-  log("  GITHUB_TOKEN         auto-provisioned for --agent copilot (no setup needed)");
+export function printGenerateCombinedHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.workflow.generateCombinedHelp", { maxItems: RESEARCH_BATCH_DEFAULT_MAX_ITEMS }));
 }
 
 /**
@@ -458,12 +433,16 @@ export async function runGenerateCombined(
     error(`workflow generate combined: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the per-type help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printGenerateCombinedHelp(log);
+    printGenerateCombinedHelp(t, log);
     return 0;
   }
-
-  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateCombined({

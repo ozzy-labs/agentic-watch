@@ -196,6 +196,46 @@ describe("command help i18n (--lang)", () => {
     expect(r.captured.log.join("\n")).toContain("Usage: radar routine");
   });
 
+  it("workflow generate <type> per-type help honors --lang ja (#337)", async () => {
+    for (const type of ["watch", "combined", "combined-with-triage"] as const) {
+      const e = captureIo();
+      expect(await runWorkflow(["generate", type, "--help"], { cwd: workdir, io: e.io })).toBe(0);
+      expect(e.captured.log.join("\n")).toContain(`Usage: radar workflow generate ${type}`);
+
+      const j = captureIo();
+      expect(
+        await runWorkflow(["generate", type, "--lang", "ja", "--help"], { cwd: workdir, io: j.io }),
+      ).toBe(0);
+      expect(j.captured.log.join("\n")).toContain(`使い方: radar workflow generate ${type}`);
+    }
+  });
+
+  it("routine generate <type> per-type help honors --lang ja (#337)", async () => {
+    for (const type of ["watch", "pipeline"] as const) {
+      const e = captureIo();
+      expect(await runRoutine(["generate", type, "--help"], { cwd: workdir, io: e.io })).toBe(0);
+      expect(e.captured.log.join("\n")).toContain(`Usage: radar routine generate ${type}`);
+
+      const j = captureIo();
+      expect(
+        await runRoutine(["generate", type, "--lang", "ja", "--help"], { cwd: workdir, io: j.io }),
+      ).toBe(0);
+      expect(j.captured.log.join("\n")).toContain(`使い方: radar routine generate ${type}`);
+    }
+  });
+
+  it("routine fire help honors --lang ja (#337)", async () => {
+    const e = captureIo();
+    expect(await runRoutine(["fire", "--help"], { cwd: workdir, io: e.io })).toBe(0);
+    expect(e.captured.log.join("\n")).toContain("Usage: radar routine fire <trig_id>");
+
+    const j = captureIo();
+    expect(await runRoutine(["fire", "--lang", "ja", "--help"], { cwd: workdir, io: j.io })).toBe(
+      0,
+    );
+    expect(j.captured.log.join("\n")).toContain("使い方: radar routine fire <trig_id>");
+  });
+
   it("init --help honors --lang ja", async () => {
     const log: string[] = [];
     const spy = console.log;

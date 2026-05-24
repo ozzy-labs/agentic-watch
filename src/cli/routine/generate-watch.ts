@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:pa
 import { fileURLToPath } from "node:url";
 import type { Locale } from "../../core/locale.js";
 import { loadSources } from "../../core/watcher.js";
+import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 
 /**
@@ -476,27 +477,8 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
   };
 }
 
-export function printGenerateWatchRoutineHelp(log: (m: string) => void): void {
-  log("Usage: radar routine generate watch [options]");
-  log("");
-  log("Generates a Claude Code Routine YAML that runs `radar watch run` on a schedule");
-  log("and commits detected items/state to a claude/* branch.");
-  log("The routine completes in one Claude session — it does NOT spawn other agents.");
-  log("");
-  log("Options:");
-  log('  --name <name>         Routine name (default: "feedradar-watch")');
-  log("                        Also the default output filename.");
-  log("  --repo <owner/repo>   Target repository (default: <owner>/<repo>)");
-  log('  --cron <expression>   5-field cron, min interval 1 HOUR (default: "0 * * * *")');
-  log('                        Sub-hourly (e.g. "*/5 * * * *") is rejected.');
-  log('  --timezone <tz>       Schedule timezone (default: "UTC")');
-  log(`  --model <name>        ${SUPPORTED_MODELS.join(" | ")}`);
-  log("                        (default: claude-sonnet-4-6)");
-  log("  --output <path>       Output file under .claude/routines/");
-  log("                        (default: .claude/routines/<name>.yaml)");
-  log("  --force, -f           Overwrite existing output file");
-  log("  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments");
-  log("                        (default: en; also honors RADAR_LANG and config.locale)");
+export function printGenerateWatchRoutineHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.routine.generateWatchHelp", { models: SUPPORTED_MODELS.join(" | ") }));
 }
 
 /**
@@ -535,12 +517,16 @@ export async function runGenerateWatchRoutine(
     error(`routine generate watch: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the per-type help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printGenerateWatchRoutineHelp(log);
+    printGenerateWatchRoutineHelp(t, log);
     return 0;
   }
-
-  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateWatchRoutine({

@@ -10,6 +10,9 @@
  * is read from the environment and is NEVER printed to logs.
  */
 
+import { createTranslator, type Translator } from "../../i18n/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
+
 /** Minimal `fetch` surface we depend on (request → response with json/text). */
 export type FetchLike = (
   input: string,
@@ -197,25 +200,8 @@ export function parseFireRoutineArgs(args: string[]): ParsedFlags {
   return { routineId, text, tokenEnv, help };
 }
 
-export function printFireRoutineHelp(log: (m: string) => void): void {
-  log("Usage: radar routine fire <trig_id> [options]");
-  log("");
-  log("Triggers a registered Claude Code Routine from the outside via the");
-  log("/fire API. The call returns as soon as the routine session");
-  log("is created — it does NOT wait for the session to finish.");
-  log("");
-  log("Arguments:");
-  log("  <trig_id>             Routine id from the Web UI (starts with 'trig_')");
-  log("");
-  log("Options:");
-  log("  --text <msg>          Free-form launch context (request body `text`).");
-  log("                        The API does not parse it; it is passed as-is.");
-  log(`  --token-env <NAME>    Env var holding the per-routine bearer token`);
-  log(`                        (default: ${DEFAULT_FIRE_TOKEN_ENV}).`);
-  log("");
-  log("The per-routine token is issued ONCE in the Web UI (Regenerate / Revoke");
-  log("there) and is read from the environment — it is never accepted as a flag");
-  log("and never printed.");
+export function printFireRoutineHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.routine.fireHelp", { tokenEnv: DEFAULT_FIRE_TOKEN_ENV }));
 }
 
 /**
@@ -228,24 +214,47 @@ export async function runFireRoutine(
   io: RoutineIO = {},
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: FetchLike,
+  cwd: string = process.cwd(),
 ): Promise<number> {
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors the
+  // generate commands), then resolve the effective locale for the help text.
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`routine fire: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseFireRoutineArgs(args);
+    parsed = parseFireRoutineArgs(rest);
   } catch (e) {
     error(`routine fire: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printFireRoutineHelp(log);
+    printFireRoutineHelp(t, log);
     return 0;
   }
   if (!parsed.routineId) {
     error("routine fire: missing <trig_id> argument (the routine id from the Web UI)");
-    printFireRoutineHelp(error);
+    printFireRoutineHelp(t, error);
     return 2;
   }
 

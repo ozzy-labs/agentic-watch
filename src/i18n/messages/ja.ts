@@ -41,6 +41,37 @@ export const ja: Messages = {
   "cli.progress.statusTransition": ({ from, to }: { from: string; to: string }): string =>
     `ステータス: ${from} → ${to}`,
 
+  // --- watch-flow progress markers (#337, deferred from #313) ---------------
+  "cli.progress.watchPage": ({
+    sourceId,
+    facet,
+    page,
+    pageTotal,
+    items,
+  }: {
+    sourceId: string;
+    facet: string;
+    page: number;
+    pageTotal: number;
+    items: number;
+  }): string => `[${sourceId}] ${facet}ページ ${page}/${pageTotal}: ${items} 件取得`,
+  "cli.progress.watchSourceCompleted": ({
+    sourceId,
+    total,
+    fresh,
+  }: {
+    sourceId: string;
+    total: number;
+    fresh: number;
+  }): string => `[${sourceId}] 完了: 全 ${total} 件、新規 ${fresh} 件`,
+  "cli.progress.stillWaiting": ({
+    selector,
+    elapsed,
+  }: {
+    selector: string;
+    elapsed: string;
+  }): string => `セレクタ "${selector}" を待機中… [${elapsed}]`,
+
   // --- command summaries (global help list, #311) ---------------------------
   "cli.summary.init": "ワークスペースを初期化する (sources/items/state/research/templates)",
   "cli.summary.source": "フィードソースを管理する (add | list | recipes | remove | test)",
@@ -460,6 +491,89 @@ Types:
 
 type 別のオプションは \`radar workflow generate <type> --help\` を参照。`,
 
+  // --- per-type workflow generate help (#337, deferred from #311) -----------
+  "cli.workflow.generateWatchHelp": `使い方: radar workflow generate watch [options]
+
+cron スケジュールで \`radar watch run\` を実行する GitHub Actions ワークフローを生成する。
+生成されるワークフローには、他の同時実行ワークフローとの push 競合を緩和するための
+git pull --rebase リトライ処理が含まれる。
+
+オプション:
+  --cron <expression>   5 フィールドの cron 式 (デフォルト: "0 0 * * *")
+  --output <path>       .github/workflows/ 配下の出力ファイル
+                        (デフォルト: .github/workflows/feedradar-watch.yaml)
+  --agent <name>        claude-code | codex-cli | gemini-cli | copilot (デフォルト: claude-code)
+                        ワークフローが参照するシークレット名を決定する。
+  --force, -f           既存の出力ファイルを上書きする
+  --lang <en|ja>        生成される YAML のコメント / ステップ名の言語
+                        (デフォルト: en; RADAR_LANG と config.locale も参照)
+
+必要なシークレット (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY    --agent claude-code のとき (デフォルト)
+  OPENAI_API_KEY       --agent codex-cli のとき
+  GEMINI_API_KEY       --agent gemini-cli のとき
+  GITHUB_TOKEN         --agent copilot では自動付与 (設定不要)`,
+  "cli.workflow.generateCombinedHelp": ({ maxItems }: { maxItems: number }): string =>
+    `使い方: radar workflow generate combined [options]
+
+\`radar watch run\` -> 新規アイテムなしガード -> \`radar research --batch\` を
+連結し、コストをハードキャップで制御する GitHub Actions ワークフローを生成する。
+
+オプション:
+  --watch-cron <expression>  5 フィールドの cron 式 (デフォルト: "0 0 * * *")
+  --output <path>            .github/workflows/ 配下の出力ファイル
+                             (デフォルト: .github/workflows/feedradar-combined.yaml)
+  --agent <name>             claude-code | codex-cli | gemini-cli | copilot (デフォルト: claude-code)
+  --max-items N              1 回あたりの auto-research のハードキャップ (デフォルト: ${maxItems})
+  --filter-tags <list>       matchedKeywords のカンマ区切り許可リスト
+                             (デフォルト: 未指定。検出された全アイテムにマッチ)
+  --force, -f                既存の出力ファイルを上書きする
+  --lang <en|ja>             生成される YAML のコメント / ステップ名の言語
+                             (デフォルト: en; RADAR_LANG と config.locale も参照)
+
+必要なシークレット (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY    --agent claude-code のとき (デフォルト)
+  OPENAI_API_KEY       --agent codex-cli のとき
+  GEMINI_API_KEY       --agent gemini-cli のとき
+  GITHUB_TOKEN         --agent copilot では自動付与 (設定不要)`,
+  "cli.workflow.generateCombinedWithTriageHelp": ({
+    watchCron,
+    output,
+    maxItems,
+  }: {
+    watchCron: string;
+    output: string;
+    maxItems: number;
+  }): string =>
+    `使い方: radar workflow generate combined-with-triage [options]
+
+\`radar watch run\` -> \`radar triage --apply\` -> \`radar research --batch --status triaged_research\` ->
+グループ別 \`radar research --digest\` -> \`radar review --batch\` を 1 ジョブで連結する
+GitHub Actions ワークフローを生成する。
+
+オプション:
+  --watch-cron <expression>  5 フィールドの cron 式 (デフォルト: "${watchCron}")
+  --output <path>            .github/workflows/ 配下の出力ファイル
+                             (デフォルト: ${output})
+  --triage-agent <name>      claude-code | codex-cli | gemini-cli | copilot (デフォルト: gemini-cli)
+  --research-agent <name>    claude-code | codex-cli | gemini-cli | copilot (デフォルト: claude-code)
+  --review-agent <name>      claude-code | codex-cli | gemini-cli | copilot (デフォルト: codex-cli)
+  --max-items N              1 回あたりの research --batch のハードキャップ (デフォルト: ${maxItems})
+  --slack-webhook <ref>      triaged_unsure キュー通知用のシークレット参照
+                             (例: secrets.SLACK_WEBHOOK) (任意)
+  --output-mode <mode>       pr | direct-commit (デフォルト: pr)。'pr' はレビュー用
+                             PR を開く。'direct-commit' はデフォルトブランチへ直接
+                             コミット & push する (pull-requests: write を外す)
+  --force, -f                既存の出力ファイルを上書きする
+  --lang <en|ja>             生成される YAML のコメント / ステップ名の言語
+                             (デフォルト: en; RADAR_LANG と config.locale も参照)
+
+必要なシークレット (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY  いずれかのロールが --agent claude-code を使うとき
+  OPENAI_API_KEY     いずれかのロールが --agent codex-cli を使うとき
+  GEMINI_API_KEY     いずれかのロールが --agent gemini-cli を使うとき (triage のデフォルト)
+  GITHUB_TOKEN       自動付与 (設定不要)`,
+
   // --- routine help (#311) --------------------------------------------------
   "cli.routine.help": `使い方: radar routine <subcommand> [...]
 
@@ -476,6 +590,80 @@ Types:
   pipeline  watch -> triage -> research -> review の全工程を 1 アイテムずつ行う自セッションルーティン
 
 type 別のオプションは \`radar routine generate <type> --help\` を参照。`,
+
+  // --- per-type routine generate / fire help (#337, deferred from #311) -----
+  "cli.routine.generateWatchHelp": ({ models }: { models: string }): string =>
+    `使い方: radar routine generate watch [options]
+
+スケジュールで \`radar watch run\` を実行し、検出した items/state を claude/* ブランチへ
+コミットする Claude Code Routine YAML を生成する。
+このルーティンは 1 つの Claude セッションで完結し、他のエージェントを起動しない。
+
+オプション:
+  --name <name>         ルーティン名 (デフォルト: "feedradar-watch")
+                        デフォルトの出力ファイル名も兼ねる。
+  --repo <owner/repo>   対象リポジトリ (デフォルト: <owner>/<repo>)
+  --cron <expression>   5 フィールドの cron、最小間隔は 1 時間 (デフォルト: "0 * * * *")
+                        1 時間未満 (例: "*/5 * * * *") は拒否される。
+  --timezone <tz>       スケジュールのタイムゾーン (デフォルト: "UTC")
+  --model <name>        ${models}
+                        (デフォルト: claude-sonnet-4-6)
+  --output <path>       .claude/routines/ 配下の出力ファイル
+                        (デフォルト: .claude/routines/<name>.yaml)
+  --force, -f           既存の出力ファイルを上書きする
+  --lang <en|ja>        生成される YAML のメモ / 手順 / コメントの言語
+                        (デフォルト: en; RADAR_LANG と config.locale も参照)`,
+  "cli.routine.generatePipelineHelp": ({
+    models,
+    maxItems,
+  }: {
+    models: string;
+    maxItems: number;
+  }): string =>
+    `使い方: radar routine generate pipeline [options]
+
+1 つのセッションで全工程 — \`radar watch run\` -> triage -> research -> review — を
+順番に実行し、アイテムを 1 件ずつ処理する Claude Code Routine YAML を生成する。
+他のエージェントを起動しないため、GHA combined-with-triage ワークフローのような
+エージェント間レビューは含まれない。1 回あたりの処理件数は CLI フラグで制限される。
+
+オプション:
+  --name <name>         ルーティン名 (デフォルト: "feedradar-pipeline")
+                        デフォルトの出力ファイル名も兼ねる。
+  --repo <owner/repo>   対象リポジトリ (デフォルト: <owner>/<repo>)
+  --cron <expression>   5 フィールドの cron、最小間隔は 1 時間 (デフォルト: "0 * * * *")
+                        1 時間未満 (例: "*/5 * * * *") は拒否される。
+  --timezone <tz>       スケジュールのタイムゾーン (デフォルト: "UTC")
+  --model <name>        ${models}
+                        (デフォルト: claude-sonnet-4-6)
+  --max-items N         1 回あたりに triage/research/review するアイテム数のハードキャップ
+                        (デフォルト: ${maxItems})。triage --max-items と items --limit を駆動する。
+  --output-mode <mode>  pr | auto-merge (デフォルト: pr)。'auto-merge' はルーティン自身の
+                        PR を main へ squash マージする (Web UI の 'Allow unrestricted
+                        branch pushes' トグルが必要)。
+  --output <path>       .claude/routines/ 配下の出力ファイル
+                        (デフォルト: .claude/routines/<name>.yaml)
+  --force, -f           既存の出力ファイルを上書きする
+  --lang <en|ja>        生成される YAML のメモ / 手順 / コメントの言語
+                        (デフォルト: en; RADAR_LANG と config.locale も参照)`,
+  "cli.routine.fireHelp": ({ tokenEnv }: { tokenEnv: string }): string =>
+    `使い方: radar routine fire <trig_id> [options]
+
+登録済みの Claude Code Routine を /fire API 経由で外部から起動する。
+この呼び出しはルーティンセッションが作成された時点で返り、
+セッションの完了は待たない。
+
+引数:
+  <trig_id>             Web UI で発行されるルーティン id ('trig_' で始まる)
+
+オプション:
+  --text <msg>          自由形式の起動コンテキスト (リクエストボディの \`text\`)。
+                        API は解析せず、そのまま渡される。
+  --token-env <NAME>    ルーティンごとの bearer トークンを保持する環境変数名
+                        (デフォルト: ${tokenEnv})。
+
+ルーティンごとのトークンは Web UI で一度だけ発行される (再生成 / 失効も Web UI で行う)。
+トークンは環境変数から読み取られ、フラグとしては受け付けず、出力もされない。`,
 
   // --- user-facing errors & result notifications (#312) ---------------------
   // dismiss (#312)
