@@ -25,4 +25,19 @@ export const ja: Messages = {
   "cli.error.unknownCommand": ({ command }: { command: string }): string =>
     `radar: 不明なコマンド '${command}' です`,
   "cli.error.unknownCommandHint": "利用可能なコマンドは 'radar --help' で確認できます。",
+
+  // --- progress phase markers (ProgressReporter, ADR-0015, #313) ------------
+  "cli.progress.loadedItem": ({ id }: { id: string }): string => `アイテムを読み込みました: ${id}`,
+  "cli.progress.loadedItems": ({ count }: { count: number }): string =>
+    `${count} 件のアイテムを読み込みました`,
+  "cli.progress.loadedTemplate": ({ templateId }: { templateId: string }): string =>
+    `テンプレートを読み込みました: ${templateId}.md`,
+  "cli.progress.spawning": ({ agent }: { agent: string }): string => `${agent} を起動中`,
+  "cli.progress.agentRunning": "エージェント実行中",
+  "cli.progress.agentCompleted": ({ exitCode }: { exitCode: number }): string =>
+    `エージェント完了 (exit ${exitCode})`,
+  "cli.progress.agentFailed": "エージェント失敗",
+  "cli.progress.frontmatterValidated": "フロントマター検証済み",
+  "cli.progress.statusTransition": ({ from, to }: { from: string; to: string }): string =>
+    `ステータス: ${from} → ${to}`,
 };

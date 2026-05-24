@@ -46,6 +46,35 @@ export const en = {
     `radar: unknown command '${command}'`,
   /** Follow-up hint pointing the user at `radar --help`. */
   "cli.error.unknownCommandHint": "Run 'radar --help' for available commands.",
+
+  // --- progress phase markers (ProgressReporter, ADR-0015, #313) ------------
+  // User-facing phase labels emitted by `research` / `review` / `update` via
+  // `progress.phase()` / `start()` / `succeed()` / `fail()`. The verb-forms
+  // follow ADR-0015 D4 (`Loaded …`, `Spawning …`, `Agent running…`, `Agent
+  // completed (…)`, `Status: … → …`). Agent stdout/stderr pass-through
+  // (`reporter.raw`) is NOT translated — it is external output forwarded
+  // verbatim.
+  /** "Loaded item: <id>" — single-item PRE phase marker. */
+  "cli.progress.loadedItem": ({ id }: { id: string }): string => `Loaded item: ${id}`,
+  /** "Loaded N items" — digest/batch PRE phase marker. */
+  "cli.progress.loadedItems": ({ count }: { count: number }): string => `Loaded ${count} items`,
+  /** "Loaded template: <id>.md" — template-resolved phase marker. */
+  "cli.progress.loadedTemplate": ({ templateId }: { templateId: string }): string =>
+    `Loaded template: ${templateId}.md`,
+  /** "Spawning <agent>" — agent-spawn phase marker. */
+  "cli.progress.spawning": ({ agent }: { agent: string }): string => `Spawning ${agent}`,
+  /** Spinner label while the agent runs. */
+  "cli.progress.agentRunning": "Agent running",
+  /** "Agent completed (exit <code>)" — agent success line. */
+  "cli.progress.agentCompleted": ({ exitCode }: { exitCode: number }): string =>
+    `Agent completed (exit ${exitCode})`,
+  /** Agent-failure spinner-fail label. */
+  "cli.progress.agentFailed": "Agent failed",
+  /** "Frontmatter validated" — schema-check phase marker. */
+  "cli.progress.frontmatterValidated": "Frontmatter validated",
+  /** "Status: <from> → <to>" — state-machine transition phase marker. */
+  "cli.progress.statusTransition": ({ from, to }: { from: string; to: string }): string =>
+    `Status: ${from} → ${to}`,
 } as const;
 
 /** Union of all valid message keys. */

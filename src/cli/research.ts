@@ -28,6 +28,7 @@ import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import { isValidTransition } from "../core/transitions.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
@@ -437,8 +438,10 @@ async function prepareResearch(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<{ outputPath: string; filename: string } | { exitCode: number }> {
-  const { cwd, items, digest, templateId, now, triageGroup, warn, error, progress } = params;
+  const { cwd, items, digest, templateId, now, triageGroup, warn, error, progress, t } = params;
 
   for (const item of items) {
     if (item.injectionFlags.length > 0) {
@@ -469,12 +472,14 @@ async function prepareResearch(params: {
   // per invocation regardless of digest cardinality so the progress stream
   // stays uniform between single / digest / batch modes.
   progress.phase(
-    digest ? `Loaded ${items.length} items` : `Loaded item: ${items[0].id}`,
+    digest
+      ? t("cli.progress.loadedItems", { count: items.length })
+      : t("cli.progress.loadedItem", { id: items[0].id }),
     items.map((i) => i.id).join(", "),
   );
   // Phase marker: template resolved. Echoes the actual template id so a
   // user running `--template deep-dive` sees the value flow through.
-  progress.phase(`Loaded template: ${templateId}.md`);
+  progress.phase(t("cli.progress.loadedTemplate", { templateId }));
   return { outputPath, filename };
 }
 
@@ -502,8 +507,10 @@ async function finalizeResearch(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { cwd, outputPath, log, warn, error, progress } = params;
+  const { cwd, outputPath, log, warn, error, progress, t } = params;
 
   if (!(await pathExists(outputPath))) {
     error(`research: report was not written to ${outputPath} (did not write the output path?)`);
@@ -536,7 +543,7 @@ async function finalizeResearch(params: {
   // Phase marker: schema check passed. Emitted before the status transition
   // so the user sees the validation outcome separately from the items.yaml
   // write that follows.
-  progress.phase("Frontmatter validated");
+  progress.phase(t("cli.progress.frontmatterValidated"));
   const reviewedDrift = fmResult.data.reviewedAt !== null || fmResult.data.reviewedBy !== null;
   const supersedesDrift = fmResult.data.supersedes !== null;
   if (reviewedDrift || supersedesDrift) {
@@ -624,7 +631,10 @@ async function finalizeResearch(params: {
       // Phase marker: status transition. We emit one phase per item rather
       // than collapsing them so the digest case stays explicit about what
       // moved. The arrow uses U+2192 (→) per ADR-0015 D4 examples.
-      progress.phase(`Status: ${from} → researched`, `items/${item.sourceId}/${item.id}.yaml`);
+      progress.phase(
+        t("cli.progress.statusTransition", { from, to: "researched" }),
+        `items/${item.sourceId}/${item.id}.yaml`,
+      );
       log(`research: items/${item.sourceId}/${item.id}.yaml status -> researched`);
     }
   }
@@ -662,6 +672,10 @@ async function processResearchInvocation(params: {
     error,
     progress,
   } = params;
+  // Translator for the user-facing progress phase labels (#313). Derived from
+  // the same resolved locale already used for the report-output language
+  // (#316) so the spinner / phase markers and the report body agree.
+  const t = createTranslator(locale);
 
   const prepared = await prepareResearch({
     cwd,
@@ -673,6 +687,7 @@ async function processResearchInvocation(params: {
     warn,
     error,
     progress,
+    t,
   });
   if ("exitCode" in prepared) return prepared.exitCode;
   const { outputPath, filename } = prepared;
@@ -686,8 +701,8 @@ async function processResearchInvocation(params: {
   // Phase marker + spinner: agent spawn. We pair `phase("Spawning …")` with
   // `start("Agent running…")` so the marker is printed once for scrollback
   // and the spinner row carries the live `[mm:ss]` heartbeat + metrics.
-  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
-  progress.start("Agent running");
+  progress.phase(t("cli.progress.spawning", { agent }), `cwd: ${cwd}`);
+  progress.start(t("cli.progress.agentRunning"));
   const adapterStartedAt = Date.now();
   const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
   let adapterExitCode = 0;
@@ -705,17 +720,20 @@ async function processResearchInvocation(params: {
   } catch (e) {
     adapterExitCode = 1;
     polling.stop();
-    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
+    progress.fail(t("cli.progress.agentFailed"), e instanceof Error ? e.message : String(e));
     error(`research: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   } finally {
     polling.stop();
   }
   if (adapterExitCode === 0) {
-    progress.succeed(`Agent completed (exit ${adapterExitCode})`, Date.now() - adapterStartedAt);
+    progress.succeed(
+      t("cli.progress.agentCompleted", { exitCode: adapterExitCode }),
+      Date.now() - adapterStartedAt,
+    );
   }
 
-  return finalizeResearch({ cwd, outputPath, items, log, warn, error, progress });
+  return finalizeResearch({ cwd, outputPath, items, log, warn, error, progress, t });
 }
 
 /**
@@ -738,6 +756,8 @@ async function runResearchEmitPayload(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
   const {
     cwd,
@@ -752,6 +772,7 @@ async function runResearchEmitPayload(params: {
     warn,
     error,
     progress,
+    t,
   } = params;
   const prepared = await prepareResearch({
     cwd,
@@ -763,6 +784,7 @@ async function runResearchEmitPayload(params: {
     warn,
     error,
     progress,
+    t,
   });
   if ("exitCode" in prepared) return prepared.exitCode;
   log(
@@ -795,8 +817,10 @@ async function runResearchCommit(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { cwd, commitPath, log, warn, error, progress } = params;
+  const { cwd, commitPath, log, warn, error, progress, t } = params;
   const guard = await resolveCommitPathInside(cwd, "research", commitPath);
   if ("error" in guard) {
     error(`research: ${guard.error}`);
@@ -810,6 +834,7 @@ async function runResearchCommit(params: {
     warn,
     error,
     progress,
+    t,
   });
 }
 
@@ -979,17 +1004,14 @@ export async function runResearch(
     }
     throw e;
   }
-  // Tests inject a reporter directly; production constructs one from the
-  // flag state. Either way the per-invocation state stays local — there is
-  // no shared global reporter, so concurrent CLI invocations are isolated.
-  const progress = options.progress ?? buildReporter({ level: progressState.level });
-
   // Resolve the report-output locale (#316) BEFORE the command-specific parser
   // sees argv: `resolveCommandLocale` strips `--lang` so `parseArgs` never trips
   // on it (mirrors the `--verbose` / `--quiet` strip above). `config.locale` is
   // the lowest-priority source; we read it best-effort here (RadarConfigError is
   // surfaced authoritatively by `resolveAgent` below, so we tolerate it as
   // "no config locale" and let the agent resolver report the malformed config).
+  // Resolved first so the progress reporter (#313) and the report-output
+  // language (#316) share the same locale.
   let configLocale: string | undefined;
   try {
     configLocale = (await loadRadarConfig(cwd)).locale;
@@ -1009,6 +1031,17 @@ export async function runResearch(
     }
     throw e;
   }
+  // Tests inject a reporter directly; production constructs one from the flag
+  // state + resolved locale (so the reporter's phase labels are localized,
+  // #313). Either way the per-invocation state stays local — there is no shared
+  // global reporter, so concurrent CLI invocations are isolated.
+  const progress = options.progress ?? buildReporter({ level: progressState.level, locale });
+  // Translator for the user-facing progress phase labels (#313), bound to the
+  // resolved locale. Threaded into the phase-emitting helpers below so the
+  // milestone strings track the report-output language. Built independently of
+  // `progress` so a test-injected reporter (which has no bundled translator)
+  // still gets localized phase labels.
+  const t = createTranslator(locale);
 
   let parsed: ResearchArgs;
   try {
@@ -1048,7 +1081,15 @@ export async function runResearch(
       );
       return 2;
     }
-    return runResearchCommit({ cwd, commitPath: parsed.commit, log, warn, error, progress });
+    return runResearchCommit({
+      cwd,
+      commitPath: parsed.commit,
+      log,
+      warn,
+      error,
+      progress,
+      t,
+    });
   }
   if (parsed.emitPayload && parsed.batch) {
     error("research: --emit-payload is incompatible with --batch");
@@ -1147,6 +1188,7 @@ export async function runResearch(
       warn,
       error,
       progress,
+      t,
     });
   }
 
