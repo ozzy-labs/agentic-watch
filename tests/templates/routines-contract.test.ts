@@ -5,7 +5,10 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { renderPipelineRoutineTemplate } from "../../src/cli/routine/generate-pipeline.js";
-import { renderWatchRoutineTemplate } from "../../src/cli/routine/generate-watch.js";
+import {
+  renderNetworkAccessBlock,
+  renderWatchRoutineTemplate,
+} from "../../src/cli/routine/generate-watch.js";
 
 /**
  * Contract guard for the bundled routine templates under
@@ -80,6 +83,9 @@ describe("bundled routine templates :: contract", () => {
       cron: "0 0 * * *",
       timezone: "UTC",
       model: "claude-sonnet-4-6",
+      // #298 added a network_access block placeholder the generator fills from
+      // sources/*.yaml hosts; mirror that here so the rendered YAML is valid.
+      networkAccessBlock: renderNetworkAccessBlock(["example.com"]),
     });
     // Every placeholder must be substituted before the contract holds.
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
@@ -104,6 +110,7 @@ describe("bundled routine templates :: contract", () => {
       timezone: "UTC",
       model: "claude-sonnet-4-6",
       maxItems: 10,
+      networkAccessBlock: renderNetworkAccessBlock(["example.com"]),
     });
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
     expect(parseYaml(rendered)).toMatchObject({ name: "feedradar-pipeline", status: "draft" });
