@@ -275,8 +275,8 @@ export async function runFireRoutine(
       text: parsed.text,
       fetch: fetchImpl,
     });
-    log(`routine fire: triggered ${parsed.routineId} (HTTP ${result.status}).`);
-    log("The session was created — this call does not wait for it to finish.");
+    log(t("cli.routine.fireTriggered", { routineId: parsed.routineId, status: result.status }));
+    log(t("cli.routine.fireSessionCreated"));
     return 0;
   } catch (e) {
     error(`routine fire: ${e instanceof Error ? e.message : String(e)}`);

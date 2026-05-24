@@ -298,6 +298,7 @@ export async function generateWatchRoutine(
 ): Promise<GenerateWatchRoutineResult> {
   const { cwd, name, repository, cron, timezone, model, output, force } = options;
   const locale: Locale = options.locale ?? "en";
+  const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -345,38 +346,32 @@ export async function generateWatchRoutine(
     throw new Error(`output file already exists: ${destRel} (use --force to overwrite)`);
   }
   if ((await pathExists(destAbs)) && force) {
-    warn(`routine generate watch: overwriting existing file ${destRel}`);
+    warn(t("cli.routine.generateWatchOverwriting", { path: destRel }));
   }
 
   await mkdir(dirname(destAbs), { recursive: true });
   await writeFile(destAbs, rendered, "utf8");
 
-  log(`routine generate watch: wrote ${destRel}`);
-  log(
-    `routine generate watch: name='${name}', repo='${repository}', cron='${cron}', model='${model}'`,
-  );
+  log(t("cli.routine.generateWatchWrote", { path: destRel }));
+  log(t("cli.routine.generateWatchSummary", { name, repo: repository, cron, model }));
   log("");
-  log("Routines has no declarative apply API — paste this routine into the Web UI by hand:");
-  log("  1. Open https://claude.ai/code/routines and click New routine.");
-  log(
-    "  2. Fill the form fields from the YAML (Name / Model / Repositories / Trigger / Permissions).",
-  );
-  log("  3. For the multi-line Instructions and Setup script fields, extract them with yq:");
-  log(`       yq -r '.instructions'             ${destRel}`);
-  log(`       yq -r '.environment.setup_script' ${destRel}`);
-  log(
-    "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
-  );
+  log(t("cli.routine.pasteNoApi"));
+  log(t("cli.routine.pasteStep1"));
+  log(t("cli.routine.pasteStep2"));
+  log(t("cli.routine.pasteStep3"));
+  log(t("cli.routine.pasteYqInstructions", { path: destRel }));
+  log(t("cli.routine.pasteYqSetupScript", { path: destRel }));
+  log(t("cli.routine.pasteStep4"));
   log("");
-  log("Note on /schedule (Claude Code): it is conversational — `/schedule <description>`");
-  log("to create one, plus `list` / `update` / `run` subcommands. There is no flag-based");
-  log("form (no `--name` / `--cron` / `--repo` arguments). It also cannot ingest this YAML");
-  log("verbatim, so for the long Instructions field the Web UI paste flow above (yq");
-  log("extraction) is the practical path. Finally, the unrestricted-git-push permission an");
-  log("auto-merge routine needs is set only via the Web UI 'Allow unrestricted branch");
-  log("pushes' toggle — /schedule cannot configure it.");
+  log(t("cli.routine.scheduleNote1"));
+  log(t("cli.routine.scheduleNote2"));
+  log(t("cli.routine.scheduleNote3"));
+  log(t("cli.routine.scheduleNote4"));
+  log(t("cli.routine.scheduleNote5"));
+  log(t("cli.routine.scheduleNote6"));
+  log(t("cli.routine.scheduleNote7"));
   log("");
-  log("Output gate: this routine writes to a claude/* branch / PR only — never main directly.");
+  log(t("cli.routine.outputGateBranchPr"));
 
   return { outputPath: destRel };
 }

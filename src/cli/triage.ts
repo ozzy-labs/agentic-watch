@@ -942,7 +942,11 @@ async function runTriageRun(
 
   for (const { sourceId, items: groupItems, policy, triageAgent } of groups) {
     reporter.phase(
-      `Triaging ${groupItems.length} item(s) from source '${sourceId}' via ${triageAgent}`,
+      t("cli.triage.progressTriaging", {
+        count: groupItems.length,
+        sourceId,
+        agent: triageAgent,
+      }),
     );
 
     let result: TriageResult;
@@ -1008,7 +1012,7 @@ async function runTriageRun(
       return 1;
     }
     const confirm = options.confirm ?? promptConfirm;
-    const confirmed = await confirm("Apply these decisions? [y/N]");
+    const confirmed = await confirm(t("cli.triage.confirmApply"));
     if (!confirmed) {
       log(t("cli.triage.abortedByUser"));
       return 0;

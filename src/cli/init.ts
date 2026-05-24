@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_FILENAME } from "../core/config.js";
 import { type Locale, resolveLocale } from "../core/locale.js";
-import { createTranslator } from "../i18n/index.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import { LangFlagError, parseLangFlag, readLangEnv } from "./_locale.js";
 import type { Command } from "./index.js";
 
@@ -491,15 +491,13 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     await mkdir(destDir, { recursive: true });
 
     if (!(await pathExists(src))) {
-      warn(`init: bundled skill not found, skipped: ${src}`);
+      warn(t("cli.init.bundledSkillNotFound", { src }));
       skippedFiles.push(`.agents/skills/${skill}/SKILL.md`);
       continue;
     }
 
     if ((await pathExists(dest)) && !force) {
-      warn(
-        `init: skipped existing file (use --force to overwrite): .agents/skills/${skill}/SKILL.md`,
-      );
+      warn(t("cli.init.skippedExisting", { file: `.agents/skills/${skill}/SKILL.md` }));
       skippedFiles.push(`.agents/skills/${skill}/SKILL.md`);
       continue;
     }
@@ -518,15 +516,13 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       await mkdir(destDir, { recursive: true });
 
       if (!(await pathExists(src))) {
-        warn(`init: bundled claude discovery skill not found, skipped: ${src}`);
+        warn(t("cli.init.bundledClaudeSkillNotFound", { src }));
         skippedFiles.push(`.claude/skills/${skill}/SKILL.md`);
         continue;
       }
 
       if ((await pathExists(dest)) && !force) {
-        warn(
-          `init: skipped existing file (use --force to overwrite): .claude/skills/${skill}/SKILL.md`,
-        );
+        warn(t("cli.init.skippedExisting", { file: `.claude/skills/${skill}/SKILL.md` }));
         skippedFiles.push(`.claude/skills/${skill}/SKILL.md`);
         continue;
       }
@@ -546,15 +542,13 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       await mkdir(destDir, { recursive: true });
 
       if (!(await pathExists(src))) {
-        warn(`init: bundled gemini command not found, skipped: ${src}`);
+        warn(t("cli.init.bundledGeminiCommandNotFound", { src }));
         skippedFiles.push(`.gemini/commands/${command}.toml`);
         continue;
       }
 
       if ((await pathExists(dest)) && !force) {
-        warn(
-          `init: skipped existing file (use --force to overwrite): .gemini/commands/${command}.toml`,
-        );
+        warn(t("cli.init.skippedExisting", { file: `.gemini/commands/${command}.toml` }));
         skippedFiles.push(`.gemini/commands/${command}.toml`);
         continue;
       }
@@ -574,6 +568,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
   }
 
@@ -583,9 +578,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   // AGENTS.md should manage CLAUDE.md themselves.
   if (!options.noClaudeMd) {
     if (options.noAgentsMd) {
-      warn(
-        "init: skipped CLAUDE.md because --no-agents-md was passed (the bundled CLAUDE.md imports @AGENTS.md and would dangle)",
-      );
+      warn(t("cli.init.skippedClaudeMdNoAgentsMd"));
       skippedFiles.push("CLAUDE.md");
     } else {
       await emitScaffold({
@@ -597,6 +590,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
         copiedFiles,
         skippedFiles,
         warn,
+        t,
       });
     }
   }
@@ -611,6 +605,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
     // digest.md is bundled under the same `--no-templates` umbrella as
     // default.md — both are starter Markdown bodies the user may edit to
@@ -626,6 +621,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
   }
 
@@ -639,6 +635,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
   }
 
@@ -652,6 +649,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
   }
 
@@ -665,6 +663,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       copiedFiles,
       skippedFiles,
       warn,
+      t,
     });
   }
 
@@ -672,7 +671,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   // commands that read config.locale via resolveLocale) honor the workspace's
   // language without re-passing --lang. We merge into any existing config to
   // avoid clobbering defaultResearchAgent / defaultReviewAgent.
-  await writeLocaleToConfig({ cwd, force, locale, copiedFiles, skippedFiles, warn });
+  await writeLocaleToConfig({ cwd, force, locale, copiedFiles, skippedFiles, warn, t });
 
   info(t("cli.init.workspaceReady", { cwd }));
   info(t("cli.init.directoriesCreated", { dirs: createdDirs.join(", ") }));
@@ -713,8 +712,10 @@ async function emitScaffold(args: {
   copiedFiles: string[];
   skippedFiles: string[];
   warn: (message: string) => void;
+  /** Translator for the operational warnings (#342 A3). */
+  t: Translator;
 }): Promise<void> {
-  const { cwd, force, locale, scaffold, copiedFiles, skippedFiles, warn } = args;
+  const { cwd, force, locale, scaffold, copiedFiles, skippedFiles, warn, t } = args;
   const templatesRoot = args.templatesRoot ?? (await resolveTemplatesRoot());
   const srcBase = locale === undefined ? templatesRoot : join(templatesRoot, locale);
   const src = join(srcBase, scaffold.src);
@@ -722,7 +723,7 @@ async function emitScaffold(args: {
   const relDest = scaffold.dest.join("/");
 
   if (!(await pathExists(src))) {
-    warn(`init: bundled template not found, skipped: ${src}`);
+    warn(t("cli.init.bundledTemplateNotFound", { src }));
     skippedFiles.push(relDest);
     return;
   }
@@ -730,7 +731,7 @@ async function emitScaffold(args: {
   await mkdir(dirname(dest), { recursive: true });
 
   if ((await pathExists(dest)) && !force) {
-    warn(`init: skipped existing file (use --force to overwrite): ${relDest}`);
+    warn(t("cli.init.skippedExisting", { file: relDest }));
     skippedFiles.push(relDest);
     return;
   }
@@ -765,8 +766,10 @@ async function writeLocaleToConfig(args: {
   copiedFiles: string[];
   skippedFiles: string[];
   warn: (message: string) => void;
+  /** Translator for the operational warnings (#342 A3). */
+  t: Translator;
 }): Promise<void> {
-  const { cwd, force, locale, copiedFiles, skippedFiles, warn } = args;
+  const { cwd, force, locale, copiedFiles, skippedFiles, warn, t } = args;
   const configPath = join(cwd, CONFIG_FILENAME);
 
   let existing: Record<string, unknown> | undefined;
@@ -776,9 +779,10 @@ async function writeLocaleToConfig(args: {
       parsed = parseYaml(await readFile(configPath, "utf8"));
     } catch (e) {
       warn(
-        `init: skipped writing ${CONFIG_FILENAME} locale (existing file is not valid YAML: ${
-          e instanceof Error ? e.message : String(e)
-        })`,
+        t("cli.init.configLocaleNotYaml", {
+          file: CONFIG_FILENAME,
+          reason: e instanceof Error ? e.message : String(e),
+        }),
       );
       skippedFiles.push(CONFIG_FILENAME);
       return;
@@ -787,7 +791,7 @@ async function writeLocaleToConfig(args: {
       existing = parsed as Record<string, unknown>;
     } else if (parsed !== null && parsed !== undefined) {
       // A scalar / array at the document root is not a valid config shape.
-      warn(`init: skipped writing ${CONFIG_FILENAME} locale (existing file is not a mapping)`);
+      warn(t("cli.init.configLocaleNotMapping", { file: CONFIG_FILENAME }));
       skippedFiles.push(CONFIG_FILENAME);
       return;
     }
@@ -801,9 +805,11 @@ async function writeLocaleToConfig(args: {
     }
     if (current !== undefined && !force) {
       warn(
-        `init: skipped updating ${CONFIG_FILENAME} locale '${String(
-          current,
-        )}' -> '${locale}' (use --force to overwrite)`,
+        t("cli.init.configLocaleSkippedUpdate", {
+          file: CONFIG_FILENAME,
+          current: String(current),
+          locale,
+        }),
       );
       skippedFiles.push(CONFIG_FILENAME);
       return;

@@ -438,6 +438,7 @@ export async function generateCombinedWithTriage(
     force,
   } = options;
   const locale: Locale = options.locale ?? "en";
+  const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -501,7 +502,7 @@ export async function generateCombinedWithTriage(
     throw new Error(`output file already exists: ${destRel} (use --force to overwrite)`);
   }
   if ((await pathExists(destAbs)) && force) {
-    warn(`workflow generate combined-with-triage: overwriting existing file ${destRel}`);
+    warn(t("cli.workflow.generateCombinedWithTriageOverwriting", { path: destRel }));
   }
 
   await mkdir(dirname(destAbs), { recursive: true });
@@ -518,27 +519,29 @@ export async function generateCombinedWithTriage(
   }
   const sortedSecrets = [...secrets].sort();
 
-  log(`workflow generate combined-with-triage: wrote ${destRel}`);
-  log(`  watch-cron:     ${watchCron}`);
-  log(`  triage-agent:   ${triageAgent}`);
-  log(`  research-agent: ${researchAgent}`);
-  log(`  review-agent:   ${reviewAgent}`);
-  log(`  max-items:      ${maxItems}`);
-  log(`  output-mode:    ${outputMode}`);
-  log(`  slack-webhook:  ${options.slackWebhook ?? "(none — notify step no-ops)"}`);
+  log(t("cli.workflow.generateCombinedWithTriageWrote", { path: destRel }));
+  log(t("cli.workflow.detailWatchCron", { cron: watchCron }));
+  log(t("cli.workflow.detailTriageAgent", { agent: triageAgent }));
+  log(t("cli.workflow.detailResearchAgent", { agent: researchAgent }));
+  log(t("cli.workflow.detailReviewAgent", { agent: reviewAgent }));
+  log(t("cli.workflow.detailMaxItemsWide", { maxItems }));
+  log(t("cli.workflow.detailOutputMode", { mode: outputMode }));
+  log(
+    t("cli.workflow.detailSlackWebhook", {
+      webhook: options.slackWebhook ?? t("cli.workflow.slackWebhookNone"),
+    }),
+  );
   log("");
-  log("Required GitHub Actions secrets (Settings → Secrets and variables → Actions):");
+  log(t("cli.workflow.requiredSecretsHeading"));
   if (sortedSecrets.length === 0) {
-    log("  (none — every selected agent rides the auto-provisioned GITHUB_TOKEN)");
+    log(t("cli.workflow.secretsNoneAutoToken"));
   } else {
     for (const s of sortedSecrets) {
       log(`  ${s}`);
     }
   }
-  log("  GITHUB_TOKEN (auto-provisioned, no setup needed)");
-  warn(
-    "workflow generate combined-with-triage: the --max-items cap is also enforced by `radar research --batch`; editing the YAML alone will not raise it",
-  );
+  log(t("cli.workflow.secretGithubTokenAutoNoSetup"));
+  warn(t("cli.workflow.maxItemsCapWarning", { cmd: "workflow generate combined-with-triage" }));
 
   return { outputPath: destRel, requiredSecrets: sortedSecrets };
 }

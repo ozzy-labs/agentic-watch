@@ -753,6 +753,8 @@ Options:
                         The API does not parse it; it is passed as-is.
   --token-env <NAME>    Env var holding the per-routine bearer token
                         (default: ${tokenEnv}).
+  --lang <en|ja>        UI language for this command's messages / help
+                        (default: en; also honors RADAR_LANG and config.locale)
 
 The per-routine token is issued ONCE in the Web UI (Regenerate / Revoke
 there) and is read from the environment — it is never accepted as a flag
@@ -1344,6 +1346,304 @@ Options:
                          (research engine SKILL falls back to its built-in structure)
   --no-feedradar-md      Skip writing FEEDRADAR.md at the workspace root
                          (useful if the workspace already has its own user-facing docs)`,
+
+  // --- audit gap follow-up: dispatcher errors (#342 A1) ---------------------
+  // `unknown subcommand` / `unknown type` errors emitted by the workflow /
+  // routine dispatchers. The dispatcher already resolved a translator for its
+  // help text; these errors now route through it too. The command/subcommand
+  // tag (`workflow` / `routine` / `workflow generate` / `routine generate`)
+  // stays verbatim so scripts key off the stable prefix.
+  "cli.workflow.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `workflow: unknown subcommand '${sub}'`,
+  "cli.workflow.unknownType": ({ type }: { type: string }): string =>
+    `workflow generate: unknown type '${type}'`,
+  "cli.routine.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `routine: unknown subcommand '${sub}'`,
+  "cli.routine.unknownType": ({ type }: { type: string }): string =>
+    `routine generate: unknown type '${type}'`,
+
+  // --- audit gap follow-up: workflow generate summaries (#342 A2) -----------
+  // The generate-completion summary lines (`wrote …`, the key=value detail
+  // rows, the "Required secrets" heading, and the post-edit warnings) were
+  // English-only even though the locale is resolved. Embedded values
+  // (destRel / cron / agent / max-items / secret names) stay verbatim; only
+  // the surrounding prose is translated.
+  "cli.workflow.generateWatchWrote": ({ path }: { path: string }): string =>
+    `workflow generate watch: wrote ${path}`,
+  "cli.workflow.generateWatchSummary": ({ cron, agent }: { cron: string; agent: string }): string =>
+    `workflow generate watch: cron='${cron}', agent='${agent}'`,
+  "cli.workflow.generateWatchOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate watch: overwriting existing file ${path}`,
+  "cli.workflow.requiredSecretsHeading":
+    "Required GitHub Actions secrets (Settings → Secrets and variables → Actions):",
+  "cli.workflow.secretCopilotToken":
+    "  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)",
+  "cli.workflow.secretAgentKey": ({ envKey, agent }: { envKey: string; agent: string }): string =>
+    `  ${envKey} — required for the '${agent}' agent`,
+  "cli.workflow.secretGithubTokenAuto":
+    "  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)",
+  "cli.workflow.generateCombinedWrote": ({ path }: { path: string }): string =>
+    `workflow generate combined: wrote ${path}`,
+  "cli.workflow.generateCombinedOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate combined: overwriting existing file ${path}`,
+  "cli.workflow.detailAgent": ({ agent }: { agent: string }): string => `  agent:       ${agent}`,
+  "cli.workflow.detailCron": ({ cron }: { cron: string }): string => `  cron:        ${cron}`,
+  "cli.workflow.detailMaxItems": ({ maxItems }: { maxItems: number }): string =>
+    `  max-items:   ${maxItems}`,
+  "cli.workflow.detailFilterTags": ({ tags }: { tags: string }): string => `  filter-tags: ${tags}`,
+  "cli.workflow.filterTagsNone": "(none)",
+  "cli.workflow.maxItemsCapWarning": ({ cmd }: { cmd: string }): string =>
+    `${cmd}: the --max-items cap is also enforced by \`radar research --batch\`; editing the YAML alone will not raise it`,
+  "cli.workflow.generateCombinedWithTriageWrote": ({ path }: { path: string }): string =>
+    `workflow generate combined-with-triage: wrote ${path}`,
+  "cli.workflow.generateCombinedWithTriageOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate combined-with-triage: overwriting existing file ${path}`,
+  "cli.workflow.detailWatchCron": ({ cron }: { cron: string }): string =>
+    `  watch-cron:     ${cron}`,
+  "cli.workflow.detailTriageAgent": ({ agent }: { agent: string }): string =>
+    `  triage-agent:   ${agent}`,
+  "cli.workflow.detailResearchAgent": ({ agent }: { agent: string }): string =>
+    `  research-agent: ${agent}`,
+  "cli.workflow.detailReviewAgent": ({ agent }: { agent: string }): string =>
+    `  review-agent:   ${agent}`,
+  "cli.workflow.detailMaxItemsWide": ({ maxItems }: { maxItems: number }): string =>
+    `  max-items:      ${maxItems}`,
+  "cli.workflow.detailOutputMode": ({ mode }: { mode: string }): string =>
+    `  output-mode:    ${mode}`,
+  "cli.workflow.detailSlackWebhook": ({ webhook }: { webhook: string }): string =>
+    `  slack-webhook:  ${webhook}`,
+  "cli.workflow.slackWebhookNone": "(none — notify step no-ops)",
+  "cli.workflow.secretsNoneAutoToken":
+    "  (none — every selected agent rides the auto-provisioned GITHUB_TOKEN)",
+  "cli.workflow.secretGithubTokenAutoNoSetup": "  GITHUB_TOKEN (auto-provisioned, no setup needed)",
+
+  // --- audit gap follow-up: routine generate summaries (#342 A2) ------------
+  // The routine generate completion blocks (`wrote …`, the parameter summary,
+  // the Web UI paste instructions, the /schedule note, and the output-gate
+  // line) were English-only. Embedded values (destRel / name / repo / cron /
+  // model / max-items / output-mode) stay verbatim.
+  "cli.routine.generateWatchWrote": ({ path }: { path: string }): string =>
+    `routine generate watch: wrote ${path}`,
+  "cli.routine.generateWatchSummary": ({
+    name,
+    repo,
+    cron,
+    model,
+  }: {
+    name: string;
+    repo: string;
+    cron: string;
+    model: string;
+  }): string =>
+    `routine generate watch: name='${name}', repo='${repo}', cron='${cron}', model='${model}'`,
+  "cli.routine.generateWatchOverwriting": ({ path }: { path: string }): string =>
+    `routine generate watch: overwriting existing file ${path}`,
+  "cli.routine.generatePipelineWrote": ({ path }: { path: string }): string =>
+    `routine generate pipeline: wrote ${path}`,
+  "cli.routine.generatePipelineSummary": ({
+    name,
+    repo,
+    cron,
+    model,
+    maxItems,
+    outputMode,
+  }: {
+    name: string;
+    repo: string;
+    cron: string;
+    model: string;
+    maxItems: number;
+    outputMode: string;
+  }): string =>
+    `routine generate pipeline: name='${name}', repo='${repo}', cron='${cron}', model='${model}', max-items=${maxItems}, output-mode='${outputMode}'`,
+  "cli.routine.generatePipelineOverwriting": ({ path }: { path: string }): string =>
+    `routine generate pipeline: overwriting existing file ${path}`,
+  "cli.routine.autoMergeWarning": ({ cmd }: { cmd: string }): string =>
+    `${cmd}: --output-mode auto-merge sets ` +
+    "`allow_unrestricted_git_push: true`, but that is NECESSARY, NOT SUFFICIENT — " +
+    "you must ALSO turn ON the Web UI 'Allow unrestricted branch pushes' toggle " +
+    "(the RemoteTrigger API does not accept this field). Note that unattended AI " +
+    "output then lands on the default branch with NO human review.",
+  // The Web UI paste flow (shared by watch / pipeline). `path` is the rendered
+  // routine's relative path, interpolated into the yq lines.
+  "cli.routine.pasteNoApi":
+    "Routines has no declarative apply API — paste this routine into the Web UI by hand:",
+  "cli.routine.pasteStep1": "  1. Open https://claude.ai/code/routines and click New routine.",
+  "cli.routine.pasteStep2":
+    "  2. Fill the form fields from the YAML (Name / Model / Repositories / Trigger / Permissions).",
+  "cli.routine.pasteStep3":
+    "  3. For the multi-line Instructions and Setup script fields, extract them with yq:",
+  "cli.routine.pasteYqInstructions": ({ path }: { path: string }): string =>
+    `       yq -r '.instructions'             ${path}`,
+  "cli.routine.pasteYqSetupScript": ({ path }: { path: string }): string =>
+    `       yq -r '.environment.setup_script' ${path}`,
+  "cli.routine.pasteStep4":
+    "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
+  "cli.routine.scheduleNote1":
+    "Note on /schedule (Claude Code): it is conversational — `/schedule <description>`",
+  "cli.routine.scheduleNote2":
+    "to create one, plus `list` / `update` / `run` subcommands. There is no flag-based",
+  "cli.routine.scheduleNote3":
+    "form (no `--name` / `--cron` / `--repo` arguments). It also cannot ingest this YAML",
+  "cli.routine.scheduleNote4":
+    "verbatim, so for the long Instructions field the Web UI paste flow above (yq",
+  "cli.routine.scheduleNote5":
+    "extraction) is the practical path. Finally, the unrestricted-git-push permission an",
+  "cli.routine.scheduleNote6":
+    "auto-merge routine needs is set only via the Web UI 'Allow unrestricted branch",
+  "cli.routine.scheduleNote7": "pushes' toggle — /schedule cannot configure it.",
+  "cli.routine.outputGateBranchPr":
+    "Output gate: this routine writes to a claude/* branch / PR only — never main directly.",
+  "cli.routine.outputGateAutoMerge":
+    "Output gate: this routine opens a claude/* PR then squash-merges it to main (review-complete via step 5).",
+  "cli.routine.pipelineNoSpawn1":
+    "Single Claude session, no spawn: unlike the GHA combined-with-triage",
+  "cli.routine.pipelineNoSpawn2":
+    "workflow, there is NO cross-agent review here — one Claude does every step.",
+  "cli.routine.pipelineItemCaps": ({ maxItems }: { maxItems: number }): string =>
+    `Item caps are CLI-enforced: triage --max-items ${maxItems} / items --limit ${maxItems}.`,
+  // routine fire result notification (#342 A2-adjacent: fire completion lines)
+  "cli.routine.fireTriggered": ({
+    routineId,
+    status,
+  }: {
+    routineId: string;
+    status: number;
+  }): string => `routine fire: triggered ${routineId} (HTTP ${status}).`,
+  "cli.routine.fireSessionCreated":
+    "The session was created — this call does not wait for it to finish.",
+
+  // --- audit gap follow-up: init operational warnings (#342 A3) -------------
+  // Operational warnings emitted while init copies bundled assets / writes the
+  // config locale. These are user-facing ("here is what init skipped and why")
+  // even though the post-run summary was already localized in #312. Paths are
+  // interpolated verbatim.
+  "cli.init.bundledSkillNotFound": ({ src }: { src: string }): string =>
+    `init: bundled skill not found, skipped: ${src}`,
+  "cli.init.bundledClaudeSkillNotFound": ({ src }: { src: string }): string =>
+    `init: bundled claude discovery skill not found, skipped: ${src}`,
+  "cli.init.bundledGeminiCommandNotFound": ({ src }: { src: string }): string =>
+    `init: bundled gemini command not found, skipped: ${src}`,
+  "cli.init.bundledTemplateNotFound": ({ src }: { src: string }): string =>
+    `init: bundled template not found, skipped: ${src}`,
+  "cli.init.skippedExisting": ({ file }: { file: string }): string =>
+    `init: skipped existing file (use --force to overwrite): ${file}`,
+  "cli.init.skippedClaudeMdNoAgentsMd":
+    "init: skipped CLAUDE.md because --no-agents-md was passed (the bundled CLAUDE.md imports @AGENTS.md and would dangle)",
+  "cli.init.configLocaleNotYaml": ({ file, reason }: { file: string; reason: string }): string =>
+    `init: skipped writing ${file} locale (existing file is not valid YAML: ${reason})`,
+  "cli.init.configLocaleNotMapping": ({ file }: { file: string }): string =>
+    `init: skipped writing ${file} locale (existing file is not a mapping)`,
+  "cli.init.configLocaleSkippedUpdate": ({
+    file,
+    current,
+    locale,
+  }: {
+    file: string;
+    current: string;
+    locale: string;
+  }): string =>
+    `init: skipped updating ${file} locale '${current}' -> '${locale}' (use --force to overwrite)`,
+
+  // --- audit gap follow-up: source list/test/recipes display (#342 A4) ------
+  // The `source list -v` / `source test` / `source recipes` display output
+  // (field labels, the fetched/filtered/matched summary, the selector-adoption
+  // and pagination-preview blocks, and the recipes table headings/prose) were
+  // English (or mixed en/ja) literals. Field IDs / values stay verbatim; only
+  // labels and prose are translated.
+  "cli.source.fieldKind": ({ value }: { value: string }): string => `  kind:           ${value}`,
+  "cli.source.fieldUrl": ({ value }: { value: string }): string => `  url:            ${value}`,
+  "cli.source.fieldName": ({ value }: { value: string }): string => `  name:           ${value}`,
+  "cli.source.fieldTags": ({ value }: { value: string }): string => `  tags:           ${value}`,
+  "cli.source.fieldKeywords": ({ value }: { value: string }): string =>
+    `  keywords:       ${value}`,
+  "cli.source.fieldExcludeKeywords": ({ value }: { value: string }): string =>
+    `  excludeKeywords: ${value}`,
+  "cli.source.fieldTrustLevel": ({ value }: { value: string }): string =>
+    `  trustLevel:     ${value}`,
+  "cli.source.fieldLastFetchedAt": ({ value }: { value: string }): string =>
+    `  lastFetchedAt:  ${value}`,
+  "cli.source.keywordsEmpty": "(none — items will be filtered out)",
+  "cli.source.valueNone": "-",
+  "cli.source.listHeaderId": "ID",
+  "cli.source.listHeaderKind": "KIND",
+  "cli.source.listHeaderUrl": "URL",
+  "cli.source.listHeaderTags": "TAGS",
+  "cli.source.testHeading": ({ id }: { id: string }): string => `source test: ${id}`,
+  "cli.source.testCounts": ({
+    fetched,
+    filtered,
+    matched,
+  }: {
+    fetched: number;
+    filtered: number;
+    matched: number;
+  }): string => `  fetched: ${fetched} / filtered: ${filtered} / matched: ${matched}`,
+  "cli.source.facetSweepNotice": ({
+    facet,
+    testedValue,
+    totalValues,
+  }: {
+    facet: string;
+    testedValue: string | number;
+    totalValues: number;
+  }): string =>
+    `source test: facet sweep enabled: testing only ${facet}=${testedValue} (the other ${totalValues} facet value(s) are NOT walked). ` +
+    "Range facets test the upper bound (latest value). Run `radar watch run --backfill` to verify every facet value.",
+  "cli.source.selectorAdoptionHeading": "  selector adoption:",
+  "cli.source.selectorNoCandidate": ({ field }: { field: string }): string =>
+    `    ${field}: (no candidate matched)`,
+  "cli.source.selectorAdopted": ({ field, path }: { field: string; path: string }): string =>
+    `    ${field} ← adopted ${path}`,
+  "cli.source.paginationPreviewHeading": "  pagination preview (page 0 only — state not mutated):",
+  "cli.source.paginationStrategy": ({ strategy }: { strategy: string }): string =>
+    `    strategy:  ${strategy}`,
+  "cli.source.paginationNextUrl": ({ nextUrl }: { nextUrl: string }): string =>
+    `    nextUrl:   ${nextUrl}`,
+  "cli.source.paginationEndOfPagination": "(end of pagination)",
+  "cli.source.paginationLinkNext": ({ value }: { value: string }): string =>
+    `    Link rel=next: ${value}`,
+  "cli.source.paginationNextCursor": ({ value }: { value: string }): string =>
+    `    nextCursor: ${value}`,
+  "cli.source.paginationAbsent": "(absent)",
+  "cli.source.testNoMatched": "  (no matched items)",
+  "cli.source.testShowing": ({ shown, total }: { shown: number; total: number }): string =>
+    `Showing ${shown} of ${total} matched item(s):`,
+  "cli.source.testItemTitle": ({ index, title }: { index: number; title: string }): string =>
+    `  ${index}. ${title}`,
+  "cli.source.testItemUrl": ({ url }: { url: string }): string => `     url:             ${url}`,
+  "cli.source.testItemMatchedKeywords": ({ value }: { value: string }): string =>
+    `     matchedKeywords: ${value}`,
+  "cli.source.testItemContent": ({ value }: { value: string }): string =>
+    `     content:         ${value}`,
+  "cli.source.testMoreItems": ({ count }: { count: number }): string =>
+    `  … ${count} more (raise --limit to see them)`,
+  "cli.source.recipesNoValid":
+    "source recipes: no valid recipes found (all bundled entries failed to load)",
+  "cli.source.recipesHeaderName": "NAME",
+  "cli.source.recipesHeaderKind": "KIND",
+  "cli.source.recipesHeaderDescription": "DESCRIPTION",
+  "cli.source.recipesErrorsHeading": "Recipes with errors:",
+  "cli.source.recipesErrorRow": ({ name, error }: { name: string; error: string }): string =>
+    `  ${name}: ${error}`,
+  "cli.source.recipesErrorUnknown": "(unknown error)",
+  "cli.source.recipesApplyHeading": "Apply a recipe with:",
+  "cli.source.recipesApplyExample":
+    "  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]",
+
+  // --- audit gap follow-up: triage progress + confirm prompt (#342 A6/B1) ---
+  // The per-source triage progress marker and the interactive apply-confirm
+  // prompt were English literals. Source id / agent / count stay verbatim.
+  "cli.triage.progressTriaging": ({
+    count,
+    sourceId,
+    agent,
+  }: {
+    count: number;
+    sourceId: string;
+    agent: string;
+  }): string => `Triaging ${count} item(s) from source '${sourceId}' via ${agent}`,
+  "cli.triage.confirmApply": "Apply these decisions? [y/N]",
 } as const;
 
 /** Union of all valid message keys. */

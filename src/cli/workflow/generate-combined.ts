@@ -233,6 +233,7 @@ export async function generateCombined(
 ): Promise<GenerateCombinedResult> {
   const { cwd, watchCron, output, agent, maxItems, filterTags, force } = options;
   const locale: Locale = options.locale ?? "en";
+  const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -278,27 +279,29 @@ export async function generateCombined(
     throw new Error(`output file already exists: ${destRel} (use --force to overwrite)`);
   }
   if ((await pathExists(destAbs)) && force) {
-    warn(`workflow generate combined: overwriting existing file ${destRel}`);
+    warn(t("cli.workflow.generateCombinedOverwriting", { path: destRel }));
   }
 
   await mkdir(dirname(destAbs), { recursive: true });
   await writeFile(destAbs, rendered, "utf8");
 
-  log(`workflow generate combined: wrote ${destRel}`);
-  log(`  agent:       ${agent}`);
-  log(`  cron:        ${watchCron}`);
-  log(`  max-items:   ${maxItems}`);
-  log(`  filter-tags: ${filterTags.length === 0 ? "(none)" : filterTags.join(",")}`);
+  log(t("cli.workflow.generateCombinedWrote", { path: destRel }));
+  log(t("cli.workflow.detailAgent", { agent }));
+  log(t("cli.workflow.detailCron", { cron: watchCron }));
+  log(t("cli.workflow.detailMaxItems", { maxItems }));
+  log(
+    t("cli.workflow.detailFilterTags", {
+      tags: filterTags.length === 0 ? t("cli.workflow.filterTagsNone") : filterTags.join(","),
+    }),
+  );
   log("");
-  log("Required GitHub Actions secrets (Settings → Secrets and variables → Actions):");
+  log(t("cli.workflow.requiredSecretsHeading"));
   for (const s of AGENT_SECRET_NAMES[agent]) {
     log(`  ${s}`);
   }
   // Surface the hard-cap double-defense so the user knows editing the YAML
   // alone will not lift the CLI cap (ADR-0014 D3a tail).
-  warn(
-    "workflow generate combined: the --max-items cap is also enforced by `radar research --batch`; editing the YAML alone will not raise it",
-  );
+  warn(t("cli.workflow.maxItemsCapWarning", { cmd: "workflow generate combined" }));
 
   return { outputPath: destRel, requiredSecrets: AGENT_SECRET_NAMES[agent] };
 }

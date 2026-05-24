@@ -76,7 +76,7 @@ export async function runRoutine(
   }
 
   if (sub !== "generate") {
-    error(`routine: unknown subcommand '${sub}'`);
+    error(t("cli.routine.unknownSubcommand", { sub }));
     printRoutineHelp(t, error);
     return 2;
   }
@@ -93,7 +93,7 @@ export async function runRoutine(
     case "pipeline":
       return runGeneratePipelineRoutine(typeArgs, options.io ?? {}, cwd);
     default:
-      error(`routine generate: unknown type '${type}'`);
+      error(t("cli.routine.unknownType", { type }));
       printGenerateHelp(t, error);
       return 2;
   }

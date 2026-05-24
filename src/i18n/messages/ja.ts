@@ -676,6 +676,8 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
                         API は解析せず、そのまま渡される。
   --token-env <NAME>    ルーティンごとの bearer トークンを保持する環境変数名
                         (デフォルト: ${tokenEnv})。
+  --lang <en|ja>        このコマンドのメッセージ / ヘルプの表示言語
+                        (既定: en; RADAR_LANG と config.locale も尊重)
 
 ルーティンごとのトークンは Web UI で一度だけ発行される (再生成 / 失効も Web UI で行う)。
 トークンは環境変数から読み取られ、フラグとしては受け付けず、出力もされない。`,
@@ -1261,4 +1263,273 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
                          (research エンジン SKILL は組み込みの構造にフォールバックする)
   --no-feedradar-md      ワークスペースルートへの FEEDRADAR.md 書き込みをスキップする
                          (ワークスペースに独自のユーザー向け文書がある場合に有用)`,
+
+  // --- 総チェック follow-up: dispatcher エラー (#342 A1) ---------------------
+  "cli.workflow.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `workflow: 不明なサブコマンド '${sub}' です`,
+  "cli.workflow.unknownType": ({ type }: { type: string }): string =>
+    `workflow generate: 不明なタイプ '${type}' です`,
+  "cli.routine.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `routine: 不明なサブコマンド '${sub}' です`,
+  "cli.routine.unknownType": ({ type }: { type: string }): string =>
+    `routine generate: 不明なタイプ '${type}' です`,
+
+  // --- 総チェック follow-up: workflow generate サマリ (#342 A2) --------------
+  "cli.workflow.generateWatchWrote": ({ path }: { path: string }): string =>
+    `workflow generate watch: ${path} を書き込みました`,
+  "cli.workflow.generateWatchSummary": ({ cron, agent }: { cron: string; agent: string }): string =>
+    `workflow generate watch: cron='${cron}', agent='${agent}'`,
+  "cli.workflow.generateWatchOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate watch: 既存ファイル ${path} を上書きします`,
+  "cli.workflow.requiredSecretsHeading":
+    "必要な GitHub Actions シークレット (Settings → Secrets and variables → Actions):",
+  "cli.workflow.secretCopilotToken": "  GITHUB_TOKEN — GitHub Actions が自動発行 (手動設定不要)",
+  "cli.workflow.secretAgentKey": ({ envKey, agent }: { envKey: string; agent: string }): string =>
+    `  ${envKey} — '${agent}' エージェントに必要`,
+  "cli.workflow.secretGithubTokenAuto": "  GITHUB_TOKEN — GitHub Actions が自動発行 (手動設定不要)",
+  "cli.workflow.generateCombinedWrote": ({ path }: { path: string }): string =>
+    `workflow generate combined: ${path} を書き込みました`,
+  "cli.workflow.generateCombinedOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate combined: 既存ファイル ${path} を上書きします`,
+  "cli.workflow.detailAgent": ({ agent }: { agent: string }): string => `  agent:       ${agent}`,
+  "cli.workflow.detailCron": ({ cron }: { cron: string }): string => `  cron:        ${cron}`,
+  "cli.workflow.detailMaxItems": ({ maxItems }: { maxItems: number }): string =>
+    `  max-items:   ${maxItems}`,
+  "cli.workflow.detailFilterTags": ({ tags }: { tags: string }): string => `  filter-tags: ${tags}`,
+  "cli.workflow.filterTagsNone": "(なし)",
+  "cli.workflow.maxItemsCapWarning": ({ cmd }: { cmd: string }): string =>
+    `${cmd}: --max-items の上限は \`radar research --batch\` 側でも強制されます。YAML を編集するだけでは引き上げられません`,
+  "cli.workflow.generateCombinedWithTriageWrote": ({ path }: { path: string }): string =>
+    `workflow generate combined-with-triage: ${path} を書き込みました`,
+  "cli.workflow.generateCombinedWithTriageOverwriting": ({ path }: { path: string }): string =>
+    `workflow generate combined-with-triage: 既存ファイル ${path} を上書きします`,
+  "cli.workflow.detailWatchCron": ({ cron }: { cron: string }): string =>
+    `  watch-cron:     ${cron}`,
+  "cli.workflow.detailTriageAgent": ({ agent }: { agent: string }): string =>
+    `  triage-agent:   ${agent}`,
+  "cli.workflow.detailResearchAgent": ({ agent }: { agent: string }): string =>
+    `  research-agent: ${agent}`,
+  "cli.workflow.detailReviewAgent": ({ agent }: { agent: string }): string =>
+    `  review-agent:   ${agent}`,
+  "cli.workflow.detailMaxItemsWide": ({ maxItems }: { maxItems: number }): string =>
+    `  max-items:      ${maxItems}`,
+  "cli.workflow.detailOutputMode": ({ mode }: { mode: string }): string =>
+    `  output-mode:    ${mode}`,
+  "cli.workflow.detailSlackWebhook": ({ webhook }: { webhook: string }): string =>
+    `  slack-webhook:  ${webhook}`,
+  "cli.workflow.slackWebhookNone": "(なし — 通知ステップは no-op)",
+  "cli.workflow.secretsNoneAutoToken":
+    "  (なし — 選択した全エージェントが自動発行の GITHUB_TOKEN を利用)",
+  "cli.workflow.secretGithubTokenAutoNoSetup": "  GITHUB_TOKEN (自動発行、設定不要)",
+
+  // --- 総チェック follow-up: routine generate サマリ (#342 A2) ---------------
+  "cli.routine.generateWatchWrote": ({ path }: { path: string }): string =>
+    `routine generate watch: ${path} を書き込みました`,
+  "cli.routine.generateWatchSummary": ({
+    name,
+    repo,
+    cron,
+    model,
+  }: {
+    name: string;
+    repo: string;
+    cron: string;
+    model: string;
+  }): string =>
+    `routine generate watch: name='${name}', repo='${repo}', cron='${cron}', model='${model}'`,
+  "cli.routine.generateWatchOverwriting": ({ path }: { path: string }): string =>
+    `routine generate watch: 既存ファイル ${path} を上書きします`,
+  "cli.routine.generatePipelineWrote": ({ path }: { path: string }): string =>
+    `routine generate pipeline: ${path} を書き込みました`,
+  "cli.routine.generatePipelineSummary": ({
+    name,
+    repo,
+    cron,
+    model,
+    maxItems,
+    outputMode,
+  }: {
+    name: string;
+    repo: string;
+    cron: string;
+    model: string;
+    maxItems: number;
+    outputMode: string;
+  }): string =>
+    `routine generate pipeline: name='${name}', repo='${repo}', cron='${cron}', model='${model}', max-items=${maxItems}, output-mode='${outputMode}'`,
+  "cli.routine.generatePipelineOverwriting": ({ path }: { path: string }): string =>
+    `routine generate pipeline: 既存ファイル ${path} を上書きします`,
+  "cli.routine.autoMergeWarning": ({ cmd }: { cmd: string }): string =>
+    `${cmd}: --output-mode auto-merge は ` +
+    "`allow_unrestricted_git_push: true` を設定しますが、これは必要条件であって十分条件ではありません。" +
+    "Web UI の 'Allow unrestricted branch pushes' トグルも ON にする必要があります " +
+    "(RemoteTrigger API はこのフィールドを受け付けません)。なお、その場合は無人の AI 出力が " +
+    "人間のレビューなしでデフォルトブランチに入る点に注意してください。",
+  "cli.routine.pasteNoApi":
+    "Routines には宣言的な apply API がありません。この routine を Web UI に手で貼り付けてください:",
+  "cli.routine.pasteStep1":
+    "  1. https://claude.ai/code/routines を開き New routine をクリックします。",
+  "cli.routine.pasteStep2":
+    "  2. YAML からフォーム項目を埋めます (Name / Model / Repositories / Trigger / Permissions)。",
+  "cli.routine.pasteStep3":
+    "  3. 複数行の Instructions / Setup script フィールドは yq で抽出します:",
+  "cli.routine.pasteYqInstructions": ({ path }: { path: string }): string =>
+    `       yq -r '.instructions'             ${path}`,
+  "cli.routine.pasteYqSetupScript": ({ path }: { path: string }): string =>
+    `       yq -r '.environment.setup_script' ${path}`,
+  "cli.routine.pasteStep4":
+    "  4. 登録後、発行された routine_id (trig_xxxx) を YAML に書き戻し、status: active を設定します。",
+  "cli.routine.scheduleNote1":
+    "/schedule (Claude Code) について: 対話形式です — `/schedule <説明>` で作成し、",
+  "cli.routine.scheduleNote2":
+    "`list` / `update` / `run` サブコマンドが使えます。フラグ形式 (`--name` / `--cron` /",
+  "cli.routine.scheduleNote3":
+    "`--repo` 引数) はありません。またこの YAML をそのまま取り込むこともできないため、",
+  "cli.routine.scheduleNote4":
+    "長い Instructions フィールドについては上記の Web UI 貼り付けフロー (yq 抽出) が",
+  "cli.routine.scheduleNote5":
+    "現実的な手段です。最後に、auto-merge routine が必要とする unrestricted-git-push 権限は",
+  "cli.routine.scheduleNote6":
+    "Web UI の 'Allow unrestricted branch pushes' トグルでのみ設定でき、/schedule では",
+  "cli.routine.scheduleNote7": "設定できません。",
+  "cli.routine.outputGateBranchPr":
+    "出力ゲート: この routine は claude/* ブランチ / PR にのみ書き込みます — main へは直接書き込みません。",
+  "cli.routine.outputGateAutoMerge":
+    "出力ゲート: この routine は claude/* PR を開いてから main へ squash-merge します (手順 5 のレビューでレビュー完了)。",
+  "cli.routine.pipelineNoSpawn1":
+    "単一の Claude セッション、spawn なし: GHA combined-with-triage ワークフローと異なり、",
+  "cli.routine.pipelineNoSpawn2":
+    "ここにクロスエージェントレビューはありません — 1 つの Claude が全ステップを実行します。",
+  "cli.routine.pipelineItemCaps": ({ maxItems }: { maxItems: number }): string =>
+    `アイテム上限は CLI で強制されます: triage --max-items ${maxItems} / items --limit ${maxItems}。`,
+  "cli.routine.fireTriggered": ({
+    routineId,
+    status,
+  }: {
+    routineId: string;
+    status: number;
+  }): string => `routine fire: ${routineId} を起動しました (HTTP ${status})。`,
+  "cli.routine.fireSessionCreated": "セッションが作成されました — この呼び出しは完了を待ちません。",
+
+  // --- 総チェック follow-up: init 運用警告 (#342 A3) -------------------------
+  "cli.init.bundledSkillNotFound": ({ src }: { src: string }): string =>
+    `init: バンドルされた skill が見つからないためスキップしました: ${src}`,
+  "cli.init.bundledClaudeSkillNotFound": ({ src }: { src: string }): string =>
+    `init: バンドルされた claude discovery skill が見つからないためスキップしました: ${src}`,
+  "cli.init.bundledGeminiCommandNotFound": ({ src }: { src: string }): string =>
+    `init: バンドルされた gemini コマンドが見つからないためスキップしました: ${src}`,
+  "cli.init.bundledTemplateNotFound": ({ src }: { src: string }): string =>
+    `init: バンドルされたテンプレートが見つからないためスキップしました: ${src}`,
+  "cli.init.skippedExisting": ({ file }: { file: string }): string =>
+    `init: 既存ファイルをスキップしました (上書きするには --force): ${file}`,
+  "cli.init.skippedClaudeMdNoAgentsMd":
+    "init: --no-agents-md が指定されたため CLAUDE.md をスキップしました (バンドルの CLAUDE.md は @AGENTS.md を import するため import が解決できなくなります)",
+  "cli.init.configLocaleNotYaml": ({ file, reason }: { file: string; reason: string }): string =>
+    `init: ${file} の locale 書き込みをスキップしました (既存ファイルが有効な YAML ではありません: ${reason})`,
+  "cli.init.configLocaleNotMapping": ({ file }: { file: string }): string =>
+    `init: ${file} の locale 書き込みをスキップしました (既存ファイルがマッピングではありません)`,
+  "cli.init.configLocaleSkippedUpdate": ({
+    file,
+    current,
+    locale,
+  }: {
+    file: string;
+    current: string;
+    locale: string;
+  }): string =>
+    `init: ${file} の locale '${current}' -> '${locale}' への更新をスキップしました (上書きするには --force)`,
+
+  // --- 総チェック follow-up: source list/test/recipes 表示 (#342 A4) ---------
+  "cli.source.fieldKind": ({ value }: { value: string }): string => `  kind:           ${value}`,
+  "cli.source.fieldUrl": ({ value }: { value: string }): string => `  url:            ${value}`,
+  "cli.source.fieldName": ({ value }: { value: string }): string => `  name:           ${value}`,
+  "cli.source.fieldTags": ({ value }: { value: string }): string => `  tags:           ${value}`,
+  "cli.source.fieldKeywords": ({ value }: { value: string }): string =>
+    `  keywords:       ${value}`,
+  "cli.source.fieldExcludeKeywords": ({ value }: { value: string }): string =>
+    `  excludeKeywords: ${value}`,
+  "cli.source.fieldTrustLevel": ({ value }: { value: string }): string =>
+    `  trustLevel:     ${value}`,
+  "cli.source.fieldLastFetchedAt": ({ value }: { value: string }): string =>
+    `  lastFetchedAt:  ${value}`,
+  "cli.source.keywordsEmpty": "(なし — アイテムはフィルタで除外されます)",
+  "cli.source.valueNone": "-",
+  "cli.source.listHeaderId": "ID",
+  "cli.source.listHeaderKind": "KIND",
+  "cli.source.listHeaderUrl": "URL",
+  "cli.source.listHeaderTags": "TAGS",
+  "cli.source.testHeading": ({ id }: { id: string }): string => `source test: ${id}`,
+  "cli.source.testCounts": ({
+    fetched,
+    filtered,
+    matched,
+  }: {
+    fetched: number;
+    filtered: number;
+    matched: number;
+  }): string => `  取得: ${fetched} / フィルタ後: ${filtered} / 一致: ${matched}`,
+  "cli.source.facetSweepNotice": ({
+    facet,
+    testedValue,
+    totalValues,
+  }: {
+    facet: string;
+    testedValue: string | number;
+    totalValues: number;
+  }): string =>
+    `source test: facet sweep 有効: ${facet}=${testedValue} のみ test 中 (全 ${totalValues} 件の facet 値は walk しません)。` +
+    "range facet は上端 (最新値) を test します。全 facet 値を確認するには `radar watch run --backfill` を使用してください。",
+  "cli.source.selectorAdoptionHeading": "  selector adoption:",
+  "cli.source.selectorNoCandidate": ({ field }: { field: string }): string =>
+    `    ${field}: (一致する候補なし)`,
+  "cli.source.selectorAdopted": ({ field, path }: { field: string; path: string }): string =>
+    `    ${field} ← ${path} を採用`,
+  "cli.source.paginationPreviewHeading":
+    "  pagination preview (page 0 のみ — state は変更されません):",
+  "cli.source.paginationStrategy": ({ strategy }: { strategy: string }): string =>
+    `    strategy:  ${strategy}`,
+  "cli.source.paginationNextUrl": ({ nextUrl }: { nextUrl: string }): string =>
+    `    nextUrl:   ${nextUrl}`,
+  "cli.source.paginationEndOfPagination": "(ページネーション終端)",
+  "cli.source.paginationLinkNext": ({ value }: { value: string }): string =>
+    `    Link rel=next: ${value}`,
+  "cli.source.paginationNextCursor": ({ value }: { value: string }): string =>
+    `    nextCursor: ${value}`,
+  "cli.source.paginationAbsent": "(なし)",
+  "cli.source.testNoMatched": "  (一致したアイテムはありません)",
+  "cli.source.testShowing": ({ shown, total }: { shown: number; total: number }): string =>
+    `一致した ${total} 件のうち ${shown} 件を表示:`,
+  "cli.source.testItemTitle": ({ index, title }: { index: number; title: string }): string =>
+    `  ${index}. ${title}`,
+  "cli.source.testItemUrl": ({ url }: { url: string }): string => `     url:             ${url}`,
+  "cli.source.testItemMatchedKeywords": ({ value }: { value: string }): string =>
+    `     matchedKeywords: ${value}`,
+  "cli.source.testItemContent": ({ value }: { value: string }): string =>
+    `     content:         ${value}`,
+  "cli.source.testMoreItems": ({ count }: { count: number }): string =>
+    `  … 他 ${count} 件 (--limit を上げると表示されます)`,
+  "cli.source.recipesNoValid":
+    "source recipes: 有効なレシピが見つかりません (バンドルされた全エントリの読み込みに失敗)",
+  "cli.source.recipesHeaderName": "NAME",
+  "cli.source.recipesHeaderKind": "KIND",
+  "cli.source.recipesHeaderDescription": "DESCRIPTION",
+  "cli.source.recipesErrorsHeading": "エラーのあるレシピ:",
+  "cli.source.recipesErrorRow": ({ name, error }: { name: string; error: string }): string =>
+    `  ${name}: ${error}`,
+  "cli.source.recipesErrorUnknown": "(不明なエラー)",
+  "cli.source.recipesApplyHeading": "レシピの適用方法:",
+  "cli.source.recipesApplyExample":
+    "  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]",
+
+  // --- 総チェック follow-up: triage 進捗 + 確認プロンプト (#342 A6/B1) -------
+  "cli.triage.progressTriaging": ({
+    count,
+    sourceId,
+    agent,
+  }: {
+    count: number;
+    sourceId: string;
+    agent: string;
+  }): string => `ソース '${sourceId}' の ${count} 件を ${agent} で triage 中`,
+  "cli.triage.confirmApply": "これらの判定を適用しますか? [y/N]",
 };
