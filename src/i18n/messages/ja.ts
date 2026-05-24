@@ -71,6 +71,21 @@ export const ja: Messages = {
     selector: string;
     elapsed: string;
   }): string => `セレクタ "${selector}" を待機中… [${elapsed}]`,
+  "cli.progress.watchFetching": ({ sourceId }: { sourceId: string }): string =>
+    `[${sourceId}] 取得中…`,
+  "cli.progress.watchKindInfo": ({ kind }: { kind: string }): string => `種別: ${kind}`,
+  "cli.progress.watchFailed": ({ sourceId }: { sourceId: string }): string => `[${sourceId}] 失敗`,
+  "cli.progress.htmlJsLaunching": "Chromium を起動中…",
+  "cli.progress.htmlJsNavigating": ({ url }: { url: string }): string => `${url} へ移動中…`,
+  "cli.progress.htmlJsWaitingSelector": ({
+    selector,
+    timeout,
+  }: {
+    selector: string;
+    timeout: number;
+  }): string => `セレクタ "${selector}" を待機中 (タイムアウト: ${timeout}ms)…`,
+  "cli.progress.htmlJsCapturing": "ページ内容を取得中…",
+  "cli.progress.htmlJsClosing": "ブラウザを終了中…",
 
   // --- command summaries (global help list, #311) ---------------------------
   "cli.summary.init": "ワークスペースを初期化する (sources/items/state/research/templates)",

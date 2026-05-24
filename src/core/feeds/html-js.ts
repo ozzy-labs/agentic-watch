@@ -186,14 +186,16 @@ export const htmlJsAdapter: FeedAdapter = {
     const previous = options.state;
     const fetchedAt = new Date().toISOString();
     // Progress reporter is optional — callers that did not opt in see the
-    // pre-#198 no-op behavior. Marker names follow ADR-0015 D4
-    // ("Chromium launching" / "Page navigated to <url>" etc.) verbatim so
-    // the user-guide stays accurate without per-call docstrings.
+    // pre-#198 no-op behavior. Marker prose follows ADR-0015 D4 but is sourced
+    // from the i18n catalog (`cli.progress.htmlJs*`) so it tracks the resolved
+    // UI locale (#340).
     const progress = options.onProgress;
     const stillWaitingMs = options.stillWaitingMs ?? DEFAULT_STILL_WAITING_MS;
-    // Translator for the user-facing `Still waiting…` reminder (#337). Defaults
-    // to `en` so direct adapter callers that do not pass a locale keep their
-    // English output.
+    // Translator for the user-facing Playwright-lifecycle progress markers and
+    // the `Still waiting…` reminder (#337 / #340). Defaults to `en` so direct
+    // adapter callers that do not pass a locale keep their English output. The
+    // embedded values (url, selector, timeout, mm:ss) are functional fields and
+    // stay verbatim across locales.
     const t = options.translate ?? createTranslator("en");
 
     // Probe proxy env BEFORE launch. Playwright's `BrowserType.launch()` does
@@ -221,7 +223,7 @@ export const htmlJsAdapter: FeedAdapter = {
 
     // Hardening: headless is forced true. Even if a future Playwright default
     // changes, the adapter pins it explicitly here.
-    progress?.phase("Launching Chromium…");
+    progress?.phase(t("cli.progress.htmlJsLaunching"));
     const browser = await playwright.chromium.launch({
       headless: true,
       ...(proxyOption ? { proxy: proxyOption } : {}),
@@ -238,9 +240,9 @@ export const htmlJsAdapter: FeedAdapter = {
       try {
         const page = await context.newPage();
         try {
-          progress?.phase(`Navigating to ${source.url}…`);
+          progress?.phase(t("cli.progress.htmlJsNavigating", { url: source.url }));
           await page.goto(source.url, { waitUntil, timeout });
-          progress?.phase(`Waiting for selector "${waitFor}" (timeout: ${timeout}ms)…`);
+          progress?.phase(t("cli.progress.htmlJsWaitingSelector", { selector: waitFor, timeout }));
           // Long-running selector waits warrant a `Still waiting…` reminder
           // so the user knows the adapter is alive (not hung). The timer is
           // set up only when a progress reporter is wired so we do not keep
@@ -268,7 +270,7 @@ export const htmlJsAdapter: FeedAdapter = {
           } finally {
             if (stillWaitingTimer) clearTimeout(stillWaitingTimer);
           }
-          progress?.phase("Capturing page content…");
+          progress?.phase(t("cli.progress.htmlJsCapturing"));
           html = await page.content();
         } finally {
           // `finally` guarantees page close even on goto / waitFor timeout —
@@ -279,7 +281,7 @@ export const htmlJsAdapter: FeedAdapter = {
         await context.close();
       }
     } finally {
-      progress?.phase("Closing browser…");
+      progress?.phase(t("cli.progress.htmlJsClosing"));
       await browser.close();
     }
 

@@ -120,6 +120,30 @@ export const en = {
     selector: string;
     elapsed: string;
   }): string => `Still waiting for "${selector}"… [${elapsed}]`,
+  /** "[<source-id>] Fetching…" — per-source start-of-fetch phase marker. */
+  "cli.progress.watchFetching": ({ sourceId }: { sourceId: string }): string =>
+    `[${sourceId}] Fetching…`,
+  /** "kind: <kind>" — side-metric info shown alongside the Fetching phase. */
+  "cli.progress.watchKindInfo": ({ kind }: { kind: string }): string => `kind: ${kind}`,
+  /** "[<source-id>] Failed" — per-source fetch-failure phase label. */
+  "cli.progress.watchFailed": ({ sourceId }: { sourceId: string }): string =>
+    `[${sourceId}] Failed`,
+  /** "Launching Chromium…" — html-js browser-launch phase marker. */
+  "cli.progress.htmlJsLaunching": "Launching Chromium…",
+  /** "Navigating to <url>…" — html-js page-navigation phase marker. */
+  "cli.progress.htmlJsNavigating": ({ url }: { url: string }): string => `Navigating to ${url}…`,
+  /** "Waiting for selector "<sel>" (timeout: <ms>ms)…" — html-js selector-wait phase marker. */
+  "cli.progress.htmlJsWaitingSelector": ({
+    selector,
+    timeout,
+  }: {
+    selector: string;
+    timeout: number;
+  }): string => `Waiting for selector "${selector}" (timeout: ${timeout}ms)…`,
+  /** "Capturing page content…" — html-js content-capture phase marker. */
+  "cli.progress.htmlJsCapturing": "Capturing page content…",
+  /** "Closing browser…" — html-js browser-close phase marker. */
+  "cli.progress.htmlJsClosing": "Closing browser…",
 
   // --- command summaries (global help list, #311) ---------------------------
   // One-line descriptions shown by `radar --help`. Mirror each command's
