@@ -20,3 +20,14 @@ pre-commit:
       glob: "**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts,json,jsonc}"
       run: mise exec -- biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
+
+# Validate `.claude/routines/*.yaml` against the routine contract (ADR-0020 /
+# #280). pre-push (not pre-commit) per the README recommendation — the check
+# is a whole-file contract validation, not a per-staged-file formatter.
+# `uv run` provisions PyYAML from the script's PEP 723 inline metadata, so no
+# repo-level Python dependency is required.
+pre-push:
+  commands:
+    routines-validate:
+      glob: ".claude/routines/*.yaml"
+      run: mise exec -- uv run scripts/routines/validate.py
