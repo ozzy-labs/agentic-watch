@@ -1,6 +1,7 @@
 import { access, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { Item, Source, SourceState } from "../schemas/index.js";
 import { SourceSchema } from "../schemas/index.js";
 import type { FeedAdapter, FeedFetchDiag, FetchLike } from "./feeds/index.js";
@@ -136,6 +137,16 @@ export interface WatchRunOptions extends WorkspacePaths {
    * with no progress wiring — byte-equivalent to the pre-#198 behaviour.
    */
   progress?: ProgressReporter;
+  /**
+   * Translator for the user-facing watch-flow progress markers (#337 / ADR-0021).
+   * Threaded alongside {@link progress} so the per-source page / completion
+   * labels (and the html-js `Still waiting…` reminder) track the resolved UI
+   * locale. Defaults to an `en` translator when unset so existing callers that
+   * only care about the fetch mechanics keep their English output. The embedded
+   * values (source id, page counters, mm:ss, item counts) are functional fields
+   * and stay verbatim across locales.
+   */
+  translate?: Translator;
 }
 
 export interface WatchRunResult {
@@ -275,6 +286,9 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
   const getAdapter = options.getAdapter ?? getFeedAdapter;
   const env = options.env ?? process.env;
   const installImpl = options.installChromiumImpl ?? installChromium;
+  // Translator for the user-facing progress markers (#337). Defaults to `en`
+  // so existing callers that do not pass a locale keep their English output.
+  const t = options.translate ?? createTranslator("en");
 
   const sources = await loadSources(paths.sourcesDir, (m) => warn(`watch run: ${m}`));
   const filtered = options.sourceId ? sources.filter((s) => s.id === options.sourceId) : sources;
@@ -405,6 +419,9 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
         // the parent `[<source-id>] …` marker. html-js uses it for the
         // Chromium lifecycle; other kinds currently ignore it.
         onProgress: progress,
+        // Thread the locale translator so the html-js `Still waiting…`
+        // reminder is localized on the same path as the reporter (#337).
+        translate: t,
         // Per-page hook for paginating adapters (json-api). We translate
         // each page event into a phase marker so non-TTY logs preserve the
         // narrative ("Page 3/80: 100 items") and TTY rows pick up the
@@ -418,8 +435,15 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
               const facetLabel = facet
                 ? `${facet.name}=${facet.value} (${facet.index}/${facet.total}) `
                 : "";
-              const human = `${facetLabel}Page ${pageIndex + 1}/${pageTotal}: ${pageItems} items fetched`;
-              progress.phase(`[${source.id}] ${human}`);
+              progress.phase(
+                t("cli.progress.watchPage", {
+                  sourceId: source.id,
+                  facet: facetLabel,
+                  page: pageIndex + 1,
+                  pageTotal,
+                  items: pageItems,
+                }),
+              );
               progress.update({
                 ...(facet
                   ? { [facet.name]: `${facet.value} (${facet.index}/${facet.total})` }
@@ -536,7 +560,11 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     if (progress) {
       const duration = Date.now() - sourceStartedAt;
       progress.succeed(
-        `[${source.id}] Completed: ${fetched.length} total, ${detectedItems.length} new`,
+        t("cli.progress.watchSourceCompleted", {
+          sourceId: source.id,
+          total: fetched.length,
+          fresh: detectedItems.length,
+        }),
         duration,
       );
     }

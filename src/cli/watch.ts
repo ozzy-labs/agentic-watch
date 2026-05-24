@@ -214,6 +214,9 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
       playwrightProbeOptions: options.playwrightProbeOptions,
       installChromiumImpl: options.installChromiumImpl,
       progress,
+      // Localize the per-source page / completion markers (and the html-js
+      // `Still waiting…` reminder) on the same path as the reporter (#337).
+      translate: t,
     });
   } catch (e) {
     error(`watch run: ${e instanceof Error ? e.message : String(e)}`);

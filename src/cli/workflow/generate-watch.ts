@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Locale } from "../../core/locale.js";
+import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 
 /**
@@ -342,30 +343,8 @@ export function parseGenerateWatchArgs(args: string[]): ParsedFlags {
   return { cron, output, agent, force, help };
 }
 
-export function printGenerateWatchHelp(log: (m: string) => void): void {
-  log("Usage: radar workflow generate watch [options]");
-  log("");
-  log("Generates a GitHub Actions workflow that runs `radar watch run` on a cron schedule.");
-  log("The generated workflow includes git pull --rebase retry logic to mitigate push");
-  log("conflicts with other concurrent workflows.");
-  log("");
-  log("Options:");
-  log('  --cron <expression>   5-field cron expression (default: "0 0 * * *")');
-  log("  --output <path>       Output file under .github/workflows/");
-  log("                        (default: .github/workflows/feedradar-watch.yaml)");
-  log(
-    "  --agent <name>        claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log("                        Determines which secret name the workflow references.");
-  log("  --force, -f           Overwrite existing output file");
-  log("  --lang <en|ja>        Language for the generated YAML's comments / step names");
-  log("                        (default: en; also honors RADAR_LANG and config.locale)");
-  log("");
-  log("Required secrets (Settings → Secrets and variables → Actions):");
-  log("  ANTHROPIC_API_KEY    when --agent claude-code (default)");
-  log("  OPENAI_API_KEY       when --agent codex-cli");
-  log("  GEMINI_API_KEY       when --agent gemini-cli");
-  log("  GITHUB_TOKEN         auto-provisioned for --agent copilot (no setup needed)");
+export function printGenerateWatchHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.workflow.generateWatchHelp"));
 }
 
 /**
@@ -405,12 +384,16 @@ export async function runGenerateWatch(
     error(`workflow generate watch: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the per-type help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printGenerateWatchHelp(log);
+    printGenerateWatchHelp(t, log);
     return 0;
   }
-
-  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateWatch({

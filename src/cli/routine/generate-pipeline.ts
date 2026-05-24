@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Locale } from "../../core/locale.js";
+import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import {
   collectSourceHosts,
@@ -569,36 +570,13 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
   };
 }
 
-export function printGeneratePipelineRoutineHelp(log: (m: string) => void): void {
-  log("Usage: radar routine generate pipeline [options]");
-  log("");
-  log("Generates a Claude Code Routine YAML whose single session runs the FULL");
-  log("pipeline — `radar watch run` -> triage -> research -> review — IN SEQUENCE,");
-  log("processing items ONE AT A TIME. It does NOT spawn");
-  log("other agents, so the cross-agent review of the GHA combined-with-triage");
-  log("workflow is NOT present. Per-run item count is bounded by CLI flags.");
-  log("");
-  log("Options:");
-  log('  --name <name>         Routine name (default: "feedradar-pipeline")');
-  log("                        Also the default output filename.");
-  log("  --repo <owner/repo>   Target repository (default: <owner>/<repo>)");
-  log('  --cron <expression>   5-field cron, min interval 1 HOUR (default: "0 * * * *")');
-  log('                        Sub-hourly (e.g. "*/5 * * * *") is rejected.');
-  log('  --timezone <tz>       Schedule timezone (default: "UTC")');
-  log(`  --model <name>        ${SUPPORTED_MODELS.join(" | ")}`);
-  log("                        (default: claude-sonnet-4-6)");
-  log(`  --max-items N         Hard cap on items triaged/researched/reviewed per run`);
+export function printGeneratePipelineRoutineHelp(t: Translator, log: (m: string) => void): void {
   log(
-    `                        (default: ${PIPELINE_DEFAULT_MAX_ITEMS}). Drives triage --max-items and items --limit.`,
+    t("cli.routine.generatePipelineHelp", {
+      models: SUPPORTED_MODELS.join(" | "),
+      maxItems: PIPELINE_DEFAULT_MAX_ITEMS,
+    }),
   );
-  log("  --output-mode <mode>  pr | auto-merge (default: pr). 'auto-merge' squash-merges");
-  log("                        the routine's own PR to main (requires the Web UI 'Allow");
-  log("                        unrestricted branch pushes' toggle).");
-  log("  --output <path>       Output file under .claude/routines/");
-  log("                        (default: .claude/routines/<name>.yaml)");
-  log("  --force, -f           Overwrite existing output file");
-  log("  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments");
-  log("                        (default: en; also honors RADAR_LANG and config.locale)");
 }
 
 /**
@@ -637,12 +615,16 @@ export async function runGeneratePipelineRoutine(
     error(`routine generate pipeline: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the per-type help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printGeneratePipelineRoutineHelp(log);
+    printGeneratePipelineRoutineHelp(t, log);
     return 0;
   }
-
-  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generatePipelineRoutine({

@@ -1,3 +1,4 @@
+import { createTranslator } from "../../i18n/index.js";
 import type { Source, SourceJsOptions } from "../../schemas/index.js";
 import { detectProxyUrl, noProxyToPlaywrightBypass } from "../proxy.js";
 import { contentHash, parseHtmlDocument } from "./_html-common.js";
@@ -190,6 +191,10 @@ export const htmlJsAdapter: FeedAdapter = {
     // the user-guide stays accurate without per-call docstrings.
     const progress = options.onProgress;
     const stillWaitingMs = options.stillWaitingMs ?? DEFAULT_STILL_WAITING_MS;
+    // Translator for the user-facing `Still waiting…` reminder (#337). Defaults
+    // to `en` so direct adapter callers that do not pass a locale keep their
+    // English output.
+    const t = options.translate ?? createTranslator("en");
 
     // Probe proxy env BEFORE launch. Playwright's `BrowserType.launch()` does
     // not honor `HTTPS_PROXY` / `HTTP_PROXY` automatically (unlike Node's
@@ -250,7 +255,9 @@ export const htmlJsAdapter: FeedAdapter = {
               const elapsed = Date.now() - startedAt;
               const mm = String(Math.floor(elapsed / 60_000)).padStart(2, "0");
               const ss = String(Math.floor((elapsed % 60_000) / 1000)).padStart(2, "0");
-              progress.phase(`Still waiting for "${waitFor}"… [${mm}:${ss}]`);
+              progress.phase(
+                t("cli.progress.stillWaiting", { selector: waitFor, elapsed: `${mm}:${ss}` }),
+              );
             }, stillWaitingMs);
             if (typeof (stillWaitingTimer as { unref?: () => void }).unref === "function") {
               (stillWaitingTimer as { unref: () => void }).unref();

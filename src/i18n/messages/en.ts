@@ -76,6 +76,51 @@ export const en = {
   "cli.progress.statusTransition": ({ from, to }: { from: string; to: string }): string =>
     `Status: ${from} → ${to}`,
 
+  // --- watch-flow progress markers (#337, deferred from #313) ---------------
+  // Per-source phase markers emitted by `radar watch run` (`src/core/watcher.ts`)
+  // and the html-js Playwright adapter (`src/core/feeds/html-js.ts`). The
+  // embedded values (source id, page counters, selector name, elapsed mm:ss)
+  // are functional fields and stay verbatim; only the surrounding prose is
+  // translated. Internal debug logs are NOT translated (ADR-0021 boundary).
+  /**
+   * "[<source-id>] <facet>Page <i>/<n>: <items> items fetched" — paginating-
+   * adapter (json-api) page phase marker. `facet` is a pre-built functional
+   * prefix (e.g. `year=2018 (15/23) `) or empty; the page / item counters are
+   * functional and stay verbatim. Only the "Page … items fetched" prose is
+   * translated.
+   */
+  "cli.progress.watchPage": ({
+    sourceId,
+    facet,
+    page,
+    pageTotal,
+    items,
+  }: {
+    sourceId: string;
+    facet: string;
+    page: number;
+    pageTotal: number;
+    items: number;
+  }): string => `[${sourceId}] ${facet}Page ${page}/${pageTotal}: ${items} items fetched`,
+  /** "[<source-id>] Completed: <total> total, <fresh> new" — per-source success line. */
+  "cli.progress.watchSourceCompleted": ({
+    sourceId,
+    total,
+    fresh,
+  }: {
+    sourceId: string;
+    total: number;
+    fresh: number;
+  }): string => `[${sourceId}] Completed: ${total} total, ${fresh} new`,
+  /** "Still waiting for "<sel>"… [<mm:ss>]" — long html-js selector-wait reminder. */
+  "cli.progress.stillWaiting": ({
+    selector,
+    elapsed,
+  }: {
+    selector: string;
+    elapsed: string;
+  }): string => `Still waiting for "${selector}"… [${elapsed}]`,
+
   // --- command summaries (global help list, #311) ---------------------------
   // One-line descriptions shown by `radar --help`. Mirror each command's
   // `Command.summary`; the dispatcher renders them via `t()`.
@@ -504,6 +549,93 @@ Types:
 
 Run \`radar workflow generate <type> --help\` for type-specific options.`,
 
+  // --- per-type workflow generate help (#337, deferred from #311) -----------
+  // Type-specific `--help` bodies for `radar workflow generate <type>`. The
+  // option names / cron expression / secret names are functional fields and
+  // stay verbatim; only the natural-language descriptions are translated.
+  "cli.workflow.generateWatchHelp": `Usage: radar workflow generate watch [options]
+
+Generates a GitHub Actions workflow that runs \`radar watch run\` on a cron schedule.
+The generated workflow includes git pull --rebase retry logic to mitigate push
+conflicts with other concurrent workflows.
+
+Options:
+  --cron <expression>   5-field cron expression (default: "0 0 * * *")
+  --output <path>       Output file under .github/workflows/
+                        (default: .github/workflows/feedradar-watch.yaml)
+  --agent <name>        claude-code | codex-cli | gemini-cli | copilot (default: claude-code)
+                        Determines which secret name the workflow references.
+  --force, -f           Overwrite existing output file
+  --lang <en|ja>        Language for the generated YAML's comments / step names
+                        (default: en; also honors RADAR_LANG and config.locale)
+
+Required secrets (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY    when --agent claude-code (default)
+  OPENAI_API_KEY       when --agent codex-cli
+  GEMINI_API_KEY       when --agent gemini-cli
+  GITHUB_TOKEN         auto-provisioned for --agent copilot (no setup needed)`,
+  "cli.workflow.generateCombinedHelp": ({ maxItems }: { maxItems: number }): string =>
+    `Usage: radar workflow generate combined [options]
+
+Generates a GitHub Actions workflow that chains \`radar watch run\` ->
+a no-new-items guard -> \`radar research --batch\` with hard-capped cost
+controls.
+
+Options:
+  --watch-cron <expression>  5-field cron expression (default: "0 0 * * *")
+  --output <path>            Output file under .github/workflows/
+                             (default: .github/workflows/feedradar-combined.yaml)
+  --agent <name>             claude-code | codex-cli | gemini-cli | copilot (default: claude-code)
+  --max-items N              Hard cap on auto-research per run (default: ${maxItems})
+  --filter-tags <list>       Comma-separated allow-list of matchedKeywords
+                             (default: unset, matches every detected item)
+  --force, -f                Overwrite existing output file
+  --lang <en|ja>             Language for the generated YAML's comments / step names
+                             (default: en; also honors RADAR_LANG and config.locale)
+
+Required secrets (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY    when --agent claude-code (default)
+  OPENAI_API_KEY       when --agent codex-cli
+  GEMINI_API_KEY       when --agent gemini-cli
+  GITHUB_TOKEN         auto-provisioned for --agent copilot (no setup needed)`,
+  "cli.workflow.generateCombinedWithTriageHelp": ({
+    watchCron,
+    output,
+    maxItems,
+  }: {
+    watchCron: string;
+    output: string;
+    maxItems: number;
+  }): string =>
+    `Usage: radar workflow generate combined-with-triage [options]
+
+Generates a GitHub Actions workflow that chains \`radar watch run\` ->
+\`radar triage --apply\` -> \`radar research --batch --status triaged_research\` ->
+per-group \`radar research --digest\` -> \`radar review --batch\` in one job.
+
+Options:
+  --watch-cron <expression>  5-field cron expression (default: "${watchCron}")
+  --output <path>            Output file under .github/workflows/
+                             (default: ${output})
+  --triage-agent <name>      claude-code | codex-cli | gemini-cli | copilot (default: gemini-cli)
+  --research-agent <name>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)
+  --review-agent <name>      claude-code | codex-cli | gemini-cli | copilot (default: codex-cli)
+  --max-items N              Hard cap on research --batch per run (default: ${maxItems})
+  --slack-webhook <ref>      Secret reference (e.g. secrets.SLACK_WEBHOOK) for the
+                             triaged_unsure-queue alert (optional)
+  --output-mode <mode>       pr | direct-commit (default: pr). 'pr' opens a
+                             review PR; 'direct-commit' commits & pushes straight
+                             to the default branch (drops pull-requests: write)
+  --force, -f                Overwrite existing output file
+  --lang <en|ja>             Language for the generated YAML's comments / step names
+                             (default: en; also honors RADAR_LANG and config.locale)
+
+Required secrets (Settings → Secrets and variables → Actions):
+  ANTHROPIC_API_KEY  when any role uses --agent claude-code
+  OPENAI_API_KEY     when any role uses --agent codex-cli
+  GEMINI_API_KEY     when any role uses --agent gemini-cli (default for triage)
+  GITHUB_TOKEN       auto-provisioned (no manual setup needed)`,
+
   // --- routine help (#311) --------------------------------------------------
   "cli.routine.help": `Usage: radar routine <subcommand> [...]
 
@@ -520,6 +652,87 @@ Types:
   pipeline  Full watch -> triage -> research -> review self-session routine, one item at a time
 
 Run \`radar routine generate <type> --help\` for type-specific options.`,
+
+  // --- per-type routine generate / fire help (#337, deferred from #311) -----
+  // Type-specific `--help` bodies for `radar routine generate <type>` and
+  // `radar routine fire`. Model ids / cron / token env var name are functional
+  // fields and stay verbatim; only the prose is translated. `models` is the
+  // pre-joined `SUPPORTED_MODELS.join(" | ")` string so the catalog stays
+  // agnostic of the model list's contents.
+  "cli.routine.generateWatchHelp": ({ models }: { models: string }): string =>
+    `Usage: radar routine generate watch [options]
+
+Generates a Claude Code Routine YAML that runs \`radar watch run\` on a schedule
+and commits detected items/state to a claude/* branch.
+The routine completes in one Claude session — it does NOT spawn other agents.
+
+Options:
+  --name <name>         Routine name (default: "feedradar-watch")
+                        Also the default output filename.
+  --repo <owner/repo>   Target repository (default: <owner>/<repo>)
+  --cron <expression>   5-field cron, min interval 1 HOUR (default: "0 * * * *")
+                        Sub-hourly (e.g. "*/5 * * * *") is rejected.
+  --timezone <tz>       Schedule timezone (default: "UTC")
+  --model <name>        ${models}
+                        (default: claude-sonnet-4-6)
+  --output <path>       Output file under .claude/routines/
+                        (default: .claude/routines/<name>.yaml)
+  --force, -f           Overwrite existing output file
+  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments
+                        (default: en; also honors RADAR_LANG and config.locale)`,
+  "cli.routine.generatePipelineHelp": ({
+    models,
+    maxItems,
+  }: {
+    models: string;
+    maxItems: number;
+  }): string =>
+    `Usage: radar routine generate pipeline [options]
+
+Generates a Claude Code Routine YAML whose single session runs the FULL
+pipeline — \`radar watch run\` -> triage -> research -> review — IN SEQUENCE,
+processing items ONE AT A TIME. It does NOT spawn
+other agents, so the cross-agent review of the GHA combined-with-triage
+workflow is NOT present. Per-run item count is bounded by CLI flags.
+
+Options:
+  --name <name>         Routine name (default: "feedradar-pipeline")
+                        Also the default output filename.
+  --repo <owner/repo>   Target repository (default: <owner>/<repo>)
+  --cron <expression>   5-field cron, min interval 1 HOUR (default: "0 * * * *")
+                        Sub-hourly (e.g. "*/5 * * * *") is rejected.
+  --timezone <tz>       Schedule timezone (default: "UTC")
+  --model <name>        ${models}
+                        (default: claude-sonnet-4-6)
+  --max-items N         Hard cap on items triaged/researched/reviewed per run
+                        (default: ${maxItems}). Drives triage --max-items and items --limit.
+  --output-mode <mode>  pr | auto-merge (default: pr). 'auto-merge' squash-merges
+                        the routine's own PR to main (requires the Web UI 'Allow
+                        unrestricted branch pushes' toggle).
+  --output <path>       Output file under .claude/routines/
+                        (default: .claude/routines/<name>.yaml)
+  --force, -f           Overwrite existing output file
+  --lang <en|ja>        Language for the generated YAML's notes / instructions / comments
+                        (default: en; also honors RADAR_LANG and config.locale)`,
+  "cli.routine.fireHelp": ({ tokenEnv }: { tokenEnv: string }): string =>
+    `Usage: radar routine fire <trig_id> [options]
+
+Triggers a registered Claude Code Routine from the outside via the
+/fire API. The call returns as soon as the routine session
+is created — it does NOT wait for the session to finish.
+
+Arguments:
+  <trig_id>             Routine id from the Web UI (starts with 'trig_')
+
+Options:
+  --text <msg>          Free-form launch context (request body \`text\`).
+                        The API does not parse it; it is passed as-is.
+  --token-env <NAME>    Env var holding the per-routine bearer token
+                        (default: ${tokenEnv}).
+
+The per-routine token is issued ONCE in the Web UI (Regenerate / Revoke
+there) and is read from the environment — it is never accepted as a flag
+and never printed.`,
 
   // --- user-facing errors & result notifications (#312) ---------------------
   // Catalog of the user-facing error / result-notification strings emitted by

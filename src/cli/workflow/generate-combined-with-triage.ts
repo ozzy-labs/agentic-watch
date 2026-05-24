@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Locale } from "../../core/locale.js";
+import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import { RESEARCH_BATCH_DEFAULT_MAX_ITEMS } from "../research.js";
 import type { SupportedAgent, WorkflowIO } from "./generate-watch.js";
@@ -667,43 +668,14 @@ export function parseGenerateCombinedWithTriageArgs(args: string[]): ParsedFlags
   };
 }
 
-export function printGenerateCombinedWithTriageHelp(log: (m: string) => void): void {
-  log("Usage: radar workflow generate combined-with-triage [options]");
-  log("");
-  log("Generates a GitHub Actions workflow that chains `radar watch run` ->");
-  log("`radar triage --apply` -> `radar research --batch --status triaged_research` ->");
-  log("per-group `radar research --digest` -> `radar review --batch` in one job.");
-  log("");
-  log("Options:");
-  log(`  --watch-cron <expression>  5-field cron expression (default: "${DEFAULT_WATCH_CRON}")`);
-  log("  --output <path>            Output file under .github/workflows/");
-  log(`                             (default: ${DEFAULT_OUTPUT})`);
+export function printGenerateCombinedWithTriageHelp(t: Translator, log: (m: string) => void): void {
   log(
-    "  --triage-agent <name>      claude-code | codex-cli | gemini-cli | copilot (default: gemini-cli)",
+    t("cli.workflow.generateCombinedWithTriageHelp", {
+      watchCron: DEFAULT_WATCH_CRON,
+      output: DEFAULT_OUTPUT,
+      maxItems: RESEARCH_BATCH_DEFAULT_MAX_ITEMS,
+    }),
   );
-  log(
-    "  --research-agent <name>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log(
-    "  --review-agent <name>      claude-code | codex-cli | gemini-cli | copilot (default: codex-cli)",
-  );
-  log(
-    `  --max-items N              Hard cap on research --batch per run (default: ${RESEARCH_BATCH_DEFAULT_MAX_ITEMS})`,
-  );
-  log("  --slack-webhook <ref>      Secret reference (e.g. secrets.SLACK_WEBHOOK) for the");
-  log("                             triaged_unsure-queue alert (optional)");
-  log("  --output-mode <mode>       pr | direct-commit (default: pr). 'pr' opens a");
-  log("                             review PR; 'direct-commit' commits & pushes straight");
-  log("                             to the default branch (drops pull-requests: write)");
-  log("  --force, -f                Overwrite existing output file");
-  log("  --lang <en|ja>             Language for the generated YAML's comments / step names");
-  log("                             (default: en; also honors RADAR_LANG and config.locale)");
-  log("");
-  log("Required secrets (Settings → Secrets and variables → Actions):");
-  log("  ANTHROPIC_API_KEY  when any role uses --agent claude-code");
-  log("  OPENAI_API_KEY     when any role uses --agent codex-cli");
-  log("  GEMINI_API_KEY     when any role uses --agent gemini-cli (default for triage)");
-  log("  GITHUB_TOKEN       auto-provisioned (no manual setup needed)");
 }
 
 /**
@@ -740,12 +712,16 @@ export async function runGenerateCombinedWithTriage(
     error(`workflow generate combined-with-triage: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
+
+  // Resolve the locale before the help branch so `--help` honors --lang / env /
+  // config (the per-type help is now sourced from the i18n catalog, #337).
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   if (parsed.help) {
-    printGenerateCombinedWithTriageHelp(log);
+    printGenerateCombinedWithTriageHelp(t, log);
     return 0;
   }
-
-  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateCombinedWithTriage({
