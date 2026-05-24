@@ -1,9 +1,24 @@
 import type { installChromium, ProbeOptions } from "../core/playwright-check.js";
 import { createProgressReporter, type ProgressLevel } from "../core/progress.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
-import { createTranslator, type Translator } from "../i18n/index.js";
+import { createTranslator, type MessageKey, type Translator } from "../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
+
+/**
+ * Validation error thrown by the sync `parseRunArgs` that carries a message
+ * *key* instead of pre-rendered English (#336). `parseRunArgs` runs before the
+ * locale is resolved, so it cannot call `t()` itself; it tags the error with a
+ * catalog key and the caller renders it once the translator is in scope. Errors
+ * without a key (unknown option / unexpected argument, which echo the raw token)
+ * stay plain `Error`s and are wrapped at the catch boundary as before.
+ */
+class WatchArgError extends Error {
+  constructor(readonly key: MessageKey) {
+    super(key);
+    this.name = "WatchArgError";
+  }
+}
 
 export interface WatchIO {
   log?: (message: string) => void;
@@ -112,17 +127,17 @@ function parseRunArgs(args: string[]): WatchRunArgs {
   // so users do not paper over the conflict by hoping for an undocumented
   // merge — ADR-0012 §D4 makes them mutually exclusive.
   if (out.bootstrap && out.backfill) {
-    throw new Error("--bootstrap and --backfill are mutually exclusive");
+    throw new WatchArgError("cli.watch.bootstrapBackfillExclusive");
   }
   if (out.maxPages !== undefined && !out.backfill) {
-    throw new Error("--max-pages requires --backfill");
+    throw new WatchArgError("cli.watch.maxPagesRequiresBackfill");
   }
   // `--verbose` enables agent stdout pass-through; `--quiet` suppresses
   // every progress line. Allowing both would force an arbitrary winner —
   // reject up front so the user picks one explicitly. Mirrors the
   // research / review / update CLI (#197) which adopted the same rule.
   if (out.verbose && out.quiet) {
-    throw new Error("--verbose and --quiet are mutually exclusive");
+    throw new WatchArgError("cli.watch.verboseQuietExclusive");
   }
   return out;
 }
@@ -163,7 +178,11 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
   try {
     parsed = parseRunArgs(langState.rest);
   } catch (e) {
-    error(`watch run: ${e instanceof Error ? e.message : String(e)}`);
+    // Keyed validation errors are translated now that the locale is resolved;
+    // raw-token errors (unknown option / unexpected argument) echo verbatim.
+    const message =
+      e instanceof WatchArgError ? t(e.key) : e instanceof Error ? e.message : String(e);
+    error(`watch run: ${message}`);
     return 2;
   }
   if (parsed.help) {

@@ -334,7 +334,12 @@ describe("cli progress i18n (#313 / ADR-0021)", () => {
     });
     expect(code).toBe(0);
     expect(stream.output()).toBe("");
-    // The pre-existing 1-line summary is preserved (locale-independent log line).
-    expect(captured.log.some((m) => /^research: wrote /.test(m))).toBe(true);
+    // The pre-existing 1-line completion summary is still emitted (RADAR_NO_PROGRESS
+    // only suppresses the spinner / phase markers). As of #336 the summary itself is
+    // localized, so under `--lang ja` it carries the Japanese wording while keeping
+    // the stable `research:` command prefix.
+    expect(
+      captured.log.some((m) => m.startsWith("research:") && m.includes("書き込みました")),
+    ).toBe(true);
   });
 });

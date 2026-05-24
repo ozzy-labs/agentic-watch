@@ -333,14 +333,13 @@ async function resolveAgent(
   cwd: string,
   rawAgent: string | undefined,
   error: (m: string) => void,
+  t: Translator,
 ): Promise<{ agent: AgentId } | { exitCode: number }> {
   let explicitAgent: AgentId | undefined;
   if (rawAgent !== undefined) {
     const agentResult = AgentIdSchema.safeParse(rawAgent);
     if (!agentResult.success) {
-      error(
-        `research: invalid --agent '${rawAgent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-      );
+      error(t("cli.agent.invalid", { cmd: "research", agent: rawAgent }));
       return { exitCode: 2 };
     }
     explicitAgent = agentResult.data;
@@ -407,7 +406,7 @@ async function prepareResearch(params: {
   }
   const outputPath = join(cwd, "research", filename);
   if (await pathExists(outputPath)) {
-    error(`research: ${outputPath} already exists (use \`radar update\` to re-research)`);
+    error(t("cli.research.alreadyExists", { path: outputPath }));
     return { exitCode: 1 };
   }
 
@@ -567,7 +566,7 @@ async function finalizeResearch(params: {
     return 1;
   }
 
-  log(`research: wrote ${outputPath}`);
+  log(t("cli.research.wrote", { path: outputPath }));
   for (const item of updated) {
     const from = transitions.get(item.id);
     if (from !== undefined && item.status === "researched") {
@@ -578,7 +577,7 @@ async function finalizeResearch(params: {
         t("cli.progress.statusTransition", { from, to: "researched" }),
         `items/${item.sourceId}/${item.id}.yaml`,
       );
-      log(`research: items/${item.sourceId}/${item.id}.yaml status -> researched`);
+      log(t("cli.research.transitioned", { sourceId: item.sourceId, id: item.id }));
     }
   }
   return 0;
@@ -781,15 +780,19 @@ async function runResearchCommit(params: {
   });
 }
 
-function parseMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+function parseMaxItems(
+  raw: string | undefined,
+  error: (m: string) => void,
+  t: Translator,
+): number | null {
   if (raw === undefined) return RESEARCH_BATCH_DEFAULT_MAX_ITEMS;
   if (!/^[0-9]+$/.test(raw)) {
-    error(`research: invalid --max-items '${raw}' (expected positive integer)`);
+    error(t("cli.research.invalidMaxItemsInteger", { raw }));
     return null;
   }
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) {
-    error(`research: invalid --max-items '${raw}' (must be > 0)`);
+    error(t("cli.research.invalidMaxItemsPositive", { raw }));
     return null;
   }
   return n;
@@ -815,36 +818,38 @@ async function runResearchBatch(
   warn: (m: string) => void,
   error: (m: string) => void,
   progress: ProgressReporter,
+  t: Translator,
 ): Promise<number> {
   if (parsed.itemIds.length > 0) {
-    error(
-      `research: --batch is incompatible with positional <item-id> arguments (got ${parsed.itemIds.length})`,
-    );
+    error(t("cli.research.batchIncompatiblePositional", { count: parsed.itemIds.length }));
     return 2;
   }
   if (parsed.digest) {
-    error("research: --batch is incompatible with --digest");
+    error(t("cli.research.batchIncompatibleDigest"));
     return 2;
   }
   if (parsed.triageGroup !== undefined) {
-    error("research: --batch is incompatible with --triage-group");
+    error(t("cli.research.batchIncompatibleTriageGroup"));
     return 2;
   }
 
   const rawStatus = parsed.status ?? "detected";
   if (!(RESEARCH_BATCH_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
     error(
-      `research: invalid --status '${rawStatus}' (expected: ${RESEARCH_BATCH_ALLOWED_STATUSES.join(" | ")})`,
+      t("cli.research.invalidStatus", {
+        status: rawStatus,
+        allowed: RESEARCH_BATCH_ALLOWED_STATUSES.join(" | "),
+      }),
     );
     return 2;
   }
   const status: ResearchBatchStatus = rawStatus as ResearchBatchStatus;
 
-  const maxItems = parseMaxItems(parsed.maxItems, error);
+  const maxItems = parseMaxItems(parsed.maxItems, error, t);
   if (maxItems === null) return 2;
   const filterTags = parseFilterTags(parsed.filterTags);
 
-  const agentResult = await resolveAgent(cwd, parsed.agent, error);
+  const agentResult = await resolveAgent(cwd, parsed.agent, error, t);
   if ("exitCode" in agentResult) return agentResult.exitCode;
   const agent = agentResult.agent;
 
@@ -875,28 +880,27 @@ async function runResearchBatch(
       return a.id.localeCompare(b.id);
     });
 
+  const tagsSuffix = filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : "";
   if (matches.length === 0) {
-    log(
-      `research: no items matched --batch filters (status=${status}${
-        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-      })`,
-    );
+    log(t("cli.research.noItemsMatched", { status, tags: tagsSuffix }));
     return 0;
   }
 
   let selected = matches;
   if (matches.length > maxItems) {
     const dropped = matches.length - maxItems;
-    warn(
-      `research: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matches.length})`,
-    );
+    warn(t("cli.research.capReached", { maxItems, dropped, matched: matches.length }));
     selected = matches.slice(0, maxItems);
   }
 
   log(
-    `research: --batch will process ${selected.length} item(s) (status=${status}${
-      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-    }, agent=${agent}, cap=${maxItems})`,
+    t("cli.research.batchWillProcess", {
+      count: selected.length,
+      status,
+      tags: tagsSuffix,
+      agent,
+      cap: maxItems,
+    }),
   );
 
   const now = new Date();
@@ -916,11 +920,11 @@ async function runResearchBatch(
       progress,
     });
     if (exitCode !== 0) {
-      error(`research: --batch halted on item '${item.id}' (exit ${exitCode})`);
+      error(t("cli.research.batchHalted", { id: item.id, exitCode }));
       return exitCode;
     }
   }
-  log(`research: --batch completed ${selected.length} item(s)`);
+  log(t("cli.research.batchCompleted", { count: selected.length }));
   return 0;
 }
 
@@ -1003,24 +1007,27 @@ export async function runResearch(
   // <item-id> arguments.
   if (parsed.commit !== undefined) {
     if (parsed.batch) {
-      error("research: --commit is incompatible with --batch");
+      error(t("cli.research.commitIncompatibleBatch"));
       return 2;
     }
     if (parsed.digest) {
-      error("research: --commit is incompatible with --digest");
+      error(t("cli.research.commitIncompatibleDigest"));
       return 2;
     }
     if (parsed.emitPayload) {
-      error("research: --commit is incompatible with --emit-payload");
+      error(t("cli.research.commitIncompatibleEmitPayload"));
       return 2;
     }
     if (parsed.triageGroup !== undefined) {
-      error("research: --commit is incompatible with --triage-group");
+      error(t("cli.research.commitIncompatibleTriageGroup"));
       return 2;
     }
     if (parsed.itemIds.length > 0) {
       error(
-        `research: --commit takes a <path>, not <item-id> arguments (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
+        t("cli.research.commitTakesPath", {
+          count: parsed.itemIds.length,
+          ids: parsed.itemIds.join(", "),
+        }),
       );
       return 2;
     }
@@ -1035,47 +1042,48 @@ export async function runResearch(
     });
   }
   if (parsed.emitPayload && parsed.batch) {
-    error("research: --emit-payload is incompatible with --batch");
+    error(t("cli.research.emitPayloadIncompatibleBatch"));
     return 2;
   }
   if (parsed.batch) {
-    return runResearchBatch(parsed, cwd, locale, log, warn, error, progress);
+    return runResearchBatch(parsed, cwd, locale, log, warn, error, progress, t);
   }
   if (parsed.status !== undefined) {
-    error("research: --status requires --batch");
+    error(t("cli.research.statusRequiresBatch"));
     return 2;
   }
   if (parsed.maxItems !== undefined) {
-    error("research: --max-items requires --batch");
+    error(t("cli.research.maxItemsRequiresBatch"));
     return 2;
   }
   if (parsed.filterTags !== undefined) {
-    error("research: --filter-tags requires --batch");
+    error(t("cli.research.filterTagsRequiresBatch"));
     return 2;
   }
   if (parsed.triageGroup !== undefined && !parsed.digest) {
-    error("research: --triage-group requires --digest");
+    error(t("cli.research.triageGroupRequiresDigest"));
     return 2;
   }
   if (parsed.itemIds.length === 0) {
-    error("research: missing <item-id>");
+    error(t("cli.research.missingItemId"));
     printHelp(t, error);
     return 2;
   }
   if (!parsed.digest && parsed.itemIds.length > 1) {
     error(
-      `research: multiple <item-id> arguments require --digest (got ${parsed.itemIds.length}: ${parsed.itemIds.join(", ")})`,
+      t("cli.research.multipleRequireDigest", {
+        count: parsed.itemIds.length,
+        ids: parsed.itemIds.join(", "),
+      }),
     );
     return 2;
   }
   if (parsed.digest && parsed.itemIds.length < 2) {
-    error(
-      `research: --digest requires 2 or more <item-id> arguments (got ${parsed.itemIds.length})`,
-    );
+    error(t("cli.research.digestRequiresTwo", { count: parsed.itemIds.length }));
     return 2;
   }
 
-  const agentResult = await resolveAgent(cwd, parsed.agent, error);
+  const agentResult = await resolveAgent(cwd, parsed.agent, error, t);
   if ("exitCode" in agentResult) return agentResult.exitCode;
   const agent = agentResult.agent;
 
@@ -1085,21 +1093,19 @@ export async function runResearch(
   if (parsed.digest) {
     const result = await findItems(cwd, parsed.itemIds);
     if ("missing" in result) {
-      error(`research: item '${result.missing}' not found under items/`);
+      error(t("cli.research.itemNotFound", { id: result.missing }));
       return 1;
     }
     items = result.items;
     const dismissed = items.filter((i) => i.status === "dismissed");
     if (dismissed.length > 0) {
-      error(
-        `research: cannot include dismissed items in a digest: ${dismissed.map((i) => i.id).join(", ")}`,
-      );
+      error(t("cli.research.digestDismissed", { ids: dismissed.map((i) => i.id).join(", ") }));
       return 1;
     }
   } else {
     const found = await findItem(cwd, parsed.itemIds[0]);
     if (!found) {
-      error(`research: item '${parsed.itemIds[0]}' not found under items/`);
+      error(t("cli.research.itemNotFound", { id: parsed.itemIds[0] }));
       return 1;
     }
     items = [found.item];

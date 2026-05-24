@@ -7,7 +7,13 @@ import { runDismiss } from "../../src/cli/dismiss.js";
 import { runDoctor } from "../../src/cli/doctor.js";
 import { initWorkspace } from "../../src/cli/init.js";
 import { runItemsList } from "../../src/cli/items.js";
+import { runResearch } from "../../src/cli/research.js";
+import { runReview } from "../../src/cli/review.js";
+import { runSource } from "../../src/cli/source.js";
+import { runTriage } from "../../src/cli/triage.js";
 import { runUndismiss } from "../../src/cli/undismiss.js";
+import { runUpdate } from "../../src/cli/update.js";
+import { runWatch } from "../../src/cli/watch.js";
 import { loadRadarConfig, RadarConfigError } from "../../src/core/config.js";
 import { createTranslator } from "../../src/i18n/index.js";
 import type { Item } from "../../src/schemas/index.js";
@@ -225,6 +231,145 @@ describe("cli/i18n user-facing errors & notifications (#312)", () => {
       const code = await runItemsList(["--lang", "ja"], { cwd: workdir, io });
       expect(code, captured.error.join("\n")).toBe(0);
       expect(captured.log.some((m) => m.includes("一致するアイテムがありません"))).toBe(true);
+    });
+  });
+
+  describe("research — validation errors localize (#336)", () => {
+    it("localizes the missing <item-id> error", async () => {
+      const en = captureIo();
+      const codeEn = await runResearch([], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("research: missing <item-id>"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runResearch(["--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("missing <item-id>"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("が指定されていません"))).toBe(true);
+    });
+
+    it("localizes the --status requires --batch error + keeps the `research:` prefix", async () => {
+      const ja = captureIo();
+      const codeJa = await runResearch(["x", "--status", "detected", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(
+        ja.captured.error.some((m) => m.startsWith("research:") && m.includes("--batch が必要")),
+      ).toBe(true);
+    });
+  });
+
+  describe("review — validation errors localize (#336)", () => {
+    it("localizes the missing <research-id> error", async () => {
+      const en = captureIo();
+      const codeEn = await runReview([], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("review: missing <research-id>"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runReview(["--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("missing <research-id>"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("が指定されていません"))).toBe(true);
+    });
+  });
+
+  describe("update — validation errors localize (#336)", () => {
+    it("localizes the missing <research-id> error", async () => {
+      const en = captureIo();
+      const codeEn = await runUpdate([], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("update: missing <research-id>"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runUpdate(["--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("missing <research-id>"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("が指定されていません"))).toBe(true);
+    });
+  });
+
+  describe("source — validation error + result notification (#336)", () => {
+    it("localizes the missing <id> error for `source add`", async () => {
+      const en = captureIo();
+      const codeEn = await runSource(["add"], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("source add: missing <id>"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runSource(["add", "--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("missing <id>"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("が指定されていません"))).toBe(true);
+    });
+
+    it("localizes the unknown-subcommand error", async () => {
+      const ja = captureIo();
+      const codeJa = await runSource(["frobnicate", "--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("不明なサブコマンド"))).toBe(true);
+    });
+  });
+
+  describe("triage — validation error + notification (#336)", () => {
+    it("localizes the mutually-exclusive modes error", async () => {
+      const en = captureIo();
+      const codeEn = await runTriage(["--dry-run", "--apply"], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("mutually exclusive"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runTriage(["--dry-run", "--apply", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("mutually exclusive"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("併用できません"))).toBe(true);
+    });
+
+    it("localizes the no-detected-match notification", async () => {
+      // No sources/ + no items/ short-circuits before classification; the
+      // `no sources/ directory` notice is the locale-aware path here.
+      const ja = captureIo();
+      const codeJa = await runTriage(["--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa, ja.captured.error.join("\n")).toBe(1);
+      expect(ja.captured.error.some((m) => m.includes("sources/ ディレクトリがありません"))).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("watch — sync parser validation error localizes (#336)", () => {
+    it("localizes the --bootstrap / --backfill mutual-exclusion error", async () => {
+      // `runWatch` IS the `run` subcommand handler, so the argv is the run-mode
+      // flag set (no leading `run` token — that is consumed by the dispatcher).
+      const en = captureIo();
+      const codeEn = await runWatch(["--bootstrap", "--backfill"], {
+        cwd: workdir,
+        io: en.io,
+      });
+      expect(codeEn).toBe(2);
+      expect(
+        en.captured.error.some((m) =>
+          m.includes("--bootstrap and --backfill are mutually exclusive"),
+        ),
+      ).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runWatch(["--bootstrap", "--backfill", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(
+        ja.captured.error.some((m) =>
+          m.includes("--bootstrap and --backfill are mutually exclusive"),
+        ),
+      ).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("併用できません"))).toBe(true);
     });
   });
 

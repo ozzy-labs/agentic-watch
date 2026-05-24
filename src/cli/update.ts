@@ -197,14 +197,13 @@ async function resolveUpdateAgent(
   cwd: string,
   rawAgent: string | undefined,
   error: (m: string) => void,
+  t: Translator,
 ): Promise<{ agent: AgentId } | { exitCode: number }> {
   let explicitAgent: AgentId | undefined;
   if (rawAgent !== undefined) {
     const agentResult = AgentIdSchema.safeParse(rawAgent);
     if (!agentResult.success) {
-      error(
-        `update: invalid --agent '${rawAgent}' (expected: claude-code | codex-cli | gemini-cli | copilot)`,
-      );
+      error(t("cli.agent.invalid", { cmd: "update", agent: rawAgent }));
       return { exitCode: 2 };
     }
     explicitAgent = agentResult.data;
@@ -270,7 +269,7 @@ async function prepareUpdate(params: {
     return { exitCode: 2 };
   }
   if (!(await pathExists(prevPath))) {
-    error(`update: research file not found: ${prevPath}`);
+    error(t("cli.update.fileNotFound", { path: prevPath }));
     return { exitCode: 1 };
   }
 
@@ -323,9 +322,7 @@ async function prepareUpdate(params: {
   const newId = `${base}_v${newVersion}`;
   const outputPath = join(cwd, "research", `${newId}.md`);
   if (await pathExists(outputPath)) {
-    error(
-      `update: ${outputPath} already exists. v${newVersion} was already generated — pick a different predecessor or remove the stale file.`,
-    );
+    error(t("cli.update.alreadyExists", { path: outputPath, version: newVersion }));
     return { exitCode: 1 };
   }
 
@@ -504,8 +501,8 @@ async function finalizeUpdate(params: {
     );
   }
 
-  log(`update: wrote ${outputPath}`);
-  log(`update: supersedes ${prevFm.id} (items.yaml status unchanged)`);
+  log(t("cli.update.wrote", { path: outputPath }));
+  log(t("cli.update.supersedes", { prevId: prevFm.id }));
   return 0;
 }
 
@@ -617,9 +614,7 @@ async function runUpdateCommit(params: {
   // v+1 from v(N)); a null supersedes means the host wrote a v1, which is a
   // `research` artifact, not an `update` artifact.
   if (newFm.supersedes === null) {
-    error(
-      "update: --commit report has `supersedes: null`. update finalizes a v+1 (use `radar research --commit` for a v1).",
-    );
+    error(t("cli.update.commitSupersedesNull"));
     return 1;
   }
 
@@ -809,18 +804,18 @@ export async function runUpdate(
   // <research-id>.
   if (parsed.commit !== undefined) {
     if (parsed.emitPayload) {
-      error("update: --commit is incompatible with --emit-payload");
+      error(t("cli.update.commitIncompatibleEmitPayload"));
       return 2;
     }
     if (parsed.researchId !== undefined) {
-      error(`update: --commit takes a <path>, not a <research-id> (got '${parsed.researchId}')`);
+      error(t("cli.update.commitTakesPath", { researchId: parsed.researchId }));
       return 2;
     }
     return runUpdateCommit({ cwd, commitPath: parsed.commit, log, warn, error, progress, t });
   }
 
   if (!parsed.researchId) {
-    error("update: missing <research-id>");
+    error(t("cli.update.missingResearchId"));
     printHelp(t, error);
     return 2;
   }
@@ -833,7 +828,7 @@ export async function runUpdate(
   // SKILL body (rewrite-and-supersede strategy reuses the research procedure;
   // skill-design.md §8.2). When `radar.config.yaml` grows a dedicated
   // `defaultUpdateAgent`, this fallback chain becomes a thin pass-through.
-  const agentResult = await resolveUpdateAgent(cwd, parsed.agent, error);
+  const agentResult = await resolveUpdateAgent(cwd, parsed.agent, error, t);
   if ("exitCode" in agentResult) return agentResult.exitCode;
   const agent = agentResult.agent;
 
