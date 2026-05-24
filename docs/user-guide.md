@@ -2348,6 +2348,7 @@ radar routine fire trig_abc123 --token-env MY_OTHER_ROUTINE_TOKEN
 | `<trig_id>` | （必須） | Web UI で発行された routine ID（`trig_` プレフィックス） |
 | `--text <msg>` | なし | 起動コンテキスト（body の `text`）。API はパースせずそのまま渡す |
 | `--token-env <NAME>` | `FEEDRADAR_ROUTINE_FIRE_TOKEN` | token を読む環境変数名 |
+| `--lang <en\|ja>` | `en` | このコマンドのメッセージ / ヘルプの表示言語（`RADAR_LANG` と `config.locale` も尊重） |
 
 token は環境変数からのみ読み、出力（成功ログ・エラーメッセージ）に一切含めない。`--token` フラグは受け付けず、指定するとエラーになる。
 

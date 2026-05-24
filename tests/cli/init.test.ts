@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { initWorkspace } from "../../src/cli/init.js";
+import { initCommand, initWorkspace } from "../../src/cli/init.js";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const BUNDLED_SKILLS_ROOT = join(REPO_ROOT, "src", "skills");
@@ -1435,6 +1435,76 @@ describe("cli/init", () => {
         (p) => p === "radar.config.yaml",
       );
       expect(entries).toEqual([]);
+    });
+  });
+
+  // #342 B4: the CLI flag path (initCommand.run -> parseLangFlag ->
+  // resolveLocale -> initWorkspace(locale) -> template selection + persisted
+  // config.locale). The existing locale tests drive initWorkspace(locale)
+  // directly; this exercises the argv -> resolveLocale wiring end-to-end.
+  describe("--lang CLI flag path (#342 B4)", () => {
+    let origCwd: string;
+    let origLangEnv: string | undefined;
+
+    async function readLocale(cwd: string): Promise<unknown> {
+      const raw = await readFile(join(cwd, "radar.config.yaml"), "utf8");
+      return (parseYaml(raw) as Record<string, unknown>).locale;
+    }
+
+    beforeEach(() => {
+      origCwd = process.cwd();
+      origLangEnv = process.env.RADAR_LANG;
+      delete process.env.RADAR_LANG;
+    });
+
+    afterEach(() => {
+      process.chdir(origCwd);
+      if (origLangEnv === undefined) delete process.env.RADAR_LANG;
+      else process.env.RADAR_LANG = origLangEnv;
+    });
+
+    it("resolves locale from --lang ja and persists it to config (flag path)", async () => {
+      process.chdir(workdir);
+      const code = await initCommand.run([
+        "--lang",
+        "ja",
+        "--no-claude-skills",
+        "--no-gemini-commands",
+      ]);
+      expect(code).toBe(0);
+      expect(await readLocale(workdir)).toBe("ja");
+      // The ja AGENTS.md template was selected (proves template selection
+      // followed the flag-resolved locale, not just the config write).
+      const agents = await readFile(join(workdir, "AGENTS.md"), "utf8");
+      expect(agents.length).toBeGreaterThan(0);
+    });
+
+    it("resolves locale from RADAR_LANG when --lang is absent (flag path)", async () => {
+      process.env.RADAR_LANG = "ja";
+      process.chdir(workdir);
+      const code = await initCommand.run(["--no-claude-skills", "--no-gemini-commands"]);
+      expect(code).toBe(0);
+      expect(await readLocale(workdir)).toBe("ja");
+    });
+
+    it("defaults to en when neither --lang nor RADAR_LANG is set (flag path)", async () => {
+      process.chdir(workdir);
+      const code = await initCommand.run(["--no-claude-skills", "--no-gemini-commands"]);
+      expect(code).toBe(0);
+      expect(await readLocale(workdir)).toBe("en");
+    });
+
+    it("--lang flag wins over RADAR_LANG (flag path priority)", async () => {
+      process.env.RADAR_LANG = "ja";
+      process.chdir(workdir);
+      const code = await initCommand.run([
+        "--lang",
+        "en",
+        "--no-claude-skills",
+        "--no-gemini-commands",
+      ]);
+      expect(code).toBe(0);
+      expect(await readLocale(workdir)).toBe("en");
     });
   });
 });
