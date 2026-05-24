@@ -277,7 +277,7 @@ const GEMINI_COMMANDS = ["research", "review", "update", "dismiss"] as const;
  * with `radar routine generate watch`, which writes the same `.claude/routines/`
  * YAML shape (ADR-0004 / ADR-0020 §"形式・出力先の統一"). The pre-#281 scaffold
  * (`claude/routines/watch-daily.md`, MD frontmatter, no leading dot) is gone —
- * see the migration note in the user-guide / README.
+ * see the migration note in docs/user-guide.md and ADR-0004.
  */
 const SCHEDULE_SCAFFOLDS = {
   routines: {

@@ -23,7 +23,7 @@
 │                          (薄い wrapper、--no-claude-skills でスキップ) │
 │  .gemini/commands/... ← Gemini CLI slash command (TOML)    │
 │                          (薄い wrapper、--no-gemini-commands でスキップ) │
-│  .claude/routines/...← Claude Routines 雛形 (init --with-routines) │
+│  .claude/routines/... ← Claude Routines 雛形 (init --with-routines) │
 │  .github/workflows/...← GitHub Actions ワークフロー (init --with-actions) │
 └───────────────────────────────────────────────────────────┘
                     ▲
