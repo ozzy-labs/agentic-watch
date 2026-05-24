@@ -1639,6 +1639,20 @@ radar update <research-id> --emit-payload
 radar update --commit <path>
 ```
 
+`triage` も 2-call で host モードに対応する（[#279](https://github.com/ozzy-labs/feedradar/issues/279)）。ただし triage は Markdown レポートではなく per-item の `TriageDecision` を書く別契約なので、commit する対象は decisions JSON になる:
+
+```bash
+# emit: 対象 1 source の detected items を triage する payload を stdout に出力（agent は spawn しない）。
+#       複数 source に detected items がある場合は --source で 1 source に絞る。
+radar triage --emit-payload [--source <id>]
+# host セッションが分類結果を { agent, sourceId, decisions: [...] } 形式で triage/<source>_decisions.json に書く
+# commit: decisions JSON を source の policy + detected items で再検証し（spawn パスと同じ parseTriageResponse）、
+#         status 遷移を適用する。<path> は <cwd>/triage/ 配下に制約（ADR-0009 M3b をコードで担保）
+radar triage --commit <path>
+```
+
+triage の `--emit-payload` payload に埋め込まれる triage request は、item 本文を `<untrusted_item>`、policy を `<policy>` で包んだもの（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c / [ADR-0018](./adr/0018-triage-extension.md) §W-A）なので、M1c 境界が host セッションにもそのまま入る。decisions の検証・status 遷移は research/review/update と同じく **CLI が一元担保**する（host は分類結果を書くだけで `items/*.yaml` は触らない）。
+
 なぜ host モード:
 
 - **二重クォータ消費の解消**: ホストセッションが手順を実行するため、nested な spawn が不要になる
@@ -1651,7 +1665,7 @@ radar update --commit <path>
 - **prepare→commit 間に同一 workspace の cron を重ねない**: host モードは `researching` ロック status を持たない。`outputPath` は決定論的で、既存の「already exists」衝突ガードが backstop になるが、prepare→commit 間に同一 item へ無人 cron（`research --batch` 等）を向けない運用にする
 - **cross-agent review が要る場合は従来の spawn を使う**: research=copilot / review=claude のようなクロス運用は単一ホストセッションでは成立しない（[上記](#クロスエージェント運用推奨)）。host モードは「ホストと同じ agent で十分な場合」の最適化であり、cross-agent が要るケースは従来の `--agent <spawn>` を使う（両立・共存）
 
-展開状況: research / review / update は host モード対応済み（同型の prepare/commit）。triage は per-item の `TriageDecision` を書く別契約のため引き続き対象外（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）。
+展開状況: research / review / update / triage すべて host モード対応済み。research / review / update は同型の prepare/commit（Markdown レポート → finalize）、triage は decisions JSON → finalize の別契約（[#279](https://github.com/ozzy-labs/feedradar/issues/279)、[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）。
 
 ### `radar update <research-id> [--agent <agent-id>] [--template <id>]`
 

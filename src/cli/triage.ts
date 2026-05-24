@@ -3,15 +3,26 @@ import { access, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+import { renderTriagePayloadBlock } from "../agents/_boundary.js";
 import { loadItems, saveItems } from "../core/items.js";
 import { createProgressReporter, type ProgressLevel } from "../core/progress.js";
 import { statusForTriageDecision } from "../core/transitions.js";
-import { type TriageResult, type TriageRunner, triageItems } from "../core/triage/index.js";
+import {
+  buildTriagePrompt,
+  parseTriageResponse,
+  TriageResponseParseError,
+  type TriageResult,
+  type TriageRunner,
+  triageItems,
+} from "../core/triage/index.js";
 import { loadSources } from "../core/watcher.js";
 import type { DismissedBy, Item, TriageDecision } from "../schemas/item.js";
+import { TriageDecisionValueSchema } from "../schemas/item.js";
 import { AgentIdSchema } from "../schemas/research.js";
 import type { Source, SourceTriagePolicy } from "../schemas/source.js";
 import { SourceTriagePolicySchema } from "../schemas/source.js";
+import { resolveCommitPathInside } from "./_commit-path.js";
 import type { Command } from "./index.js";
 
 /**
@@ -70,6 +81,19 @@ interface TriageRunArgs {
   verbose?: boolean;
   quiet?: boolean;
   help?: boolean;
+  /**
+   * Host-agent mode (#279 / ADR-0019): emit the triage payload to stdout
+   * without spawning an agent. The host (interactive) session classifies the
+   * items itself, writes the decisions JSON, then finalizes via `--commit`.
+   */
+  emitPayload?: boolean;
+  /**
+   * Host-agent mode (#279 / ADR-0019): finalize a host-written decisions file.
+   * Holds the path to the JSON the host session wrote. The CLI re-validates it
+   * against the input item set + per-source policy and applies the status
+   * transitions.
+   */
+  commit?: string;
 }
 
 interface TriageFeedbackArgs {
@@ -153,6 +177,16 @@ function parseTriageRunArgs(args: string[]): TriageRunArgs {
       out.auditLog = value;
       continue;
     }
+    if (a === "--emit-payload") {
+      out.emitPayload = true;
+      continue;
+    }
+    if (a === "--commit") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      out.commit = value;
+      continue;
+    }
     if (a === "--verbose" || a === "-v") {
       out.verbose = true;
       continue;
@@ -208,6 +242,8 @@ function parseTriageFeedbackArgs(args: string[]): TriageFeedbackArgs {
 
 function printRunHelp(log: (m: string) => void): void {
   log("Usage: radar triage [--dry-run | --apply | --interactive] [options]");
+  log("       radar triage --emit-payload [--source <id>] [options]");
+  log("       radar triage --commit <path>");
   log("");
   log("Classify `detected` items using the configured per-source triage policy.");
   log("");
@@ -223,6 +259,16 @@ function printRunHelp(log: (m: string) => void): void {
   log("  --policy <path>          override per-source policy with a YAML file");
   log("  --max-items N            hard cap on items triaged in this run");
   log("  --audit-log <path>       append JSONL audit records of every triage call");
+  log("  --emit-payload           Host-agent mode (ADR-0019): print the triage payload to");
+  log("                           stdout and DO NOT spawn an agent. The interactive host");
+  log("                           session classifies the items itself, writes a decisions");
+  log("                           JSON, then finalizes with `radar triage --commit <path>`.");
+  log("                           Requires a single source group: pass --source unless only");
+  log("                           one source has detected items. Interactive/opt-in only —");
+  log("                           CI/headless must use the default spawn path.");
+  log("  --commit <path>          Host-agent mode (ADR-0019): validate a host-written");
+  log("                           decisions JSON (under <cwd>/triage/) against the source's");
+  log("                           policy + detected items and apply the status transitions.");
   log("  -v, --verbose            verbose progress output");
   log("  -q, --quiet              suppress progress output entirely");
   log("");
@@ -417,6 +463,390 @@ async function promptConfirm(message: string): Promise<boolean> {
 }
 
 /**
+ * A source group resolved for triage: the detected items plus the policy /
+ * agent that govern them. Shared by the spawn run path and the host-agent
+ * `--emit-payload` path so both select / filter / group items identically.
+ */
+interface TriageGroup {
+  sourceId: string;
+  items: Item[];
+  policy: SourceTriagePolicy;
+  triageAgent: string;
+}
+
+type PrepareTriageGroupsResult =
+  | { exitCode: number }
+  | { groups: TriageGroup[]; detected: Item[]; itemsDir: string };
+
+/**
+ * Shared PRE block for the spawn run path and `--emit-payload`: load `detected`
+ * items, apply `--source` / `--filter-tags` / `--max-items`, group by source,
+ * resolve each group's policy (honoring `--policy` override) + triage agent
+ * (honoring `--triage-agent`, validated against `AgentIdSchema`).
+ *
+ * Extracted so the host-agent payload path computes the exact same group /
+ * policy / agent resolution the spawn path uses — keeping the two contracts
+ * from drifting (the spawn agent and the host session triage the same item set
+ * under the same policy).
+ *
+ * Returns `{ exitCode }` for the caller to propagate on error / no-op, or the
+ * resolved groups plus the full `detected` set (for the decision table) and the
+ * items dir.
+ */
+async function prepareTriageGroups(
+  parsed: TriageRunArgs,
+  cwd: string,
+  io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<PrepareTriageGroupsResult> {
+  const { log, warn, error } = io;
+
+  const sourcesDir = join(cwd, "sources");
+  if (!(await pathExists(sourcesDir))) {
+    error("triage: no sources/ directory (run `radar init` first)");
+    return { exitCode: 1 };
+  }
+  const sources = await loadSources(sourcesDir, error);
+  if (sources.length === 0) {
+    log("triage: no sources defined; nothing to triage");
+    return { exitCode: 0 };
+  }
+
+  let policyOverride: SourceTriagePolicy | null = null;
+  if (parsed.policy) {
+    policyOverride = await loadPolicyOverride(parsed.policy, error);
+    if (!policyOverride) return { exitCode: 2 };
+  }
+
+  const itemsDir = join(cwd, "items");
+  if (!(await pathExists(itemsDir))) {
+    log("triage: no items/ directory; nothing to triage");
+    return { exitCode: 0 };
+  }
+  let allItems: Item[];
+  try {
+    allItems = await loadItems(itemsDir, parsed.source);
+  } catch (e) {
+    error(`triage: ${e instanceof Error ? e.message : String(e)}`);
+    return { exitCode: 1 };
+  }
+  // ADR-0018 §W-B: triage only operates on `detected` items so re-running
+  // `radar triage` is idempotent.
+  let detected = allItems.filter((i) => i.status === "detected");
+  if (parsed.filterTags && parsed.filterTags.length > 0) {
+    const tags = new Set(parsed.filterTags);
+    detected = detected.filter((i) => i.matchedKeywords.some((k) => tags.has(k)));
+  }
+  if (detected.length === 0) {
+    log("triage: no detected items match the filter (nothing to do)");
+    return { exitCode: 0 };
+  }
+  if (parsed.maxItems !== undefined && detected.length > parsed.maxItems) {
+    warn(
+      `triage: ${detected.length} detected item(s) exceed --max-items ${parsed.maxItems}; processing the first ${parsed.maxItems} only`,
+    );
+    detected = detected.slice(0, parsed.maxItems);
+  }
+
+  const sourcesById = new Map<string, Source>(sources.map((s) => [s.id, s]));
+  const grouped = new Map<string, Item[]>();
+  for (const item of detected) {
+    const arr = grouped.get(item.sourceId);
+    if (arr) arr.push(item);
+    else grouped.set(item.sourceId, [item]);
+  }
+
+  const groups: TriageGroup[] = [];
+  for (const [sourceId, groupItems] of grouped) {
+    const source = sourcesById.get(sourceId);
+    const policy = policyOverride ?? source?.triagePolicy;
+    if (!policy) {
+      warn(
+        `triage: skipping ${groupItems.length} item(s) from source '${sourceId}' (no triagePolicy configured)`,
+      );
+      continue;
+    }
+    const triageAgent = parsed.triageAgent ?? policy.agent;
+    // Validate `--triage-agent` against `AgentIdSchema` before spending an
+    // agent call (or emitting a payload) — typos like `gemnini-cli` fail fast.
+    const validated = AgentIdSchema.safeParse(triageAgent);
+    if (!validated.success) {
+      error(
+        `triage: --triage-agent '${triageAgent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
+      );
+      return { exitCode: 2 };
+    }
+    groups.push({ sourceId, items: groupItems, policy, triageAgent });
+  }
+
+  return { groups, detected, itemsDir };
+}
+
+/**
+ * Decisions-file schema for `radar triage --commit` (#279 / ADR-0019).
+ *
+ * The host session writes a self-describing envelope: the triage `agent` id
+ * (stamped into each `TriageDecision.agent` + the `dismissedBy` origin), the
+ * `sourceId` the decisions belong to (so the CLI re-resolves the matching
+ * policy), and the `decisions` array — the same JSON the spawned triage agent
+ * emits on stdout (see `core/triage/prompt.ts` output schema). `itemIds` /
+ * `decisionsPath` from the payload's JSON fence are accepted but ignored on
+ * commit (the CLI re-derives the item set from disk), so the host can echo the
+ * whole payload fence back without breaking parse.
+ */
+const TriageDecisionsFileSchema = z.object({
+  agent: z.string().min(1),
+  sourceId: z.string().min(1),
+  decisions: z.array(
+    z.object({
+      id: z.string().min(1),
+      decision: TriageDecisionValueSchema,
+      confidence: z.number().min(0).max(1),
+      reason: z.string().min(1),
+      group: z.string().min(1).optional(),
+    }),
+  ),
+});
+
+/**
+ * Host-agent emit path (#279 / ADR-0019): run the same group / policy / agent
+ * resolution as the spawn path (`prepareTriageGroups`), then print the
+ * agent-neutral triage payload to stdout instead of spawning. The host session
+ * reads the payload, classifies the items itself, writes the decisions JSON,
+ * and finalizes via `radar triage --commit`.
+ *
+ * Constrained to a SINGLE source group: triage's commit contract re-resolves
+ * one source's policy, and the host writes one decisions file, so a multi-source
+ * emit would need multiple files / commits. When more than one source has
+ * detected items the user must narrow with `--source` (mirrors the ADR-0020
+ * "one item set at a time" host-mode posture).
+ */
+async function runTriageEmitPayload(
+  parsed: TriageRunArgs,
+  cwd: string,
+  io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<number> {
+  const { log, error } = io;
+  const prepared = await prepareTriageGroups(parsed, cwd, io);
+  if ("exitCode" in prepared) return prepared.exitCode;
+  const { groups } = prepared;
+
+  if (groups.length === 0) {
+    log("triage: no items were triaged (all sources skipped)");
+    return 0;
+  }
+  if (groups.length > 1) {
+    error(
+      `triage: --emit-payload requires a single source group, but ${groups.length} sources have detected items (${groups
+        .map((g) => g.sourceId)
+        .join(", ")}). Narrow with --source <id>.`,
+    );
+    return 2;
+  }
+
+  const group = groups[0];
+  const triagePrompt = buildTriagePrompt({ items: group.items, policy: group.policy });
+  const decisionsPath = join(cwd, "triage", `${group.sourceId}_decisions.json`);
+  log(
+    renderTriagePayloadBlock({
+      agent: group.triageAgent,
+      sourceId: group.sourceId,
+      triagePrompt,
+      itemIds: group.items.map((i) => i.id),
+      decisionsPath,
+    }),
+  );
+  return 0;
+}
+
+/**
+ * Host-agent commit path (#279 / ADR-0019): finalize a decisions file the host
+ * session wrote out-of-band. The CLI keeps owning validation + the state
+ * machine (ADR-0019 finalize SSoT): it re-loads the source's `detected` items,
+ * re-resolves the policy, and runs the host-written decisions through the SAME
+ * `parseTriageResponse` validator the spawn path uses (hallucinated-id reject,
+ * duplicate reject, confidence-threshold + digest-without-group demotion) before
+ * applying `buildUpdatedItems` + `saveItems`.
+ *
+ * The path is constrained to `<cwd>/triage/` first (M3b enforced in code) so a
+ * host misled by injected content into committing an arbitrary path is rejected
+ * at the CLI boundary.
+ */
+async function runTriageCommit(
+  parsed: TriageRunArgs,
+  commitPath: string,
+  cwd: string,
+  options: TriageCommandOptions,
+  io: { log: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): Promise<number> {
+  const { log, warn, error } = io;
+  const now = options.now ?? defaultNow;
+
+  const guard = await resolveCommitPathInside(cwd, "triage", commitPath);
+  if ("error" in guard) {
+    error(`triage: ${guard.error}`);
+    return 2;
+  }
+  const resolved = guard.resolved;
+
+  if (!(await pathExists(resolved))) {
+    error(`triage: decisions file not found: ${resolved}`);
+    return 1;
+  }
+  let raw: string;
+  try {
+    raw = await readFile(resolved, "utf8");
+  } catch (e) {
+    error(`triage: failed to read decisions file: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch (e) {
+    error(
+      `triage: decisions file is not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
+  const fileResult = TriageDecisionsFileSchema.safeParse(parsedJson);
+  if (!fileResult.success) {
+    error("triage: decisions file does not match the expected shape:");
+    for (const issue of fileResult.error.issues) {
+      error(`  - ${issue.path.join(".") || "<root>"}: ${issue.message}`);
+    }
+    return 1;
+  }
+  const file = fileResult.data;
+
+  // The triage agent must be a valid adapter id (it drives `dismissedBy` +
+  // `triage.agent`). Reject upfront rather than persisting a bogus origin.
+  const agentValid = AgentIdSchema.safeParse(file.agent);
+  if (!agentValid.success) {
+    error(
+      `triage: decisions file agent '${file.agent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
+    );
+    return 1;
+  }
+  const triageAgent = file.agent;
+
+  // Re-resolve the source's policy. `--policy` override wins (parity with the
+  // run path); otherwise the per-source `triagePolicy`. The policy drives the
+  // confidence-threshold demotion the CLI re-applies below, so committing
+  // without a resolvable policy is rejected rather than guessed.
+  let policyOverride: SourceTriagePolicy | null = null;
+  if (parsed.policy) {
+    policyOverride = await loadPolicyOverride(parsed.policy, error);
+    if (!policyOverride) return 2;
+  }
+  const sourcesDir = join(cwd, "sources");
+  if (!policyOverride && !(await pathExists(sourcesDir))) {
+    error("triage: no sources/ directory (run `radar init` first)");
+    return 1;
+  }
+  let policy = policyOverride;
+  if (!policy) {
+    const sources = await loadSources(sourcesDir, error);
+    const source = sources.find((s) => s.id === file.sourceId);
+    if (!source) {
+      error(`triage: decisions file references unknown source '${file.sourceId}'`);
+      return 1;
+    }
+    if (!source.triagePolicy) {
+      error(
+        `triage: source '${file.sourceId}' has no triagePolicy (cannot validate decisions; pass --policy <path>)`,
+      );
+      return 1;
+    }
+    policy = source.triagePolicy;
+  }
+
+  // Re-load the source's `detected` items from disk: the decisions file is NOT
+  // trusted to enumerate the item set (a host misled by injected content could
+  // omit or invent ids). `parseTriageResponse` then rejects hallucinated ids
+  // and the coverage check fills omitted items with `unsure` — exactly the
+  // spawn path's behavior.
+  const itemsDir = join(cwd, "items");
+  if (!(await pathExists(itemsDir))) {
+    error("triage: no items/ directory; nothing to commit");
+    return 1;
+  }
+  let allItems: Item[];
+  try {
+    allItems = await loadItems(itemsDir, file.sourceId);
+  } catch (e) {
+    error(`triage: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  const detected = allItems.filter((i) => i.status === "detected");
+  if (detected.length === 0) {
+    error(
+      `triage: no detected items remain for source '${file.sourceId}' (already triaged, or wrong source?)`,
+    );
+    return 1;
+  }
+
+  // Re-validate through the SAME parser the spawn path runs. We feed the raw
+  // decisions array as JSON so `parseTriageResponse` applies its full rule set
+  // (schema, hallucinated-id reject, duplicate reject, confidence/digest
+  // demotion) — keeping validation a single source of truth (ADR-0019).
+  const triagedAt = now();
+  let parsedResponse: ReturnType<typeof parseTriageResponse>;
+  try {
+    parsedResponse = parseTriageResponse(JSON.stringify(file.decisions), detected, policy);
+  } catch (e) {
+    const message =
+      e instanceof TriageResponseParseError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : String(e);
+    error(`triage: decisions validation failed: ${message}`);
+    return 1;
+  }
+  for (const w of parsedResponse.warnings) warn(`triage: ${w}`);
+
+  // Fill omitted items with an `unsure` fallback so every detected item gets a
+  // decision (mirrors `triageItems`'s coverage invariant). The CLI owns the
+  // transition for the whole detected set, not just the ids the host returned.
+  const decisions = new Map<string, TriageDecision>();
+  for (const item of detected) {
+    const entry = parsedResponse.entries.get(item.id);
+    if (entry === undefined) {
+      warn(`triage: item '${item.id}' was not classified by the host; recording as unsure`);
+      decisions.set(item.id, {
+        decision: "unsure",
+        confidence: 0,
+        reason: "host-omitted",
+        agent: triageAgent,
+        triagedAt,
+        feedback: [],
+      });
+      continue;
+    }
+    decisions.set(item.id, {
+      decision: entry.decision,
+      confidence: entry.confidence,
+      reason: entry.reason,
+      group: entry.group,
+      agent: triageAgent,
+      triagedAt,
+      feedback: [],
+    });
+  }
+
+  const updated = buildUpdatedItems(detected, decisions, triageAgent);
+  try {
+    await saveItems(itemsDir, updated);
+  } catch (e) {
+    error(`triage: failed to write items: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+  log(`triage: committed ${updated.length} decision(s) for source '${file.sourceId}'`);
+  for (const row of formatDecisionTable(detected, decisions)) log(row);
+  return 0;
+}
+
+/**
  * Top-level dispatcher for `radar triage`. Routes to the feedback subcommand
  * when the first positional is `feedback`, otherwise runs the triage flow.
  */
@@ -473,6 +903,32 @@ async function runTriageRun(
     printRunHelp(log);
     return 0;
   }
+
+  // Host-agent commit (#279 / ADR-0019). Independent of the run modes: it takes
+  // a decisions-file <path> and re-validates against disk. Handled first since
+  // it must not be confused with `--dry-run` / `--apply` / `--interactive`.
+  if (parsed.commit !== undefined) {
+    if (parsed.mode) {
+      error("triage: --commit is incompatible with --dry-run / --apply / --interactive");
+      return 2;
+    }
+    if (parsed.emitPayload) {
+      error("triage: --commit is incompatible with --emit-payload");
+      return 2;
+    }
+    return runTriageCommit(parsed, parsed.commit, cwd, options, io);
+  }
+
+  // Host-agent emit (#279 / ADR-0019). Mutually exclusive with the apply / dry
+  // / interactive run modes — it prints a payload instead of running an agent.
+  if (parsed.emitPayload) {
+    if (parsed.mode) {
+      error("triage: --emit-payload is incompatible with --dry-run / --apply / --interactive");
+      return 2;
+    }
+    return runTriageEmitPayload(parsed, cwd, io);
+  }
+
   const mode: TriageMode = parsed.mode ?? "dry-run";
 
   // Progress reporter (#197 / ADR-0015). The triage CLI uses the spinner
@@ -483,98 +939,20 @@ async function runTriageRun(
   const level: ProgressLevel = parsed.quiet ? "quiet" : parsed.verbose ? "verbose" : "normal";
   const reporter = createProgressReporter({ level });
 
-  // 1. Load sources to discover per-source policies (and to map item.sourceId
-  //    → policy when items span sources).
-  const sourcesDir = join(cwd, "sources");
-  if (!(await pathExists(sourcesDir))) {
-    error("triage: no sources/ directory (run `radar init` first)");
-    return 1;
-  }
-  const sources = await loadSources(sourcesDir, error);
-  if (sources.length === 0) {
-    log("triage: no sources defined; nothing to triage");
-    return 0;
-  }
+  // Shared PRE block: load + filter + group detected items and resolve each
+  // group's policy / agent (also used by `--emit-payload`).
+  const prepared = await prepareTriageGroups(parsed, cwd, io);
+  if ("exitCode" in prepared) return prepared.exitCode;
+  const { groups, detected, itemsDir } = prepared;
 
-  // 2. Optional `--policy` override applies to every source in the run. This
-  //    is documented as a 1-shot override — useful for trying a new policy
-  //    against an existing source without editing the YAML.
-  let policyOverride: SourceTriagePolicy | null = null;
-  if (parsed.policy) {
-    policyOverride = await loadPolicyOverride(parsed.policy, error);
-    if (!policyOverride) return 2;
-  }
-
-  // 3. Load detected items, narrowing by `--source` and `--filter-tags`.
-  const itemsDir = join(cwd, "items");
-  if (!(await pathExists(itemsDir))) {
-    log("triage: no items/ directory; nothing to triage");
-    return 0;
-  }
-  let allItems: Item[];
-  try {
-    allItems = await loadItems(itemsDir, parsed.source);
-  } catch (e) {
-    error(`triage: ${e instanceof Error ? e.message : String(e)}`);
-    return 1;
-  }
-  // ADR-0018 §W-B: triage only operates on `detected` items. items already
-  // triaged / researched / dismissed are excluded so re-running `radar
-  // triage` is idempotent.
-  let detected = allItems.filter((i) => i.status === "detected");
-  if (parsed.filterTags && parsed.filterTags.length > 0) {
-    const tags = new Set(parsed.filterTags);
-    detected = detected.filter((i) => i.matchedKeywords.some((k) => tags.has(k)));
-  }
-  if (detected.length === 0) {
-    log("triage: no detected items match the filter (nothing to do)");
-    return 0;
-  }
-  if (parsed.maxItems !== undefined && detected.length > parsed.maxItems) {
-    warn(
-      `triage: ${detected.length} detected item(s) exceed --max-items ${parsed.maxItems}; processing the first ${parsed.maxItems} only`,
-    );
-    detected = detected.slice(0, parsed.maxItems);
-  }
-
-  // 4. Group by sourceId so each source uses its own policy. Items from
-  //    sources without a policy (and no `--policy` override) are skipped
-  //    with a warning — the CLI never invents a policy on the user's behalf.
-  const sourcesById = new Map<string, Source>(sources.map((s) => [s.id, s]));
-  const grouped = new Map<string, Item[]>();
-  for (const item of detected) {
-    const arr = grouped.get(item.sourceId);
-    if (arr) arr.push(item);
-    else grouped.set(item.sourceId, [item]);
-  }
-
-  // 5. Run triageItems() per source group. Aggregate decisions + updated
-  //    items across groups so a single dry-run / apply pass surfaces every
-  //    decision in one operation.
+  // Run triageItems() per source group. Aggregate decisions + updated items
+  // across groups so a single dry-run / apply pass surfaces every decision in
+  // one operation.
   const allUpdated: Item[] = [];
   const allDecisions = new Map<string, TriageDecision>();
   const allErrors: string[] = [];
 
-  for (const [sourceId, groupItems] of grouped) {
-    const source = sourcesById.get(sourceId);
-    const policy = policyOverride ?? source?.triagePolicy;
-    if (!policy) {
-      warn(
-        `triage: skipping ${groupItems.length} item(s) from source '${sourceId}' (no triagePolicy configured)`,
-      );
-      continue;
-    }
-    const triageAgent = parsed.triageAgent ?? policy.agent;
-    // Validate `--triage-agent` against `AgentIdSchema` before spending an
-    // agent call — typos like `gemnini-cli` should fail fast.
-    const validated = AgentIdSchema.safeParse(triageAgent);
-    if (!validated.success) {
-      error(
-        `triage: --triage-agent '${triageAgent}' is not a valid agent id (claude-code | codex-cli | gemini-cli | copilot)`,
-      );
-      return 2;
-    }
-
+  for (const { sourceId, items: groupItems, policy, triageAgent } of groups) {
     reporter.phase(
       `Triaging ${groupItems.length} item(s) from source '${sourceId}' via ${triageAgent}`,
     );

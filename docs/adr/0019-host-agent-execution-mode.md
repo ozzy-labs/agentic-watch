@@ -118,13 +118,11 @@ host モードと spawn モードでは untrusted item content の **blast radiu
 
 ## triage / review / update への展開方針
 
-本 ADR は **research を PoC** として固定したが、その後の follow-up で **review / update も同型として shipped** 済み。各コマンドの展開状況:
+本 ADR は **research を PoC** として固定したが、その後の follow-up で **review / update / triage も shipped** 済み (review / update は research と同型、triage は別契約)。各コマンドの展開状況:
 
 - **research** (PoC, #260): prepare/commit 2-call (`--emit-payload` / `--commit`) を確立。`prepareResearch` / `finalizeResearch` 抽出、spawn・emit・commit が単一 finalize を共有。
 - **review / update** (follow-up): research と **同型** (Markdown レポート生成 → finalize)。同じ prepare/commit 契約をそのまま適用。`review` は in-place 改変 (`reviewedAt` / `reviewedBy` stamp + review block 追記 → `researched → reviewed`)、`update` は v+1 ファイル生成 (supersedes / createdAt / itemIds drift 検証、items.yaml status 不変 per [ADR-0008](./0008-status-state-machine.md))。いずれも spawn パスと finalize を共有し、`--commit` path は `resolveCommitPathInside` で `<cwd>/research/` に制約 (literal prefix + symlink realpath、M3b をコードで担保)。
-- **triage**: per-item の `TriageDecision` を書く **別形** (レポートファイルが無い、[ADR-0018](./0018-triage-extension.md))。payload / commit 契約が research とは別物になり、**優先度は低い (依然 deferred)**。
-
-triage の host モード化は引き続き本 ADR の scope 外とし、必要になった時点で別途判断する。
+- **triage** ([#279](https://github.com/ozzy-labs/feedradar/issues/279), follow-up): per-item の `TriageDecision` を書く **別形** (Markdown レポートファイルが無い、[ADR-0018](./0018-triage-extension.md))。research とは別物の payload / commit 契約として shipped。`--emit-payload` は 1 source の `detected` items を triage する payload (= `buildTriagePrompt` の triage request を host framing で包んだもの) を stdout に出力し、`--commit <path>` は host が書いた decisions JSON (`{ agent, sourceId, decisions: [...] }`) を source policy + on-disk detected items で **再検証** (spawn パスと同じ `parseTriageResponse` — hallucinated-id reject / confidence・digest demotion) してから status 遷移を適用する。`--commit` path は `resolveCommitPathInside` で `<cwd>/triage/` に制約 (M3b をコードで担保)。検証・status 遷移は CLI が一元担保し、host は decisions を書くだけ。[ADR-0020](./0020-claude-routines-generation.md) が routine フルパイプラインの前提として contract を確定させた。
 
 ## Alternatives
 
