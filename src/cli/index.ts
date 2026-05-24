@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveLocale } from "../core/locale.js";
 import { createTranslator, type Locale, type Translator } from "../i18n/index.js";
-import { LangFlagError, parseLangFlag, readLangEnv } from "./_locale.js";
+import { readLangEnv } from "./_locale.js";
 import { dismissCommand } from "./dismiss.js";
 import { doctorCommand } from "./doctor.js";
 import { initCommand } from "./init.js";
@@ -73,6 +73,56 @@ const commands: Command[] = [
 const PKG_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
 const VERSION = (JSON.parse(readFileSync(PKG_PATH, "utf8")) as { version: string }).version;
 
+/**
+ * Result of splitting the raw argv into the dispatcher preamble + the
+ * command and its verbatim argv.
+ */
+type CommandSplit =
+  | {
+      kind: "ok";
+      /** Global `--lang` value found in the preamble (unvalidated), if any. */
+      preamble: { flag: string | undefined };
+      /** The command token (or a leading help/version flag), possibly empty. */
+      command: string | undefined;
+      /** Everything from the command token onward, minus the command itself. */
+      commandArgs: string[];
+    }
+  | { kind: "error"; message: string };
+
+/**
+ * Walk the leading args, consuming only a global `--lang <value>` /
+ * `--lang=<value>` (the dispatcher's own flag). The first arg that is not such
+ * a leading `--lang` is the command token (or a leading `-h`/`-v`); everything
+ * after it is forwarded to the subcommand untouched — including any *later*
+ * `--lang`, which is the subcommand's to resolve.
+ *
+ * A dangling `--lang` with no value is a usage error (exit 2), matching
+ * {@link import("./_locale.js").LangFlagError}.
+ */
+function splitAtCommand(argv: string[]): CommandSplit {
+  let flag: string | undefined;
+  let i = 0;
+  for (; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--lang") {
+      const next = argv[i + 1];
+      if (next === undefined) {
+        return { kind: "error", message: "--lang requires a value (en|ja)" };
+      }
+      flag = next;
+      i++; // consume the value token
+      continue;
+    }
+    if (arg?.startsWith("--lang=")) {
+      flag = arg.slice("--lang=".length);
+      continue;
+    }
+    break; // first non-preamble token: the command (or -h/-v)
+  }
+  const command = argv[i];
+  return { kind: "ok", preamble: { flag }, command, commandArgs: argv.slice(i + 1) };
+}
+
 function printHelp(t: Translator, log: (message: string) => void): void {
   log(t("cli.help.tagline"));
   log("");
@@ -94,32 +144,32 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<voi
   const error = options.io?.error ?? ((m: string) => console.error(m));
   const env = options.env ?? process.env;
 
-  // Pull `--lang` out of the *whole* argv to resolve the dispatcher's own
-  // locale, so it may sit before the subcommand (`radar --lang ja --help`).
-  // The dispatcher reads no config (config is cwd-dependent and resolved inside
-  // each command), so only the flag/env layers feed resolution here.
-  let langFlag: string | undefined;
-  let rest: string[];
-  try {
-    const parsed = parseLangFlag(argv);
-    langFlag = parsed.flag;
-    rest = parsed.rest;
-  } catch (err) {
-    if (err instanceof LangFlagError) {
-      error(`radar: ${err.message}`);
-      process.exit(2);
-    }
-    throw err;
+  // Split argv at the command token: everything *before* it is the dispatcher's
+  // own preamble (where a global `--lang` / `-h` / `-v` may sit), everything
+  // from the command token onward is forwarded verbatim to the subcommand.
+  //
+  // The command token is the first arg that is not a `--lang` flag (or its
+  // value) and not a leading help/version flag. Splitting this way means a
+  // `--lang` placed *after* the command (`radar watch --lang ja run`) is left
+  // for the subcommand to resolve its own (config-aware) locale, while the
+  // dispatcher still honors a `--lang` placed before the command for its own
+  // global help / version / unknown-command output.
+  const split = splitAtCommand(argv);
+  if (split.kind === "error") {
+    error(`radar: ${split.message}`);
+    process.exit(2);
   }
+  const { preamble, command: first, commandArgs } = split;
 
-  const locale: Locale = resolveLocale({ flag: langFlag, env: readLangEnv(env) }, { warn: error });
+  // Resolve the dispatcher's locale from the preamble's `--lang` (+ env). The
+  // dispatcher reads no config (config is cwd-dependent and resolved inside each
+  // command), so only the flag/env layers feed resolution here.
+  const locale: Locale = resolveLocale(
+    { flag: preamble.flag, env: readLangEnv(env) },
+    { warn: error },
+  );
   const t = options.t ?? createTranslator(locale);
 
-  // `rest` (with `--lang` stripped) decides which top-level branch to take.
-  // For subcommand dispatch we forward the *original* argv minus only the
-  // command token, so the subcommand still sees any `--lang` the user passed
-  // and can run its own config-aware locale resolution.
-  const [first] = rest;
   if (!first || first === "-h" || first === "--help" || first === "help") {
     printHelp(t, log);
     return;
@@ -134,8 +184,6 @@ export async function run(argv: string[], options: RunOptions = {}): Promise<voi
     error(t("cli.error.unknownCommandHint"));
     process.exit(2);
   }
-  const commandIdx = argv.indexOf(first);
-  const commandArgs = commandIdx >= 0 ? argv.slice(commandIdx + 1) : rest.slice(1);
   const code = await command.run(commandArgs);
   if (code !== 0) {
     process.exit(code);
