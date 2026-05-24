@@ -1,6 +1,10 @@
-import { access, copyFile, mkdir, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { CONFIG_FILENAME } from "../core/config.js";
+import { type Locale, resolveLocale } from "../core/locale.js";
+import { LangFlagError, parseLangFlag, readLangEnv } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -94,6 +98,17 @@ async function pathExists(p: string): Promise<boolean> {
 interface InitOptions {
   cwd: string;
   force: boolean;
+  /**
+   * Effective UI locale (`en` / `ja`) that selects which per-locale template
+   * subtree (`<templatesRoot>/<locale>/`) the workspace report templates and
+   * operational docs (default.md / digest.md / AGENTS.md / CLAUDE.md /
+   * FEEDRADAR.md) are copied from, and which is persisted to
+   * `radar.config.yaml`'s `locale`. Defaults to `en` (ADR-0021 D1/D7/D10).
+   *
+   * Schedule scaffolds (routines/ workflows/) are locale-independent in this
+   * iteration (#314 scope) and stay at the templates-root level.
+   */
+  locale?: Locale;
   /** Override the source location of bundled engine skills (used by tests). */
   skillsRoot?: string;
   /** Override the source location of bundled init templates (used by tests). */
@@ -427,6 +442,7 @@ const FEEDRADAR_MD_SCAFFOLD = {
  */
 export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   const { cwd, force } = options;
+  const locale: Locale = options.locale ?? "en";
   const warn = options.warn ?? ((m: string) => console.warn(m));
   const info = options.info ?? ((m: string) => console.log(m));
 
@@ -545,6 +561,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: AGENTS_MD_SCAFFOLD,
       copiedFiles,
       skippedFiles,
@@ -567,6 +584,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
         cwd,
         force,
         templatesRoot: options.templatesRoot,
+        locale,
         scaffold: CLAUDE_MD_SCAFFOLD,
         copiedFiles,
         skippedFiles,
@@ -580,6 +598,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: DEFAULT_TEMPLATE_SCAFFOLD,
       copiedFiles,
       skippedFiles,
@@ -594,6 +613,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: DIGEST_TEMPLATE_SCAFFOLD,
       copiedFiles,
       skippedFiles,
@@ -606,6 +626,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: FEEDRADAR_MD_SCAFFOLD,
       copiedFiles,
       skippedFiles,
@@ -637,6 +658,12 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
     });
   }
 
+  // Persist the resolved locale to radar.config.yaml so subsequent runs (and
+  // commands that read config.locale via resolveLocale) honor the workspace's
+  // language without re-passing --lang. We merge into any existing config to
+  // avoid clobbering defaultResearchAgent / defaultReviewAgent.
+  await writeLocaleToConfig({ cwd, force, locale, copiedFiles, skippedFiles, warn });
+
   info(`init: workspace ready at ${cwd}`);
   info(`init: directories created: ${createdDirs.join(", ")}`);
   if (copiedFiles.length > 0) {
@@ -657,21 +684,30 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
 }
 
 /**
- * Copy one bundled schedule scaffold into `cwd`. Existing files are protected
- * unless `force` is true (mirrors the bundled-skills path).
+ * Copy one bundled scaffold into `cwd`. Existing files are protected unless
+ * `force` is true (mirrors the bundled-skills path).
+ *
+ * When `locale` is provided, the bundled source is resolved from the
+ * per-locale subtree `<templatesRoot>/<locale>/<src>` (ADR-0021 D7:
+ * `src/templates/{en,ja}/**`). Schedule scaffolds (routines / workflows) omit
+ * `locale` and resolve from the templates root directly — they are
+ * locale-independent in this iteration (#314 scope).
  */
 async function emitScaffold(args: {
   cwd: string;
   force: boolean;
   templatesRoot: string | undefined;
+  /** When set, resolve the bundled source from `<templatesRoot>/<locale>/`. */
+  locale?: Locale;
   scaffold: { src: string; dest: readonly string[] };
   copiedFiles: string[];
   skippedFiles: string[];
   warn: (message: string) => void;
 }): Promise<void> {
-  const { cwd, force, scaffold, copiedFiles, skippedFiles, warn } = args;
+  const { cwd, force, locale, scaffold, copiedFiles, skippedFiles, warn } = args;
   const templatesRoot = args.templatesRoot ?? (await resolveTemplatesRoot());
-  const src = join(templatesRoot, scaffold.src);
+  const srcBase = locale === undefined ? templatesRoot : join(templatesRoot, locale);
+  const src = join(srcBase, scaffold.src);
   const dest = join(cwd, ...scaffold.dest);
   const relDest = scaffold.dest.join("/");
 
@@ -691,6 +727,82 @@ async function emitScaffold(args: {
 
   await copyFile(src, dest);
   copiedFiles.push(relDest);
+}
+
+/**
+ * Write the resolved `locale` into `radar.config.yaml` at the workspace root.
+ *
+ * Behavior:
+ * - No existing config: create `radar.config.yaml` with just `locale: <locale>`.
+ * - Existing config without `locale`: merge `locale` in, preserving other keys
+ *   (e.g. `defaultResearchAgent`). This is treated as a non-destructive update
+ *   and proceeds regardless of `--force` (we add a key rather than clobber
+ *   user content).
+ * - Existing config whose `locale` already matches: no-op (idempotent re-init).
+ * - Existing config whose `locale` differs: overwrite only with `--force`;
+ *   otherwise warn + skip (mirrors the bundled-file protection policy, so a
+ *   plain `radar init --lang ja` in an `en` workspace does not silently flip
+ *   the persisted locale).
+ *
+ * A malformed existing config (unparseable YAML / non-object) is left
+ * untouched with a warning — `init` should not corrupt a file the user may be
+ * mid-edit on; they can fix it and re-run, or pass `--force`.
+ */
+async function writeLocaleToConfig(args: {
+  cwd: string;
+  force: boolean;
+  locale: Locale;
+  copiedFiles: string[];
+  skippedFiles: string[];
+  warn: (message: string) => void;
+}): Promise<void> {
+  const { cwd, force, locale, copiedFiles, skippedFiles, warn } = args;
+  const configPath = join(cwd, CONFIG_FILENAME);
+
+  let existing: Record<string, unknown> | undefined;
+  if (await pathExists(configPath)) {
+    let parsed: unknown;
+    try {
+      parsed = parseYaml(await readFile(configPath, "utf8"));
+    } catch (e) {
+      warn(
+        `init: skipped writing ${CONFIG_FILENAME} locale (existing file is not valid YAML: ${
+          e instanceof Error ? e.message : String(e)
+        })`,
+      );
+      skippedFiles.push(CONFIG_FILENAME);
+      return;
+    }
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>;
+    } else if (parsed !== null && parsed !== undefined) {
+      // A scalar / array at the document root is not a valid config shape.
+      warn(`init: skipped writing ${CONFIG_FILENAME} locale (existing file is not a mapping)`);
+      skippedFiles.push(CONFIG_FILENAME);
+      return;
+    }
+  }
+
+  if (existing !== undefined) {
+    const current = existing.locale;
+    if (current === locale) {
+      // Already set to the same value — nothing to do.
+      return;
+    }
+    if (current !== undefined && !force) {
+      warn(
+        `init: skipped updating ${CONFIG_FILENAME} locale '${String(
+          current,
+        )}' -> '${locale}' (use --force to overwrite)`,
+      );
+      skippedFiles.push(CONFIG_FILENAME);
+      return;
+    }
+  }
+
+  const next: Record<string, unknown> = { ...(existing ?? {}), locale };
+  await writeFile(configPath, stringifyYaml(next), "utf8");
+  copiedFiles.push(CONFIG_FILENAME);
 }
 
 interface ParsedArgs {
@@ -758,6 +870,25 @@ export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
   run: async (args) => {
+    // Strip `--lang <en|ja>` before the command's own parser sees argv, then
+    // resolve the effective locale via the layered sources (ADR-0021):
+    //   --lang flag > RADAR_LANG env > config.locale > default (en).
+    // `config.locale` is intentionally NOT consulted here: `init` *establishes*
+    // a workspace and writes config.locale; pre-existing config should not
+    // override an explicit --lang or change the default-en behavior on a fresh
+    // init. (Other commands that run inside an initialized workspace do pass
+    // config.locale to resolveLocale.)
+    let langState: ReturnType<typeof parseLangFlag>;
+    try {
+      langState = parseLangFlag(args);
+    } catch (e) {
+      if (e instanceof LangFlagError) {
+        console.error(`init: ${e.message}`);
+        return 2;
+      }
+      throw e;
+    }
+    const locale = resolveLocale({ flag: langState.flag, env: readLangEnv() });
     const {
       force,
       withRoutines,
@@ -769,9 +900,11 @@ export const initCommand: Command = {
       noTemplates,
       noFeedradarMd,
       help,
-    } = parseArgs(args);
+    } = parseArgs(langState.rest);
     if (help) {
-      console.log("Usage: radar init [--force] [--with-routines] [--with-actions]");
+      console.log(
+        "Usage: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]",
+      );
       console.log("                          [--no-claude-skills] [--no-gemini-commands]");
       console.log("                          [--no-agents-md] [--no-claude-md] [--no-templates]");
       console.log("                          [--no-feedradar-md]");
@@ -798,6 +931,12 @@ export const initCommand: Command = {
       );
       console.log("");
       console.log("Options:");
+      console.log(
+        "  --lang <en|ja>         Language for generated report templates and workspace docs",
+      );
+      console.log(
+        "                         (default: en; also honors RADAR_LANG; persisted to radar.config.yaml)",
+      );
       console.log("  --force                Overwrite existing files");
       console.log(
         "  --with-routines        Generate .claude/routines/watch-daily.yaml (Claude Routines scaffold)",
@@ -843,6 +982,7 @@ export const initCommand: Command = {
     await initWorkspace({
       cwd: process.cwd(),
       force,
+      locale,
       withRoutines,
       withActions,
       noClaudeSkills,
