@@ -177,7 +177,14 @@ describe("cli/routine/generate-pipeline", () => {
       expect(written).toContain("radar watch run");
       expect(written).toContain("radar triage --apply --max-items 10");
       expect(written).toContain("radar items list --status triaged_research --limit 10 --field id");
-      expect(written).toContain("radar items list --status researched --limit 10 --field id");
+      // Review enumerates research-ids (report basenames), NOT item ids: the
+      // <research-id> argument is the basename of research/<id>.md, which is
+      // distinct from the item id `items list --field id` would emit.
+      expect(written).toContain("head -n 10");
+      // The `${RID}` here is a literal shell variable in the generated YAML,
+      // not a JS template placeholder.
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell var in the asserted YAML string
+      expect(written).toContain('radar review --commit "research/${RID}.md"');
       // One-at-a-time self-session entrypoints (NOT --batch).
       expect(written).toContain("radar research");
       expect(written).toContain("--emit-payload");
@@ -205,6 +212,8 @@ describe("cli/routine/generate-pipeline", () => {
       );
       expect(written).toContain("radar triage --apply --max-items 3");
       expect(written).toContain("--limit 3");
+      // The review loop cap mirrors the research cap via `head -n {{maxItems}}`.
+      expect(written).toContain("head -n 3");
       expect(written).not.toContain("--max-items 10");
     });
 
