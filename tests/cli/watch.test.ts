@@ -520,4 +520,94 @@ describe("cli/watch run", () => {
     const itemBody = parseYaml(await readFile(join(itemDir, itemFile), "utf8"));
     expect(itemBody.injectionFlags).toEqual([]);
   });
+
+  // #342 B2: regression test for the #341 watch-flow progress markers being
+  // localized end-to-end through the CLI `--lang` flag. The progress reporter
+  // writes to process.stderr, so spy on it. 3+ sources trip the progress
+  // heuristic (shouldEnableProgress) so the per-source markers actually fire.
+  describe("watch progress markers locale (#342 B2)", () => {
+    function spyStderr(): { writes: string[]; restore: () => void } {
+      const writes: string[] = [];
+      const original = process.stderr.write.bind(process.stderr);
+      const spy = (chunk: string | Uint8Array): boolean => {
+        writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      };
+      // biome-ignore lint/suspicious/noExplicitAny: test-only stderr spy
+      process.stderr.write = spy as any;
+      function restore(): void {
+        process.stderr.write = original;
+      }
+      return { writes, restore };
+    }
+
+    it("localizes the per-source Fetching / Completed markers with --lang ja", async () => {
+      // 3 sources -> shouldEnableProgress() true even for fast rss kind.
+      await writeSource(workdir, "blog");
+      await writeSource(workdir, "news");
+      await writeSource(workdir, "feed");
+      const { io } = captureIo();
+      const { writes, restore } = spyStderr();
+      let code: number;
+      try {
+        code = await runWatch(["--lang", "ja"], {
+          cwd: workdir,
+          io,
+          fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+        });
+      } finally {
+        restore();
+      }
+      expect(code).toBe(0);
+      const out = writes.join("");
+      // English literals gone; Japanese markers present (#341 markers via #337
+      // catalog keys cli.progress.watchFetching / watchSourceCompleted).
+      expect(out.includes("Fetching…")).toBe(false);
+      expect(out.includes("取得中…")).toBe(true);
+      expect(out.includes("完了:")).toBe(true);
+    });
+
+    it("defaults the per-source markers to English without --lang", async () => {
+      await writeSource(workdir, "blog");
+      await writeSource(workdir, "news");
+      await writeSource(workdir, "feed");
+      const { io } = captureIo();
+      const { writes, restore } = spyStderr();
+      try {
+        await runWatch([], {
+          cwd: workdir,
+          io,
+          fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+        });
+      } finally {
+        restore();
+      }
+      const out = writes.join("");
+      expect(out.includes("Fetching…")).toBe(true);
+      expect(out.includes("取得中…")).toBe(false);
+    });
+
+    // #342 B2 tail: the #336 watch validation errors carry locale too. The
+    // sync parseRunArgs throws a keyed WatchArgError that the caller translates
+    // once the locale is resolved.
+    it("localizes the --max-pages-requires-backfill validation error", async () => {
+      const en = captureIo();
+      const codeEn = await runWatch(["--max-pages", "5"], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("--max-pages requires --backfill"))).toBe(
+        true,
+      );
+
+      const ja = captureIo();
+      const codeJa = await runWatch(["--max-pages", "5", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("--max-pages requires --backfill"))).toBe(
+        false,
+      );
+      expect(ja.captured.error.some((m) => m.includes("--backfill"))).toBe(true);
+    });
+  });
 });

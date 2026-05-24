@@ -875,19 +875,27 @@ export async function listSources(
       if (!s) continue;
       if (i > 0) log("");
       const lastFetchedAt = await readLastFetchedAt(cwd, s.id, error);
+      const none = t("cli.source.valueNone");
       log(`${s.id}`);
-      log(`  kind:           ${s.kind}`);
-      log(`  url:            ${s.url}`);
-      log(`  name:           ${s.name ?? "-"}`);
-      log(`  tags:           ${s.tags.length > 0 ? s.tags.join(",") : "-"}`);
+      log(t("cli.source.fieldKind", { value: s.kind }));
+      log(t("cli.source.fieldUrl", { value: s.url }));
+      log(t("cli.source.fieldName", { value: s.name ?? none }));
+      log(t("cli.source.fieldTags", { value: s.tags.length > 0 ? s.tags.join(",") : none }));
       log(
-        `  keywords:       ${s.filters.keywords.length > 0 ? s.filters.keywords.join(",") : "(none — items will be filtered out)"}`,
+        t("cli.source.fieldKeywords", {
+          value:
+            s.filters.keywords.length > 0
+              ? s.filters.keywords.join(",")
+              : t("cli.source.keywordsEmpty"),
+        }),
       );
       log(
-        `  excludeKeywords: ${s.filters.excludeKeywords.length > 0 ? s.filters.excludeKeywords.join(",") : "-"}`,
+        t("cli.source.fieldExcludeKeywords", {
+          value: s.filters.excludeKeywords.length > 0 ? s.filters.excludeKeywords.join(",") : none,
+        }),
       );
-      log(`  trustLevel:     ${s.trustLevel}`);
-      log(`  lastFetchedAt:  ${lastFetchedAt}`);
+      log(t("cli.source.fieldTrustLevel", { value: s.trustLevel }));
+      log(t("cli.source.fieldLastFetchedAt", { value: lastFetchedAt }));
     }
     return 0;
   }
@@ -896,7 +904,9 @@ export async function listSources(
   const kindWidth = Math.max(4, ...sources.map((s) => s.kind.length));
   const urlWidth = Math.max(3, ...sources.map((s) => s.url.length));
 
-  log(`${pad("ID", idWidth)}  ${pad("KIND", kindWidth)}  ${pad("URL", urlWidth)}  TAGS`);
+  log(
+    `${pad(t("cli.source.listHeaderId"), idWidth)}  ${pad(t("cli.source.listHeaderKind"), kindWidth)}  ${pad(t("cli.source.listHeaderUrl"), urlWidth)}  ${t("cli.source.listHeaderTags")}`,
+  );
   for (const s of sources) {
     log(
       `${pad(s.id, idWidth)}  ${pad(s.kind, kindWidth)}  ${pad(s.url, urlWidth)}  ${s.tags.join(",")}`,
@@ -1110,8 +1120,8 @@ export async function testSource(
   const filtered = stats?.filtered ?? matched.length;
 
   log("");
-  log(`source test: ${parsed.id}`);
-  log(`  fetched: ${fetched} / filtered: ${filtered} / matched: ${matched.length}`);
+  log(t("cli.source.testHeading", { id: parsed.id }));
+  log(t("cli.source.testCounts", { fetched, filtered, matched: matched.length }));
 
   // Facet sweep notice (#256). A dry-run `source test` probes exactly ONE
   // facet value, so keyword verification only reflects that single slice. We
@@ -1123,8 +1133,11 @@ export async function testSource(
   const facetSweep = result.diag[parsed.id]?.facetSweep;
   if (facetSweep) {
     warn(
-      `source test: facet sweep 有効: ${facetSweep.facet}=${facetSweep.testedValue} のみ test 中（全 ${facetSweep.totalValues} 件の facet 値は walk しない）。` +
-        `range facet は上端（最新値）を test します。全 facet 値を確認するには \`radar watch run --backfill\` を使用してください。`,
+      t("cli.source.facetSweepNotice", {
+        facet: facetSweep.facet,
+        testedValue: facetSweep.testedValue,
+        totalValues: facetSweep.totalValues,
+      }),
     );
   }
 
@@ -1138,47 +1151,62 @@ export async function testSource(
     if (diag) {
       if (diag.selectorAdoption) {
         log("");
-        log("  selector adoption:");
+        log(t("cli.source.selectorAdoptionHeading"));
         for (const [field, path] of Object.entries(diag.selectorAdoption)) {
           if (path === null) {
-            log(`    ${field}: (no candidate matched)`);
+            log(t("cli.source.selectorNoCandidate", { field }));
           } else {
-            log(`    ${field} ← ${path} を採用`);
+            log(t("cli.source.selectorAdopted", { field, path }));
           }
         }
       }
       if (diag.paginationPreview) {
         const p = diag.paginationPreview;
         log("");
-        log("  pagination preview (page 0 only — state not mutated):");
-        log(`    strategy:  ${p.strategy}`);
-        log(`    nextUrl:   ${p.nextUrl ?? "(end of pagination)"}`);
+        log(t("cli.source.paginationPreviewHeading"));
+        log(t("cli.source.paginationStrategy", { strategy: p.strategy }));
+        log(
+          t("cli.source.paginationNextUrl", {
+            nextUrl: p.nextUrl ?? t("cli.source.paginationEndOfPagination"),
+          }),
+        );
         if (p.linkHeaderNext !== undefined) {
-          log(`    Link rel=next: ${p.linkHeaderNext ?? "(absent)"}`);
+          log(
+            t("cli.source.paginationLinkNext", {
+              value: p.linkHeaderNext ?? t("cli.source.paginationAbsent"),
+            }),
+          );
         }
         if (p.nextCursor !== undefined) {
-          log(`    nextCursor: ${p.nextCursor ?? "(absent)"}`);
+          log(
+            t("cli.source.paginationNextCursor", {
+              value: p.nextCursor ?? t("cli.source.paginationAbsent"),
+            }),
+          );
         }
       }
     }
   }
 
   if (matched.length === 0) {
-    log("  (no matched items)");
+    log(t("cli.source.testNoMatched"));
     return 0;
   }
 
   const shown = matched.slice(0, limit);
+  const none = t("cli.source.valueNone");
   log("");
-  log(`Showing ${shown.length} of ${matched.length} matched item(s):`);
+  log(t("cli.source.testShowing", { shown: shown.length, total: matched.length }));
   for (let i = 0; i < shown.length; i++) {
     const item = shown[i];
     if (!item) continue;
     log("");
-    log(`  ${i + 1}. ${item.title}`);
-    log(`     url:             ${item.url}`);
+    log(t("cli.source.testItemTitle", { index: i + 1, title: item.title }));
+    log(t("cli.source.testItemUrl", { url: item.url }));
     log(
-      `     matchedKeywords: ${item.matchedKeywords.length > 0 ? item.matchedKeywords.join(",") : "-"}`,
+      t("cli.source.testItemMatchedKeywords", {
+        value: item.matchedKeywords.length > 0 ? item.matchedKeywords.join(",") : none,
+      }),
     );
     if (parsed.showContent) {
       const body =
@@ -1187,12 +1215,16 @@ export async function testSource(
           : typeof item.raw === "string"
             ? item.raw
             : "";
-      log(`     content:         ${body.length > 0 ? truncatePreview(body, 200) : "-"}`);
+      log(
+        t("cli.source.testItemContent", {
+          value: body.length > 0 ? truncatePreview(body, 200) : none,
+        }),
+      );
     }
   }
   if (matched.length > shown.length) {
     log("");
-    log(`  … ${matched.length - shown.length} more (raise --limit to see them)`);
+    log(t("cli.source.testMoreItems", { count: matched.length - shown.length }));
   }
   return 0;
 }
@@ -1267,27 +1299,34 @@ export async function recipesSubcommand(
     const nameWidth = Math.max(4, ...valid.map((e) => e.name.length));
     const kindWidth = Math.max(4, ...valid.map((e) => (e.recipe ? e.recipe.kind.length : 0)));
 
-    log(`${pad("NAME", nameWidth)}  ${pad("KIND", kindWidth)}  DESCRIPTION`);
+    log(
+      `${pad(t("cli.source.recipesHeaderName"), nameWidth)}  ${pad(t("cli.source.recipesHeaderKind"), kindWidth)}  ${t("cli.source.recipesHeaderDescription")}`,
+    );
     for (const e of valid) {
       if (!e.recipe) continue;
       const desc = e.recipe.description ?? "";
       log(`${pad(e.name, nameWidth)}  ${pad(e.recipe.kind, kindWidth)}  ${desc}`);
     }
   } else {
-    log("source recipes: no valid recipes found (all bundled entries failed to load)");
+    log(t("cli.source.recipesNoValid"));
   }
 
   if (invalid.length > 0) {
     log("");
-    log("Recipes with errors:");
+    log(t("cli.source.recipesErrorsHeading"));
     for (const e of invalid) {
-      log(`  ${e.name}: ${e.error ?? "(unknown error)"}`);
+      log(
+        t("cli.source.recipesErrorRow", {
+          name: e.name,
+          error: e.error ?? t("cli.source.recipesErrorUnknown"),
+        }),
+      );
     }
   }
 
   log("");
-  log("Apply a recipe with:");
-  log("  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
+  log(t("cli.source.recipesApplyHeading"));
+  log(t("cli.source.recipesApplyExample"));
 
   // Returning 0 even when individual recipes have errors keeps the
   // listing useful in CI: a single malformed recipe should not break

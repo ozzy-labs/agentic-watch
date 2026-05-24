@@ -71,7 +71,7 @@ export async function runWorkflow(
   }
 
   if (sub !== "generate") {
-    error(`workflow: unknown subcommand '${sub}'`);
+    error(t("cli.workflow.unknownSubcommand", { sub }));
     printWorkflowHelp(t, error);
     return 2;
   }
@@ -90,7 +90,7 @@ export async function runWorkflow(
     case "combined-with-triage":
       return runGenerateCombinedWithTriage(typeArgs, options.io ?? {}, cwd);
     default:
-      error(`workflow generate: unknown type '${type}'`);
+      error(t("cli.workflow.unknownType", { type }));
       printGenerateHelp(t, error);
       return 2;
   }

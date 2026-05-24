@@ -9,11 +9,13 @@ import { initWorkspace } from "../../src/cli/init.js";
 import { runItemsList } from "../../src/cli/items.js";
 import { runResearch } from "../../src/cli/research.js";
 import { runReview } from "../../src/cli/review.js";
+import { runRoutine } from "../../src/cli/routine.js";
 import { runSource } from "../../src/cli/source.js";
 import { runTriage } from "../../src/cli/triage.js";
 import { runUndismiss } from "../../src/cli/undismiss.js";
 import { runUpdate } from "../../src/cli/update.js";
 import { runWatch } from "../../src/cli/watch.js";
+import { runWorkflow } from "../../src/cli/workflow.js";
 import { loadRadarConfig, RadarConfigError } from "../../src/core/config.js";
 import { createTranslator } from "../../src/i18n/index.js";
 import type { Item } from "../../src/schemas/index.js";
@@ -391,6 +393,141 @@ describe("cli/i18n user-facing errors & notifications (#312)", () => {
       });
       expect(captured.log.some((m) => m.includes("ワークスペースを"))).toBe(true);
       expect(captured.log.some((m) => m.includes("workspace ready at"))).toBe(false);
+    });
+
+    // #342 A3: operational warnings (bundled-asset-not-found / skipped-existing /
+    // config-locale skips) are now localized too. Force a "skipped existing" warn
+    // by pre-creating a target and running without --force.
+    it("localizes the skipped-existing-file warning (A3)", async () => {
+      // Pre-create AGENTS.md so the AGENTS.md scaffold step warns + skips it.
+      await writeFile(join(workdir, "AGENTS.md"), "pre-existing\n", "utf8");
+      const en = captureIo();
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "en",
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noClaudeMd: true,
+        noTemplates: true,
+        noFeedradarMd: true,
+        info: (m) => en.captured.log.push(m),
+        warn: (m) => en.captured.warn.push(m),
+      });
+      expect(en.captured.warn.some((m) => m.includes("skipped existing file"))).toBe(true);
+
+      const ja = captureIo();
+      await initWorkspace({
+        cwd: workdir,
+        force: false,
+        locale: "ja",
+        noClaudeSkills: true,
+        noGeminiCommands: true,
+        noClaudeMd: true,
+        noTemplates: true,
+        noFeedradarMd: true,
+        info: (m) => ja.captured.log.push(m),
+        warn: (m) => ja.captured.warn.push(m),
+      });
+      expect(ja.captured.warn.some((m) => m.includes("skipped existing file"))).toBe(false);
+      expect(ja.captured.warn.some((m) => m.includes("既存ファイルをスキップ"))).toBe(true);
+    });
+  });
+
+  // #342 B3 / A1: the workflow / routine dispatcher errors (unknown subcommand /
+  // unknown type) route through the translator now that the dispatcher resolves
+  // a locale for its help text.
+  describe("workflow / routine dispatcher errors localize (#342 A1/B3)", () => {
+    it("localizes `workflow: unknown subcommand`", async () => {
+      const en = captureIo();
+      const codeEn = await runWorkflow(["frobnicate"], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("unknown subcommand"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runWorkflow(["frobnicate", "--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("unknown subcommand"))).toBe(false);
+      expect(ja.captured.error.some((m) => m.includes("不明なサブコマンド"))).toBe(true);
+    });
+
+    it("localizes `workflow generate: unknown type`", async () => {
+      const ja = captureIo();
+      const codeJa = await runWorkflow(["generate", "bogus", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("不明なタイプ"))).toBe(true);
+    });
+
+    it("localizes `routine: unknown subcommand`", async () => {
+      const en = captureIo();
+      const codeEn = await runRoutine(["frobnicate"], { cwd: workdir, io: en.io });
+      expect(codeEn).toBe(2);
+      expect(en.captured.error.some((m) => m.includes("unknown subcommand"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runRoutine(["frobnicate", "--lang", "ja"], { cwd: workdir, io: ja.io });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("不明なサブコマンド"))).toBe(true);
+    });
+
+    it("localizes `routine generate: unknown type`", async () => {
+      const ja = captureIo();
+      const codeJa = await runRoutine(["generate", "bogus", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa).toBe(2);
+      expect(ja.captured.error.some((m) => m.includes("不明なタイプ"))).toBe(true);
+    });
+  });
+
+  // #342 A2: the workflow generate completion summary (wrote / detail rows /
+  // required-secrets heading) is localized now.
+  describe("workflow generate summaries localize (#342 A2)", () => {
+    it("localizes `workflow generate watch` completion output", async () => {
+      const en = captureIo();
+      const codeEn = await runWorkflow(["generate", "watch"], { cwd: workdir, io: en.io });
+      expect(codeEn, en.captured.error.join("\n")).toBe(0);
+      expect(en.captured.log.some((m) => m.includes("wrote "))).toBe(true);
+      expect(en.captured.log.some((m) => m.includes("Required GitHub Actions secrets"))).toBe(true);
+
+      const ja = captureIo();
+      const codeJa = await runWorkflow(
+        ["generate", "watch", "--output", ".github/workflows/x.yaml", "--lang", "ja"],
+        { cwd: workdir, io: ja.io },
+      );
+      expect(codeJa, ja.captured.error.join("\n")).toBe(0);
+      expect(ja.captured.log.some((m) => m.includes("Required GitHub Actions secrets"))).toBe(
+        false,
+      );
+      expect(ja.captured.log.some((m) => m.includes("を書き込みました"))).toBe(true);
+      expect(ja.captured.log.some((m) => m.includes("必要な GitHub Actions シークレット"))).toBe(
+        true,
+      );
+    });
+  });
+
+  // #342 A2: the routine generate completion block (wrote / paste flow /
+  // /schedule note / output gate) is localized now.
+  describe("routine generate summaries localize (#342 A2)", () => {
+    it("localizes `routine generate watch` completion output", async () => {
+      const ja = captureIo();
+      const codeJa = await runRoutine(["generate", "watch", "--repo", "acme/x", "--lang", "ja"], {
+        cwd: workdir,
+        io: ja.io,
+      });
+      expect(codeJa, ja.captured.error.join("\n")).toBe(0);
+      expect(ja.captured.log.some((m) => m.includes("を書き込みました"))).toBe(true);
+      // Web UI paste flow + output-gate line localized.
+      expect(ja.captured.log.some((m) => m.includes("Web UI に手で貼り付け"))).toBe(true);
+      expect(ja.captured.log.some((m) => m.includes("出力ゲート"))).toBe(true);
+      // English literal of the paste heading must be gone.
+      expect(ja.captured.log.some((m) => m.includes("paste this routine into the Web UI"))).toBe(
+        false,
+      );
     });
   });
 });

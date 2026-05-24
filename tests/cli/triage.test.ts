@@ -373,4 +373,77 @@ describe("cli/triage run", () => {
       expect(parsed.status).toBe("ok");
     }
   });
+
+  // #342 B1 / A6: the per-source "Triaging …" progress marker and the
+  // interactive apply-confirm prompt now route through the translator.
+  describe("progress + confirm prompt locale (#342 B1/A6)", () => {
+    it("localizes the per-source 'Triaging …' progress marker (--verbose)", async () => {
+      await writeItem(workdir, makeItem({ id: "x", sourceId: "test-source" }));
+      const mock = createTriageMock();
+      // The progress reporter writes to process.stderr (not the io sinks), so
+      // spy on it to capture the phase marker. --verbose keeps the reporter on.
+      const writes: string[] = [];
+      const original = process.stderr.write.bind(process.stderr);
+      const spy = (chunk: string | Uint8Array): boolean => {
+        writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      };
+      // biome-ignore lint/suspicious/noExplicitAny: test-only stderr spy
+      process.stderr.write = spy as any;
+      try {
+        const code = await runTriage(["--dry-run", "--verbose", "--lang", "ja"], {
+          cwd: workdir,
+          runner: mock.runner,
+          now: () => NOW,
+        });
+        expect(code).toBe(0);
+      } finally {
+        process.stderr.write = original;
+      }
+      const out = writes.join("");
+      // English literal "Triaging" gone; Japanese marker present.
+      expect(out.includes("Triaging ")).toBe(false);
+      expect(out.includes("で triage 中")).toBe(true);
+    });
+
+    it("localizes the interactive apply-confirm prompt", async () => {
+      await writeItem(workdir, makeItem({ id: "x", sourceId: "test-source" }));
+      const mock = createTriageMock();
+      let promptMessage: string | null = null;
+      const { io } = captureIo();
+      await runTriage(["--interactive", "--lang", "ja"], {
+        cwd: workdir,
+        io,
+        runner: mock.runner,
+        now: () => NOW,
+        editor: async () => {},
+        confirm: async (message) => {
+          promptMessage = message;
+          return false;
+        },
+      });
+      expect(promptMessage).not.toBeNull();
+      expect(promptMessage).not.toContain("Apply these decisions?");
+      expect(promptMessage).toContain("適用しますか");
+    });
+
+    it("defaults the confirm prompt to English without --lang", async () => {
+      await writeItem(workdir, makeItem({ id: "x", sourceId: "test-source" }));
+      const mock = createTriageMock();
+      let promptMessage: string | null = null;
+      const { io } = captureIo();
+      await runTriage(["--interactive"], {
+        cwd: workdir,
+        io,
+        runner: mock.runner,
+        now: () => NOW,
+        editor: async () => {},
+        confirm: async (message) => {
+          promptMessage = message;
+          return false;
+        },
+      });
+      expect(promptMessage).toContain("Apply these decisions? [y/N]");
+    });
+  });
 });

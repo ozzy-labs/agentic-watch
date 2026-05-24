@@ -999,9 +999,11 @@ describe("cli/source", () => {
       expect(code).toBe(0);
       const out = captured.log.join("\n");
       expect(out).toContain("selector adoption:");
-      // The default chain adoption renders in Japanese ("採用") per #174 UX.
-      expect(out).toMatch(/title ← \$\.headline を採用/);
-      expect(out).toMatch(/link ← \$\.url を採用/);
+      // Default locale is English now (#342 A4): the selector-adoption block
+      // renders "<field> ← adopted <path>" rather than the old mixed-language
+      // "<field> ← <path> を採用".
+      expect(out).toMatch(/title ← adopted \$\.headline/);
+      expect(out).toMatch(/link ← adopted \$\.url/);
       expect(out).toContain("pagination preview");
       expect(out).toContain("strategy:  page");
       expect(out).toMatch(/nextUrl:\s+https/);

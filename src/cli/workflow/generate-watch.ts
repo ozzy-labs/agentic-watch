@@ -220,6 +220,7 @@ export interface GenerateWatchResult {
 export async function generateWatch(options: GenerateWatchOptions): Promise<GenerateWatchResult> {
   const { cwd, cron, output, agent, force } = options;
   const locale: Locale = options.locale ?? "en";
+  const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -257,23 +258,23 @@ export async function generateWatch(options: GenerateWatchOptions): Promise<Gene
     throw new Error(`output file already exists: ${destRel} (use --force to overwrite)`);
   }
   if ((await pathExists(destAbs)) && force) {
-    warn(`workflow generate watch: overwriting existing file ${destRel}`);
+    warn(t("cli.workflow.generateWatchOverwriting", { path: destRel }));
   }
 
   await mkdir(dirname(destAbs), { recursive: true });
   await writeFile(destAbs, rendered, "utf8");
 
-  log(`workflow generate watch: wrote ${destRel}`);
-  log(`workflow generate watch: cron='${cron}', agent='${agent}'`);
+  log(t("cli.workflow.generateWatchWrote", { path: destRel }));
+  log(t("cli.workflow.generateWatchSummary", { cron, agent }));
   log("");
-  log("Required GitHub Actions secrets (Settings → Secrets and variables → Actions):");
+  log(t("cli.workflow.requiredSecretsHeading"));
   if (agent === "copilot") {
     // Copilot CLI rides the auto-provisioned GITHUB_TOKEN — no user action
     // beyond confirming the workflow's `permissions: contents: write`.
-    log("  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)");
+    log(t("cli.workflow.secretCopilotToken"));
   } else {
-    log(`  ${envKey} — required for the '${agent}' agent`);
-    log("  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)");
+    log(t("cli.workflow.secretAgentKey", { envKey, agent }));
+    log(t("cli.workflow.secretGithubTokenAuto"));
   }
 
   return { outputPath: destRel, requiredSecret: envKey };

@@ -1,5 +1,13 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LangFlagError, parseLangFlag, readLangEnv } from "../../src/cli/_locale.js";
+import {
+  LangFlagError,
+  parseLangFlag,
+  readLangEnv,
+  resolveWorkspaceLocale,
+} from "../../src/cli/_locale.js";
 import { resolveLocale } from "../../src/core/locale.js";
 
 /**
@@ -64,5 +72,61 @@ describe("cli/_locale + resolveLocale wiring", () => {
     const { flag } = parseLangFlag(["research"]);
     const env = readLangEnv({ RADAR_LANG: "ja" });
     expect(resolveLocale({ flag, env })).toBe("ja");
+  });
+});
+
+// #342 B6: resolveWorkspaceLocale must tolerate a malformed radar.config.yaml —
+// the config layer is dropped (treated as absent) and resolution falls through
+// to flag / env / default rather than hard-failing the command.
+describe("cli/_locale resolveWorkspaceLocale (malformed config tolerance)", () => {
+  async function makeWorkspace(configBody: string | undefined): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "feedradar-loc-"));
+    if (configBody !== undefined) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "radar.config.yaml"), configBody, "utf8");
+    }
+    return dir;
+  }
+
+  it("falls back to default (en) when config is unparseable YAML and no flag/env", async () => {
+    const cwd = await makeWorkspace("locale: : : broken\n  - nope\n");
+    const locale = await resolveWorkspaceLocale({ flag: undefined, cwd, env: {} });
+    expect(locale).toBe("en");
+  });
+
+  it("honors --lang even when config is unparseable", async () => {
+    const cwd = await makeWorkspace("}{ this is not yaml\n");
+    const locale = await resolveWorkspaceLocale({ flag: "ja", cwd, env: {} });
+    expect(locale).toBe("ja");
+  });
+
+  it("honors RADAR_LANG when config is malformed and no flag", async () => {
+    const cwd = await makeWorkspace(":\n:\n:\n");
+    const locale = await resolveWorkspaceLocale({
+      flag: undefined,
+      cwd,
+      env: { RADAR_LANG: "ja" },
+    });
+    expect(locale).toBe("ja");
+  });
+
+  it("does not warn-crash on a malformed config (warn is best-effort)", async () => {
+    const cwd = await makeWorkspace("locale: { unterminated\n");
+    const warnings: string[] = [];
+    const locale = await resolveWorkspaceLocale({
+      flag: undefined,
+      cwd,
+      env: {},
+      warn: (m) => warnings.push(m),
+    });
+    // config layer dropped -> default en; the schema error surfaces (if at all)
+    // only through the command's own config consumer, not here.
+    expect(locale).toBe("en");
+  });
+
+  it("uses a valid config.locale as the lowest-priority layer", async () => {
+    const cwd = await makeWorkspace("locale: ja\n");
+    const locale = await resolveWorkspaceLocale({ flag: undefined, cwd, env: {} });
+    expect(locale).toBe("ja");
   });
 });
