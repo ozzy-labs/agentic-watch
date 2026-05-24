@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveLocale } from "../core/locale.js";
-import { createTranslator, type Locale, type Translator } from "../i18n/index.js";
+import { createTranslator, type Locale, type MessageKey, type Translator } from "../i18n/index.js";
 import { readLangEnv } from "./_locale.js";
 import { dismissCommand } from "./dismiss.js";
 import { doctorCommand } from "./doctor.js";
@@ -20,7 +20,18 @@ import { workflowCommand } from "./workflow.js";
 
 export interface Command {
   name: string;
+  /**
+   * Plain-English one-liner. Retained as the canonical source text and the
+   * fallback when no {@link summaryKey} is set; localized output goes through
+   * {@link summaryKey} instead (#311).
+   */
   summary: string;
+  /**
+   * i18n key resolving to the localized one-line summary shown in
+   * `radar --help`. When present the dispatcher renders `t(summaryKey)`;
+   * otherwise it falls back to the plain {@link summary} (#311).
+   */
+  summaryKey?: MessageKey;
   run: (args: string[]) => Promise<number>;
 }
 
@@ -130,7 +141,8 @@ function printHelp(t: Translator, log: (message: string) => void): void {
   log("");
   log(t("cli.help.commandsHeading"));
   for (const c of commands) {
-    log(`  ${c.name.padEnd(12)} ${c.summary}`);
+    const summary = c.summaryKey ? t(c.summaryKey) : c.summary;
+    log(`  ${c.name.padEnd(12)} ${summary}`);
   }
   log("");
   log(t("cli.help.optionsHeading"));

@@ -1,8 +1,10 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { loadItems } from "../core/items.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { Item, ItemStatus } from "../schemas/index.js";
 import { ItemStatusSchema } from "../schemas/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -115,29 +117,12 @@ function parseListArgs(args: string[]): ListArgs {
   return out;
 }
 
-function printListHelp(log: (m: string) => void): void {
-  log("Usage: radar items list [filters] [output options]");
-  log("");
-  log("Filters:");
-  log("  --status <status>        detected | triaged_research | triaged_digest |");
-  log("                           triaged_unsure | researched | reviewed | dismissed");
-  log("  --source <id>            limit to one source");
-  log("  --triage-group <name>    items whose triage.group == <name>");
-  log("                           (used by digest workflow)");
-  log("  --since <duration>       drop items older than the cutoff (e.g. 7d, 24h)");
-  log("  --limit N                cap result count");
-  log("");
-  log("Output options:");
-  log("  --json                   emit JSON array (one object per item)");
-  log("  --field <expr>           emit one item field per row (e.g. id, sourceId,");
-  log("                           triage.decision). Supports nested dot paths.");
+function printListHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.items.listHelp"));
 }
 
-function printItemsHelp(log: (m: string) => void): void {
-  log("Usage: radar items <list> [...]");
-  log("");
-  log("Subcommands:");
-  log("  list [filters]           List items matching the supplied filters");
+function printItemsHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.items.help"));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -200,12 +185,29 @@ function renderJsonValue(value: unknown): string {
  * Top-level dispatcher for `radar items <subcommand>`.
  */
 export async function runItems(args: string[], options: ItemsCommandOptions = {}): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Resolve the dispatcher help locale from any leading `--lang` (read-only;
+  // the full `args` still flow to the `list` subcommand which strips its own).
+  const dispatcherLangFlag = ((): string | undefined => {
+    try {
+      return parseLangFlag(args).flag;
+    } catch {
+      return undefined;
+    }
+  })();
+  const dispatcherLocale = await resolveWorkspaceLocale({
+    flag: dispatcherLangFlag,
+    cwd,
+    warn: error,
+  });
+  const t = createTranslator(dispatcherLocale);
+
   const [sub, ...rest] = args;
   if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
-    printItemsHelp(log);
+    printItemsHelp(t, log);
     return sub ? 0 : 2;
   }
   switch (sub) {
@@ -213,7 +215,7 @@ export async function runItems(args: string[], options: ItemsCommandOptions = {}
       return runItemsList(rest, options);
     default:
       error(`items: unknown subcommand '${sub}'`);
-      printItemsHelp(error);
+      printItemsHelp(t, error);
       return 2;
   }
 }
@@ -229,15 +231,30 @@ export async function runItemsList(
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before `parseListArgs` (which rejects unknown
+  // flags), then resolve the UI locale for the list help text.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`items list: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: ListArgs;
   try {
-    parsed = parseListArgs(args);
+    parsed = parseListArgs(langState.rest);
   } catch (e) {
     error(`items list: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printListHelp(log);
+    printListHelp(t, log);
     return 0;
   }
 
@@ -345,5 +362,6 @@ export async function runItemsList(
 export const itemsCommand: Command = {
   name: "items",
   summary: "Inspect items in the workspace (list | ...)",
+  summaryKey: "cli.summary.items",
   run: (args) => runItems(args),
 };

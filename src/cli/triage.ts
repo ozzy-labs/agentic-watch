@@ -17,12 +17,14 @@ import {
   triageItems,
 } from "../core/triage/index.js";
 import { loadSources } from "../core/watcher.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { DismissedBy, Item, TriageDecision } from "../schemas/item.js";
 import { TriageDecisionValueSchema } from "../schemas/item.js";
 import { AgentIdSchema } from "../schemas/research.js";
 import type { Source, SourceTriagePolicy } from "../schemas/source.js";
 import { SourceTriagePolicySchema } from "../schemas/source.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -240,67 +242,16 @@ function parseTriageFeedbackArgs(args: string[]): TriageFeedbackArgs {
   return out;
 }
 
-function printRunHelp(log: (m: string) => void): void {
-  log("Usage: radar triage [--dry-run | --apply | --interactive] [options]");
-  log("       radar triage --emit-payload [--source <id>] [options]");
-  log("       radar triage --commit <path>");
-  log("");
-  log("Classify `detected` items using the configured per-source triage policy.");
-  log("");
-  log("Modes (mutually exclusive; default: --dry-run):");
-  log("  --dry-run            print proposed decisions to stdout (no disk writes)");
-  log("  --apply              write decisions to items/<id>.yaml + transition status");
-  log("  --interactive        --dry-run output → $EDITOR → confirm → apply");
-  log("");
-  log("Options:");
-  log("  --source <id>            limit triage to a single source");
-  log("  --filter-tags <a,b>      matchedKeywords allow-list (comma-separated)");
-  log("  --triage-agent <id>      override policy.agent for this run");
-  log("  --policy <path>          override per-source policy with a YAML file");
-  log("  --max-items N            hard cap on items triaged in this run");
-  log("  --audit-log <path>       append JSONL audit records of every triage call");
-  log("  --emit-payload           Host-agent mode: print the triage payload to");
-  log("                           stdout and DO NOT spawn an agent. The interactive host");
-  log("                           session classifies the items itself, writes a decisions");
-  log("                           JSON, then finalizes with `radar triage --commit <path>`.");
-  log("                           Requires a single source group: pass --source unless only");
-  log("                           one source has detected items. Interactive/opt-in only —");
-  log("                           CI/headless must use the default spawn path.");
-  log("  --commit <path>          Host-agent mode: validate a host-written");
-  log("                           decisions JSON (under <cwd>/triage/) against the source's");
-  log("                           policy + detected items and apply the status transitions.");
-  log("  -v, --verbose            verbose progress output");
-  log("  -q, --quiet              suppress progress output entirely");
-  log("");
-  log("Sources missing a `triagePolicy:` block are skipped with a warning.");
+function printRunHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.triage.runHelp"));
 }
 
-function printFeedbackHelp(log: (m: string) => void): void {
-  log("Usage: radar triage feedback <item-id> --correct | --wrong [--reason <text>]");
-  log("");
-  log("Record human feedback on a prior triage decision.");
-  log("Feedback is appended to items/<id>.yaml > triage.feedback, used by");
-  log("`radar triage stats` (#242) for policy tuning.");
-  log("");
-  log("Options:");
-  log("  --correct            mark the prior triage decision as correct");
-  log("  --wrong              mark the prior triage decision as wrong");
-  log("  --reason <text>      free-form rationale (recommended for --wrong)");
+function printFeedbackHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.triage.feedbackHelp"));
 }
 
-function printTriageHelp(log: (m: string) => void): void {
-  log("Usage: radar triage <subcommand|--apply|--dry-run|--interactive> [...]");
-  log("");
-  log("Subcommands:");
-  log("  feedback <item-id> --correct | --wrong [--reason <text>]");
-  log("  stats [--since <duration>] [--source <id>] [--json]");
-  log("");
-  log("Run modes (when no subcommand given):");
-  log("  --dry-run            print proposed decisions");
-  log("  --apply              write decisions to items/<id>.yaml");
-  log("  --interactive        edit decisions in $EDITOR before applying");
-  log("");
-  log("Run `radar triage --help` for the full option list.");
+function printTriageHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.triage.help"));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -853,6 +804,7 @@ export async function runTriage(
   args: string[],
   options: TriageCommandOptions = {},
 ): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
@@ -865,7 +817,17 @@ export async function runTriage(
     return runTriageStats(rest, options, { log, warn, error });
   }
   if (first === "help") {
-    printTriageHelp(log);
+    // `help` subcommand: resolve a translator for the localized overview. A
+    // leading `--lang` is read-only here (no further args to forward).
+    const langFlag = ((): string | undefined => {
+      try {
+        return parseLangFlag(args).flag;
+      } catch {
+        return undefined;
+      }
+    })();
+    const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+    printTriageHelp(createTranslator(locale), log);
     return 0;
   }
   // `--help` / `-h` flow through to the run-mode parser so the user sees
@@ -891,15 +853,30 @@ async function runTriageRun(
   const cwd = options.cwd ?? process.cwd();
   const now = options.now ?? defaultNow;
 
+  // Strip `--lang <en|ja>` before `parseTriageRunArgs` (which rejects unknown
+  // flags), then resolve the UI locale for the help text.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`triage: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: TriageRunArgs;
   try {
-    parsed = parseTriageRunArgs(args);
+    parsed = parseTriageRunArgs(langState.rest);
   } catch (e) {
     error(`triage: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printRunHelp(log);
+    printRunHelp(t, log);
     return 0;
   }
 
@@ -1053,20 +1030,33 @@ async function runTriageFeedback(args: string[], options: TriageCommandOptions):
   const error = options.io?.error ?? ((m: string) => console.error(m));
   const now = options.now ?? defaultNow;
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`triage feedback: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: TriageFeedbackArgs;
   try {
-    parsed = parseTriageFeedbackArgs(args);
+    parsed = parseTriageFeedbackArgs(langState.rest);
   } catch (e) {
     error(`triage feedback: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printFeedbackHelp(log);
+    printFeedbackHelp(t, log);
     return 0;
   }
   if (!parsed.itemId) {
     error("triage feedback: missing <item-id>");
-    printFeedbackHelp(error);
+    printFeedbackHelp(t, error);
     return 2;
   }
   if (parsed.correct && parsed.wrong) {
@@ -1203,19 +1193,8 @@ function parseTriageStatsArgs(args: string[]): TriageStatsArgs {
   return out;
 }
 
-function printStatsHelp(log: (m: string) => void): void {
-  log("Usage: radar triage stats [--since <duration>] [--source <id>] [--json]");
-  log("");
-  log("Aggregate triage decisions and human feedback.");
-  log("Use after running `radar triage --apply` for some weeks; the output");
-  log("highlights precision / recall drift and suggests `triagePolicy.rules:`");
-  log("tweaks. See docs/user-guide.md `policy tuning workflow` for the");
-  log("recommended monthly loop.");
-  log("");
-  log("Options:");
-  log("  --since <duration>   only count items triaged within the cutoff (e.g. 30d, 24h)");
-  log("  --source <id>        limit stats to a single source (default: all sources)");
-  log("  --json               emit machine-readable JSON instead of the text report");
+function printStatsHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.triage.statsHelp"));
 }
 
 /**
@@ -1554,15 +1533,28 @@ async function runTriageStats(
   const nowFn = options.now ?? defaultNow;
   const now = new Date(nowFn());
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`triage stats: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: TriageStatsArgs;
   try {
-    parsed = parseTriageStatsArgs(args);
+    parsed = parseTriageStatsArgs(langState.rest);
   } catch (e) {
     error(`triage stats: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printStatsHelp(log);
+    printStatsHelp(t, log);
     return 0;
   }
 
@@ -1679,5 +1671,6 @@ export const __test__ = {
 export const triageCommand: Command = {
   name: "triage",
   summary: "LLM-based triage of detected items",
+  summaryKey: "cli.summary.triage",
   run: (args) => runTriage(args),
 };

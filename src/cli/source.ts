@@ -11,8 +11,10 @@ import {
 } from "../core/recipes.js";
 import { loadSourceState } from "../core/state.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { Source } from "../schemas/source.js";
 import { SourceKindSchema, SourceSchema, SourceSelectorsSchema } from "../schemas/source.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -407,129 +409,28 @@ function parseRemoveArgs(args: string[]): RemoveArgs {
   return out;
 }
 
-function printAddHelp(log: (m: string) => void): void {
-  log("Usage: radar source add <id> --kind <kind> --url <url> [options]");
-  log("       radar source add <id> --recipe <name> [overrides]");
-  log("");
-  log("Options:");
-  log(
-    "  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed | json-api",
-  );
-  log("  --url <url>              fetch target URL");
-  log("  --recipe <name>          apply a bundled recipe (see `radar source recipes`).");
-  log("                           Mutually exclusive with --kind / --url / --selector-* /");
-  log("                           --pagination-*; --name / --tags / --keywords /");
-  log("                           --exclude-keywords still override the recipe defaults.");
-  log("  --name <name>            display name (defaults to <id>)");
-  log("  --tags <a,b>             comma-separated tags");
-  log("  --keywords <a,b>         comma-separated include keywords");
-  log("                           (required for useful output — empty = match nothing)");
-  log("  --exclude-keywords <a,b> comma-separated exclude keywords");
-  log(
-    "  --selector-<field> <css> CSS selector for kind=html / html-js (required: item, title, link)",
-  );
-  log("                           optional: summary, publishedAt, body, tags");
-  log("                           For kind=html-js, selectors evaluate against the post-JS DOM.");
-  log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");
-  log("                           via flags; edit sources/<id>.yaml after add.");
-  log("");
-  log("  For kind=json-api:");
-  log(
-    "    --pagination-strategy <s>  page | offset | cursor | link-header | token | none (default: page)",
-  );
-  log("    --pagination-param <name>  query param name for the page/offset/cursor value");
-  log("    --pagination-start N       initial page/offset value (default: 0)");
-  log("    --page-size N              items per page");
-  log("    --page-size-param <name>   query param name for the page-size value");
-  log("    --max-pages N              hard cap on pages traversed (default: 20)");
-  log(
-    "    --next-cursor-path <jp>    JSONPath-lite to the next-cursor value (cursor/token strategy)",
-  );
-  log(
-    "    --total-path <jp>          JSONPath-lite to the total-count value (backfill early-stop hint)",
-  );
-  log("");
-  log("  Selector fields (`jsonSelectors.*`) for kind=json-api cannot be set via flags;");
-  log("  the schema has a default fallback chain (items / title / link / publishedAt / summary),");
-  log("  so simple APIs work without selectors. Edit sources/<id>.yaml directly when explicit");
-  log("  selectors are needed (nested fields, non-standard envelopes).");
-  log("");
-  log("  Facet sweep (e.g. year-by-year sweep) cannot be configured via flags;");
-  log(
-    "  and bundle the year sweep through `--recipe aws-whats-new`. Recipe-only structural field.",
-  );
+function printAddHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.addHelp"));
 }
 
-function printListHelp(log: (m: string) => void): void {
-  log("Usage: radar source list [--enabled-only] [-v|--verbose]");
-  log("");
-  log("Lists sources/*.yaml in tabular form: id / kind / url / tags.");
-  log("");
-  log("Options:");
-  log("  --enabled-only   Reserved for forward compatibility (currently a no-op).");
-  log("  -v, --verbose    Print a detailed block per source including keywords,");
-  log("                   trustLevel, and lastFetchedAt (from state/<id>.yaml).");
+function printListHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.listHelp"));
 }
 
-function printRemoveHelp(log: (m: string) => void): void {
-  log("Usage: radar source remove <id>");
-  log("");
-  log("Deletes sources/<id>.yaml. state/<id>.yaml and items/ are preserved.");
+function printRemoveHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.removeHelp"));
 }
 
-function printTestHelp(log: (m: string) => void): void {
-  log("Usage: radar source test <id> [--limit N] [--show-content]");
-  log("");
-  log("Dry-run a single source: fetch, filter, and print matched items.");
-  log("state/ and items/ are not touched (no persistence). Useful for tuning");
-  log("keywords when adding a new source.");
-  log("");
-  log("For kind=json-api, `source test` fetches PAGE 0 ONLY.");
-  log("Pagination is NOT walked even when the recipe declares multiple pages —");
-  log("`--limit N` caps how many matched items are PRINTED, it does not change");
-  log("the page budget. Use `radar watch run --backfill` for full-history ingest.");
-  log("Page 0's `Link` header / `nextCursor` extraction is surfaced via");
-  log("`--show-content` for pagination tuning without state mutation.");
-  log("");
-  log("For facet-sweep recipes, `source test` probes a SINGLE");
-  log("facet value: range facets use the upper bound (latest year), enum facets");
-  log("use the first listed value. A warning names which value was tested so");
-  log("keyword tuning is not silently scoped to one slice. Run `radar watch run");
-  log("--backfill` to sweep every facet value.");
-  log("");
-  log("Options:");
-  log("  --limit N        Maximum number of matched items to print (default 10)");
-  log("  --show-content   Also print the first 200 chars of each item's body, plus");
-  log("                   (kind=json-api) the selector adoption table and pagination");
-  log("                   preview (would-be next URL / Link header / nextCursor).");
-  log("  -v, --verbose    Enable progress-reporter raw() pass-through (adapter stdout).");
-  log("                   Most useful with kind=html-js (Playwright phase markers).");
-  log("  -q, --quiet      Suppress the progress reporter entirely. RADAR_NO_PROGRESS=1");
-  log("                   has the same effect.");
+function printTestHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.testHelp"));
 }
 
-function printRecipesHelp(log: (m: string) => void): void {
-  log("Usage: radar source recipes");
-  log("");
-  log("List bundled recipes (recipes/*.yaml in the radar package).");
-  log("Each recipe can be applied via:");
-  log("  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
-  log("");
-  log("Bundled recipes ship with the radar npm package; user-authored recipes are");
-  log("not yet supported. To add a new bundled recipe, contribute a YAML to the");
-  log("radar repo's recipes/ directory.");
+function printRecipesHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.recipesHelp"));
 }
 
-function printSourceHelp(log: (m: string) => void): void {
-  log("Usage: radar source <add|list|recipes|remove|test> [...]");
-  log("");
-  log("Subcommands:");
-  log("  add <id> --kind <kind> --url <url> [...]");
-  log("  add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
-  log("  list [--enabled-only]");
-  log("  recipes");
-  log("  remove <id>");
-  log("  test <id> [--limit N] [--show-content]");
+function printSourceHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.source.help"));
 }
 
 /**
@@ -549,20 +450,33 @@ export async function addSource(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`source add: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: AddArgs;
   try {
-    parsed = parseAddArgs(args);
+    parsed = parseAddArgs(langState.rest);
   } catch (e) {
     error(`source add: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printAddHelp(log);
+    printAddHelp(t, log);
     return 0;
   }
   if (!parsed.id) {
     error("source add: missing <id>");
-    printAddHelp(error);
+    printAddHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
@@ -897,15 +811,28 @@ export async function listSources(
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`source list: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: ListArgs;
   try {
-    parsed = parseListArgs(args);
+    parsed = parseListArgs(langState.rest);
   } catch (e) {
     error(`source list: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printListHelp(log);
+    printListHelp(t, log);
     return 0;
   }
   // --enabled-only is wired through for forward compatibility; the schema does
@@ -1026,20 +953,33 @@ export async function removeSource(
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`source remove: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: RemoveArgs;
   try {
-    parsed = parseRemoveArgs(args);
+    parsed = parseRemoveArgs(langState.rest);
   } catch (e) {
     error(`source remove: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printRemoveHelp(log);
+    printRemoveHelp(t, log);
     return 0;
   }
   if (!parsed.id) {
     error("source remove: missing <id>");
-    printRemoveHelp(error);
+    printRemoveHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
@@ -1091,20 +1031,33 @@ export async function testSource(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`source test: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: TestArgs;
   try {
-    parsed = parseTestArgs(args);
+    parsed = parseTestArgs(langState.rest);
   } catch (e) {
     error(`source test: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printTestHelp(log);
+    printTestHelp(t, log);
     return 0;
   }
   if (!parsed.id) {
     error("source test: missing <id>");
-    printTestHelp(error);
+    printTestHelp(t, error);
     return 2;
   }
   if (!isSafeSourceId(parsed.id)) {
@@ -1265,15 +1218,29 @@ export async function recipesSubcommand(
   args: string[],
   options: SourceCommandOptions = {},
 ): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
-  // The only flag accepted today is `-h` / `--help`. Keep the parser
-  // tiny rather than introducing a typed args struct for a single
-  // option — easier to extend if/when filters land.
-  for (const a of args) {
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`source recipes: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
+  // The only flag accepted today is `-h` / `--help` (plus the already-stripped
+  // `--lang`). Keep the parser tiny rather than introducing a typed args struct
+  // for a single option — easier to extend if/when filters land.
+  for (const a of langState.rest) {
     if (a === "-h" || a === "--help") {
-      printRecipesHelp(log);
+      printRecipesHelp(t, log);
       return 0;
     }
     if (a.startsWith("--")) {
@@ -1343,12 +1310,29 @@ export async function runSource(
   args: string[],
   options: SourceCommandOptions = {},
 ): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Resolve the dispatcher help locale from any leading `--lang` (read-only;
+  // each subcommand strips and resolves its own from `rest`).
+  const dispatcherLangFlag = ((): string | undefined => {
+    try {
+      return parseLangFlag(args).flag;
+    } catch {
+      return undefined;
+    }
+  })();
+  const dispatcherLocale = await resolveWorkspaceLocale({
+    flag: dispatcherLangFlag,
+    cwd,
+    warn: error,
+  });
+  const t = createTranslator(dispatcherLocale);
+
   const [sub, ...rest] = args;
   if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
-    printSourceHelp(log);
+    printSourceHelp(t, log);
     return sub ? 0 : 2;
   }
   switch (sub) {
@@ -1364,7 +1348,7 @@ export async function runSource(
       return testSource(rest, options);
     default:
       error(`source: unknown subcommand '${sub}'`);
-      printSourceHelp(error);
+      printSourceHelp(t, error);
       return 2;
   }
 }
@@ -1372,5 +1356,6 @@ export async function runSource(
 export const sourceCommand: Command = {
   name: "source",
   summary: "Manage feed sources (add | list | recipes | remove | test)",
+  summaryKey: "cli.summary.source",
   run: (args) => runSource(args),
 };

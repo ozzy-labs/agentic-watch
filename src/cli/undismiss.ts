@@ -2,7 +2,9 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { loadItems, saveItems } from "../core/items.js";
 import { isValidTransition } from "../core/transitions.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { Item } from "../schemas/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -64,19 +66,8 @@ function parseArgs(args: string[]): UndismissArgs {
   return out;
 }
 
-function printHelp(log: (m: string) => void): void {
-  log("Usage: radar undismiss <item-id> [--force]");
-  log("");
-  log("Arguments:");
-  log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
-  log("");
-  log("Options:");
-  log("  --force, -f           Required when reversing a human-origin dismiss");
-  log("");
-  log("Reverses `dismissed → detected`.");
-  log("Triage-origin dismisses revert silently; human-origin dismisses require --force.");
-  log("");
-  log("Inverse of `radar dismiss`.");
+function printHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.undismiss.help"));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -97,20 +88,35 @@ export async function runUndismiss(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the command's own parser sees argv, then
+  // resolve the UI locale (--lang > RADAR_LANG > config.locale > en) for help.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`undismiss: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: UndismissArgs;
   try {
-    parsed = parseArgs(args);
+    parsed = parseArgs(langState.rest);
   } catch (e) {
     error(`undismiss: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printHelp(log);
+    printHelp(t, log);
     return 0;
   }
   if (!parsed.itemId) {
     error("undismiss: missing <item-id>");
-    printHelp(error);
+    printHelp(t, error);
     return 2;
   }
 
@@ -181,5 +187,6 @@ export async function runUndismiss(
 export const undismissCommand: Command = {
   name: "undismiss",
   summary: "Reverse a dismiss (`dismissed → detected`)",
+  summaryKey: "cli.summary.undismiss",
   run: (args) => runUndismiss(args),
 };

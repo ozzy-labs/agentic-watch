@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_FILENAME } from "../core/config.js";
 import { type Locale, resolveLocale } from "../core/locale.js";
+import { createTranslator } from "../i18n/index.js";
 import { LangFlagError, parseLangFlag, readLangEnv } from "./_locale.js";
 import type { Command } from "./index.js";
 
@@ -874,6 +875,7 @@ function parseArgs(args: string[]): ParsedArgs {
 export const initCommand: Command = {
   name: "init",
   summary: "Initialize a workspace (sources/items/state/research/templates)",
+  summaryKey: "cli.summary.init",
   run: async (args) => {
     // Strip `--lang <en|ja>` before the command's own parser sees argv, then
     // resolve the effective locale via the layered sources (ADR-0021):
@@ -907,81 +909,11 @@ export const initCommand: Command = {
       help,
     } = parseArgs(langState.rest);
     if (help) {
-      console.log(
-        "Usage: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]",
-      );
-      console.log("                          [--no-claude-skills] [--no-gemini-commands]");
-      console.log("                          [--no-agents-md] [--no-claude-md] [--no-templates]");
-      console.log("                          [--no-feedradar-md]");
-      console.log("");
-      console.log("Creates the workspace directories and copies bundled skills:");
-      console.log("  - Engine SKILLs (SSoT): .agents/skills/{research,review,update}/SKILL.md");
-      console.log(
-        "  - Claude Code slash-command wrappers: .claude/skills/{research,review,update,dismiss}/SKILL.md",
-      );
-      console.log(
-        "  - Gemini CLI slash commands: .gemini/commands/{research,review,update,dismiss}.toml",
-      );
-      console.log(
-        "  - Agent-agnostic instructions: AGENTS.md (auto-read by Codex / Gemini / Copilot)",
-      );
-      console.log(
-        "  - Claude Code workspace instructions: CLAUDE.md (imports @AGENTS.md so Claude reads it)",
-      );
-      console.log(
-        "  - Starter report templates: templates/default.md (single item) and templates/digest.md (multi-item digest)",
-      );
-      console.log(
-        "  - Human-facing workspace guide: FEEDRADAR.md (natural-language / slash usage)",
-      );
-      console.log("");
-      console.log("Options:");
-      console.log(
-        "  --lang <en|ja>         Language for generated report templates and workspace docs",
-      );
-      console.log(
-        "                         (default: en; also honors RADAR_LANG; persisted to radar.config.yaml)",
-      );
-      console.log("  --force                Overwrite existing files");
-      console.log(
-        "  --with-routines        Generate .claude/routines/watch-daily.yaml (Claude Routines scaffold)",
-      );
-      console.log(
-        "  --with-actions         Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",
-      );
-      console.log(
-        "  --no-claude-skills     Skip writing slash-command wrappers to .claude/skills/",
-      );
-      console.log(
-        "                         (useful if @ozzylabs/skills Renovate preset manages that directory)",
-      );
-      console.log(
-        "  --no-gemini-commands   Skip writing Gemini CLI slash commands to .gemini/commands/",
-      );
-      console.log(
-        "                         (engine SKILLs still serve interactive Gemini via dual-mode)",
-      );
-      console.log("  --no-agents-md         Skip writing AGENTS.md at the workspace root");
-      console.log(
-        "                         (useful if the workspace already has its own AGENTS.md;",
-      );
-      console.log(
-        "                          implies --no-claude-md since the bundled CLAUDE.md imports @AGENTS.md)",
-      );
-      console.log("  --no-claude-md         Skip writing CLAUDE.md at the workspace root");
-      console.log(
-        "                         (useful if the workspace already has its own CLAUDE.md)",
-      );
-      console.log(
-        "  --no-templates         Skip writing templates/default.md and templates/digest.md",
-      );
-      console.log(
-        "                         (research engine SKILL falls back to its built-in structure)",
-      );
-      console.log("  --no-feedradar-md      Skip writing FEEDRADAR.md at the workspace root");
-      console.log(
-        "                         (useful if the workspace already has its own user-facing docs)",
-      );
+      // `init` resolves its locale without consulting config.locale (it is the
+      // command that *establishes* it), so the help text honors --lang / env /
+      // default only — consistent with the locale resolution above (#311).
+      const t = createTranslator(locale);
+      console.log(t("cli.init.help"));
       return 0;
     }
     await initWorkspace({

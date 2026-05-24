@@ -40,4 +40,475 @@ export const ja: Messages = {
   "cli.progress.frontmatterValidated": "フロントマター検証済み",
   "cli.progress.statusTransition": ({ from, to }: { from: string; to: string }): string =>
     `ステータス: ${from} → ${to}`,
+
+  // --- command summaries (global help list, #311) ---------------------------
+  "cli.summary.init": "ワークスペースを初期化する (sources/items/state/research/templates)",
+  "cli.summary.source": "フィードソースを管理する (add | list | recipes | remove | test)",
+  "cli.summary.watch": "ソースを取得しフィルタ済みアイテムを生成する (run)",
+  "cli.summary.research": "AI エージェントでアイテムから Markdown 調査レポートを生成する",
+  "cli.summary.triage": "検出済みアイテムを LLM でトリアージする",
+  "cli.summary.dismiss": "検出済みアイテムを却下する (単一 id / 複数 id / --batch)",
+  "cli.summary.undismiss": "却下を取り消す (`dismissed → detected`)",
+  "cli.summary.items": "ワークスペース内のアイテムを確認する (list | ...)",
+  "cli.summary.review": "別の AI エージェントで既存の調査レポートをクロスレビューする",
+  "cli.summary.update": "既存の調査レポートを最新アイテムに合わせて更新する",
+  "cli.summary.doctor": "ワークスペース・エージェント CLI・html-js 用 Playwright を診断する",
+  "cli.summary.workflow": "GitHub Actions ワークフローを生成する (generate <type>)",
+  "cli.summary.routine": "Claude Code Routines を管理する (generate <type> / fire <trig_id>)",
+
+  // --- research help (#311) -------------------------------------------------
+  "cli.research.help": ({ maxItems }: { maxItems: number }): string =>
+    `使い方:
+  radar research <item-id> [--agent <agent-id>] [--template <template-id>]
+  radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agent <agent-id>] [--template <id>]
+  radar research --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]
+  radar research <item-id> --emit-payload [--digest <ids...>] [--template <id>]
+  radar research --commit <path>
+
+引数:
+  <item-id>             アイテム id (items/<sourceId>/<item-id>.yaml に対応)
+                        --digest と一緒に 2 件以上の id を渡すとまとめられる。
+                        --batch では位置引数の id を省略する (アイテムは自動検出)。
+
+オプション:
+  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (既定: claude-code)
+  --template <id>       templates/ 配下のテンプレート id (既定: default / digest 時: digest)
+  --digest              複数アイテムを 1 つのダイジェストレポートにまとめる
+  --triage-group <group> ダイジェストの slug 元: matchedKeywords の頻度ではなく
+                        この triage.group をダイジェストファイル名にする。
+                        単一キーワードのソースが複数グループを生成する場合に、
+                        同日のグループ別ダイジェストを一意に保つため必須 (#255)。
+                        省略時は matchedKeywords の slug にフォールバックする。
+  --batch               --status (と --filter-tags) に一致する全アイテムを調査する。
+                        --max-items の上限を尊重する。
+  --status <status>     バッチモードのフィルタ: detected | triaged_research
+                        (既定: detected)。\`triaged_research\` は triage アダプタが
+                        昇格したアイテムを対象とし、成功時に \`researched\` へ遷移する。
+  --max-items N         バッチモードで処理するアイテム数の上限 (既定: ${maxItems})。
+                        超過分は破棄され warn() で通知される。暴走した検出が
+                        ワークフロー内で上限を突破できないようにするため。
+  --filter-tags <list>  バッチモードのカンマ区切り許可リスト。各アイテムの
+                        matchedKeywords と照合する (大文字小文字を区別しない)。既定: 全件。
+  --emit-payload        ホストエージェントモード: 調査ペイロードを stdout に出力し、
+                        エージェントを起動しない。対話ホストセッションが SKILL 手順を
+                        自ら実行し、\`radar research --commit <path>\` で確定する。
+                        対話/オプトイン専用 — CI/ヘッドレスは既定の起動パスを使うこと。
+  --commit <path>       ホストエージェントモード: 外部で書かれたレポート
+                        (<cwd>/research/ 配下) を ResearchFrontmatterSchema で検証し、
+                        detected → researched の遷移を適用する。
+  --verbose             フェーズマーカーに加えエージェント CLI の stdout/stderr を流す。
+  --quiet               フェーズマーカーとスピナーを抑制し、完了行のみ出力する。
+                        RADAR_NO_PROGRESS=1 を設定するのと同等。
+
+出力:
+  単一アイテム: research/<YYYYMMDD>_<slug>_v1.md
+  ダイジェスト: research/<YYYYMMDD>_digest_<slug>_v1.md
+  バッチ:       一致アイテムごとに単一レポート 1 件 (ダイジェスト集約なし)。`,
+
+  // --- review help (#311) ---------------------------------------------------
+  "cli.review.help": ({ maxItems }: { maxItems: number }): string =>
+    `使い方:
+  radar review <research-id> [--agent <agent-id>] [--template <template-id>]
+  radar review --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]
+  radar review <research-id> --emit-payload [--agent <id>] [--template <id>]
+  radar review --commit <path>
+
+引数:
+  <research-id>         調査 id (research/<id>.md の .md を除いたベース名)
+                        --batch では省略する (調査ファイルは自動検出)。
+
+オプション:
+  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (既定: claude-code)
+  --template <id>       templates/ 配下のテンプレート id (既定: default)
+  --batch               紐づくアイテムが --status (と --filter-tags) に一致する
+                        未レビューの調査ファイルをすべてレビューする。
+                        --max-items を尊重する (既定: ${maxItems})。
+  --status <status>     バッチモードのフィルタ: researched (既定)。
+                        \`researched → reviewed\` が唯一の正当な遷移で、
+                        他の値は拒否される。
+  --max-items N         バッチモードで処理するレポート数の上限 (既定: ${maxItems})。
+  --filter-tags <list>  バッチモードのカンマ区切り許可リスト。紐づく各アイテムの
+                        matchedKeywords と照合する (大文字小文字を区別しない)。
+  --emit-payload        ホストエージェントモード: レビューペイロードを stdout に出力し、
+                        エージェントを起動しない。対話ホストセッションがその場で
+                        調査ファイルをレビューし、\`radar review --commit <path>\` で確定する。
+                        対話/オプトイン専用 — CI/ヘッドレスは既定の起動パスを使うこと。
+  --commit <path>       ホストエージェントモード: 外部でレビューされたレポート
+                        (<cwd>/research/ 配下) を ResearchFrontmatterSchema で検証し、
+                        ホストが reviewedAt / reviewedBy を刻んだことを確認し、
+                        紐づくアイテムに researched → reviewed の遷移を適用する。
+  --verbose             フェーズマーカーに加えエージェント CLI の stdout/stderr を流す。
+  --quiet               フェーズマーカーとスピナーを抑制し、完了行のみ出力する。
+                        RADAR_NO_PROGRESS=1 を設定するのと同等。
+
+research/<research-id>.md にレビューブロックを追記し、フロントマターの
+\`reviewedAt\` / \`reviewedBy\` を刻み、紐づく items/<id>.yaml の \`status\` を
+\`researched\` から \`reviewed\` へ遷移させる。両更新はアトミックに行われ、
+途中失敗時は調査ファイルがロールバックされる。`,
+
+  // --- update help (#311) ---------------------------------------------------
+  "cli.update.help": `使い方:
+  radar update <research-id> [--agent <agent-id>] [--template <template-id>]
+  radar update <research-id> --emit-payload [--template <id>]
+  radar update --commit <path>
+
+引数:
+  <research-id>         調査 id (research/<id>.md の .md を除いたベース名)
+
+オプション:
+  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (既定: claude-code)
+  --template <id>       templates/ 配下のテンプレート id (既定: default)
+  --emit-payload        ホストエージェントモード: 更新ペイロードを stdout に出力し、
+                        エージェントを起動しない。対話ホストセッションが SKILL 手順を
+                        自ら実行し、\`radar update --commit <path>\` で確定する。
+                        対話/オプトイン専用 — CI/ヘッドレスは既定の起動パスを使うこと。
+  --commit <path>       ホストエージェントモード: 外部で書かれた v+1 レポート
+                        (<cwd>/research/ 配下) を ResearchFrontmatterSchema で検証し、
+                        \`supersedes\` 先行版に対する v+1 不変条件を確認し、
+                        items.yaml には手を触れない。
+  --verbose             フェーズマーカーに加えエージェント CLI の stdout/stderr を流す。
+  --quiet               フェーズマーカーとスピナーを抑制し、完了行のみ出力する。
+                        RADAR_NO_PROGRESS=1 を設定するのと同等。
+
+指定した先行版 id から research/<base>_v<n+1>.md を生成し、新ファイルの
+フロントマターに \`supersedes: <prev id>\` を書き込む。先行版ファイルは
+決して変更されず (履歴は不変)、紐づく items/<id>.yaml の \`status\` も
+そのまま残る。`,
+
+  // --- triage help (#311) ---------------------------------------------------
+  "cli.triage.runHelp": `使い方: radar triage [--dry-run | --apply | --interactive] [options]
+       radar triage --emit-payload [--source <id>] [options]
+       radar triage --commit <path>
+
+ソースごとに設定された triage ポリシーで \`detected\` アイテムを分類する。
+
+モード (排他、既定: --dry-run):
+  --dry-run            提案された判定を stdout に出力する (ディスク書き込みなし)
+  --apply              判定を items/<id>.yaml に書き込みステータスを遷移させる
+  --interactive        --dry-run 出力 → $EDITOR → 確認 → 適用
+
+オプション:
+  --source <id>            triage を単一ソースに限定する
+  --filter-tags <a,b>      matchedKeywords の許可リスト (カンマ区切り)
+  --triage-agent <id>      この実行のみ policy.agent を上書きする
+  --policy <path>          ソースごとのポリシーを YAML ファイルで上書きする
+  --max-items N            この実行で triage するアイテム数の上限
+  --audit-log <path>       全 triage 呼び出しの JSONL 監査レコードを追記する
+  --emit-payload           ホストエージェントモード: triage ペイロードを stdout に出力し、
+                           エージェントを起動しない。対話ホストセッションが自ら
+                           アイテムを分類し決定 JSON を書き、
+                           \`radar triage --commit <path>\` で確定する。
+                           単一ソースグループが必要: detected アイテムを持つソースが
+                           1 つだけでない限り --source を渡すこと。対話/オプトイン専用 —
+                           CI/ヘッドレスは既定の起動パスを使うこと。
+  --commit <path>          ホストエージェントモード: ホストが書いた決定 JSON
+                           (<cwd>/triage/ 配下) をソースのポリシー + detected アイテムに対して
+                           検証し、ステータス遷移を適用する。
+  -v, --verbose            詳細な進捗を出力する
+  -q, --quiet              進捗出力を完全に抑制する
+
+\`triagePolicy:\` ブロックを持たないソースは警告付きでスキップされる。`,
+  "cli.triage.feedbackHelp": `使い方: radar triage feedback <item-id> --correct | --wrong [--reason <text>]
+
+過去の triage 判定に対する人手のフィードバックを記録する。
+フィードバックは items/<id>.yaml > triage.feedback に追記され、
+ポリシー調整のため \`radar triage stats\` (#242) で利用される。
+
+オプション:
+  --correct            過去の triage 判定を正しいとマークする
+  --wrong              過去の triage 判定を誤りとマークする
+  --reason <text>      自由記述の理由 (--wrong には推奨)`,
+  "cli.triage.statsHelp": `使い方: radar triage stats [--since <duration>] [--source <id>] [--json]
+
+triage 判定と人手フィードバックを集計する。
+数週間 \`radar triage --apply\` を実行した後に使うと、精度/再現率の
+ドリフトを浮かび上がらせ、\`triagePolicy.rules:\` の調整を提案する。
+推奨される月次ループは docs/user-guide.md の \`policy tuning workflow\` を参照。
+
+オプション:
+  --since <duration>   この期間内に triage されたアイテムのみ集計する (例: 30d, 24h)
+  --source <id>        統計を単一ソースに限定する (既定: 全ソース)
+  --json               テキストレポートの代わりに機械可読な JSON を出力する`,
+  "cli.triage.help": `使い方: radar triage <subcommand|--apply|--dry-run|--interactive> [...]
+
+サブコマンド:
+  feedback <item-id> --correct | --wrong [--reason <text>]
+  stats [--since <duration>] [--source <id>] [--json]
+
+実行モード (サブコマンド未指定時):
+  --dry-run            提案された判定を出力する
+  --apply              判定を items/<id>.yaml に書き込む
+  --interactive        適用前に $EDITOR で判定を編集する
+
+完全なオプション一覧は \`radar triage --help\` を参照。`,
+
+  // --- dismiss / undismiss help (#311) --------------------------------------
+  "cli.dismiss.help": ({ maxItems }: { maxItems: number }): string =>
+    `使い方:
+  radar dismiss <item-id> [<item-id> ...]
+  radar dismiss --batch [--status <status>] [--max-items N] [--filter-tags <list>]
+
+引数:
+  <item-id>             アイテム id (items/<sourceId>/<item-id>.yaml に対応)
+                        1 回の呼び出しで却下するには 2 件以上の id を渡す。
+                        --batch では位置引数の id を省略する (アイテムは自動検出)。
+
+オプション:
+  --batch               --status (と --filter-tags) に一致する全アイテムを却下する。
+                        --max-items の上限を尊重する (既定: ${maxItems})。
+  --status <status>     バッチモードのフィルタ: detected | triaged_unsure (既定: detected)。
+                        状態機械上 \`dismissed\` へ遷移できるのはこの 2 つの状態のみで、
+                        他の値は拒否される。
+  --max-items N         バッチモードで処理するアイテム数の上限 (既定: ${maxItems})。
+                        超過分は破棄され warn() で通知される。暴走した --backfill が
+                        ワークフロー内で上限を突破できないようにするため。
+  --filter-tags <list>  バッチモードのカンマ区切り許可リスト。各アイテムの
+                        matchedKeywords と照合する (大文字小文字を区別しない)。既定: 全件。
+
+アイテムのステータスを \`dismissed\` へ遷移させる。\`detected\` または
+\`triaged_unsure\` からのみ有効で、\`researched\` / \`reviewed\` / \`dismissed\` /
+\`triaged_research\` / \`triaged_digest\` のアイテムは却下できない。
+
+逆操作: \`radar undismiss <item-id> [--force]\`。`,
+  "cli.undismiss.help": `使い方: radar undismiss <item-id> [--force]
+
+引数:
+  <item-id>             アイテム id (items/<sourceId>/<item-id>.yaml に対応)
+
+オプション:
+  --force, -f           人手由来の却下を取り消すときに必須
+
+\`dismissed → detected\` を取り消す。
+triage 由来の却下は静かに戻り、人手由来の却下は --force が必要。
+
+\`radar dismiss\` の逆操作。`,
+
+  // --- items help (#311) ----------------------------------------------------
+  "cli.items.listHelp": `使い方: radar items list [filters] [output options]
+
+フィルタ:
+  --status <status>        detected | triaged_research | triaged_digest |
+                           triaged_unsure | researched | reviewed | dismissed
+  --source <id>            単一ソースに限定する
+  --triage-group <name>    triage.group == <name> のアイテム
+                           (ダイジェストワークフローで使用)
+  --since <duration>       期限より古いアイテムを除外する (例: 7d, 24h)
+  --limit N                結果件数の上限
+
+出力オプション:
+  --json                   JSON 配列を出力する (アイテムごとに 1 オブジェクト)
+  --field <expr>           アイテムのフィールドを 1 行ずつ出力する (例: id, sourceId,
+                           triage.decision)。ネストしたドットパスに対応。`,
+  "cli.items.help": `使い方: radar items <list> [...]
+
+サブコマンド:
+  list [filters]           指定したフィルタに一致するアイテムを一覧表示する`,
+
+  // --- watch help (#311) ----------------------------------------------------
+  "cli.watch.help": `使い方: radar watch <run> [options]
+
+サブコマンド:
+  run [--source <id>] [--bootstrap | --backfill [--max-pages N]]
+                  ソースを取得しアイテムを生成する
+
+run のオプション:
+  --source <id>     実行を単一ソース id に限定する
+  --bootstrap       アイテムを出さずに lastSeenIds を初期化する (初回ノイズを抑制)
+  --backfill        利用可能な全履歴ページを取得し、各ページのアイテムを出す。
+                    完全対応 kind: json-api / github-releases / npm-registry。
+                    他の kind (rss / html / html-js) は現在のページのみ返す。
+  --max-pages N     pagination.maxPages の上限を上書きする (--backfill が必要)。
+                    内側のページネーションのみに適用 — facet sweep は
+                    このフラグに関わらず常に全 facet 値を走査する。
+  -v, --verbose     progress-reporter の raw() パススルーを有効化する (アダプタの stdout)。
+  -q, --quiet       ソースごとの進捗レポーターを抑制する (旧来の 1 行ログは残る)。
+                    RADAR_NO_PROGRESS=1 も同じ効果。`,
+
+  // --- doctor help (#311) ---------------------------------------------------
+  "cli.doctor.help": `使い方: radar doctor [--no-proxy-check]
+
+ワークスペースを診断し、依存関係/設定の健全性を報告する。
+
+実施するチェック:
+  - ワークスペースのディレクトリ (sources/, items/, state/, research/, templates/)
+  - radar.config.yaml のスキーマ妥当性
+  - エージェント CLI の利用可否 (claude / codex / gemini / copilot)
+  - Playwright + Chromium のインストール (html-js ソース設定時のみ)
+  - プロキシ環境変数 (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY) を資格情報マスク付きで確認
+  - NODE_USE_ENV_PROXY の状態 (proxy のため radar が自己 respawn した際に有効)
+  - NODE_EXTRA_CA_CERTS の状態 (TLS 傍受プロキシで必要)
+  - ライブプロキシのヘルスチェック (api.github.com への HTTPS リクエスト)
+
+オプション:
+  --no-proxy-check  ライブプロキシのヘルスチェックをスキップする (オフライン向け)
+
+終了コード:
+  0  すべて ok (警告は出るがエラーはなし)
+  1  1 つ以上の error レベルのチェックが失敗した`,
+
+  // --- source help (#311) ---------------------------------------------------
+  "cli.source.addHelp": `使い方: radar source add <id> --kind <kind> --url <url> [options]
+       radar source add <id> --recipe <name> [overrides]
+
+オプション:
+  --kind <kind>            rss | html | html-js | github-releases | npm-registry | json-feed | json-api
+  --url <url>              取得対象 URL
+  --recipe <name>          バンドル済みレシピを適用する (\`radar source recipes\` 参照)。
+                           --kind / --url / --selector-* / --pagination-* とは排他。
+                           --name / --tags / --keywords / --exclude-keywords は
+                           レシピの既定値を上書きできる。
+  --name <name>            表示名 (既定は <id>)
+  --tags <a,b>             カンマ区切りのタグ
+  --keywords <a,b>         カンマ区切りの含めるキーワード
+                           (有用な出力には必須 — 空 = 何にも一致しない)
+  --exclude-keywords <a,b> カンマ区切りの除外キーワード
+  --selector-<field> <css> kind=html / html-js 用の CSS セレクタ (必須: item, title, link)
+                           任意: summary, publishedAt, body, tags
+                           kind=html-js ではセレクタは JS 実行後の DOM に対して評価される。
+                           \`js:\` ブロック (waitFor / timeout / userAgent) はフラグでは
+                           設定できない。add 後に sources/<id>.yaml を編集すること。
+
+  kind=json-api の場合:
+    --pagination-strategy <s>  page | offset | cursor | link-header | token | none (既定: page)
+    --pagination-param <name>  page/offset/cursor 値のクエリパラメータ名
+    --pagination-start N       page/offset の初期値 (既定: 0)
+    --page-size N              1 ページあたりのアイテム数
+    --page-size-param <name>   page-size 値のクエリパラメータ名
+    --max-pages N              走査するページ数の上限 (既定: 20)
+    --next-cursor-path <jp>    next-cursor 値への JSONPath-lite (cursor/token 戦略)
+    --total-path <jp>          total-count 値への JSONPath-lite (backfill の早期停止ヒント)
+
+  kind=json-api の Selector フィールド (\`jsonSelectors.*\`) はフラグでは設定できない。
+  スキーマに既定のフォールバック連鎖 (items / title / link / publishedAt / summary) があるため、
+  単純な API はセレクタなしで動く。明示的なセレクタが必要な場合 (ネストフィールド、
+  非標準エンベロープ) は sources/<id>.yaml を直接編集すること。
+
+  Facet sweep (例: 年単位の sweep) はフラグでは設定できない。
+  year sweep は \`--recipe aws-whats-new\` でまとめて適用する。レシピ専用の構造フィールド。`,
+  "cli.source.listHelp": `使い方: radar source list [--enabled-only] [-v|--verbose]
+
+sources/*.yaml を表形式で一覧表示する: id / kind / url / tags。
+
+オプション:
+  --enabled-only   前方互換のため予約 (現状は no-op)。
+  -v, --verbose    ソースごとに keywords・trustLevel・lastFetchedAt
+                   (state/<id>.yaml 由来) を含む詳細ブロックを出力する。`,
+  "cli.source.removeHelp": `使い方: radar source remove <id>
+
+sources/<id>.yaml を削除する。state/<id>.yaml と items/ は保持される。`,
+  "cli.source.testHelp": `使い方: radar source test <id> [--limit N] [--show-content]
+
+単一ソースをドライランする: 取得・フィルタし、一致アイテムを出力する。
+state/ と items/ には触れない (永続化なし)。新しいソース追加時の
+キーワード調整に便利。
+
+kind=json-api では \`source test\` はページ 0 のみ取得する。
+レシピが複数ページを宣言していてもページネーションは走査されない —
+\`--limit N\` は出力する一致アイテム数を制限するだけで、ページ予算は変えない。
+全履歴の取り込みには \`radar watch run --backfill\` を使うこと。
+ページ 0 の \`Link\` ヘッダ / \`nextCursor\` 抽出は、状態を変えずに
+ページネーション調整できるよう \`--show-content\` で表示される。
+
+facet-sweep レシピでは \`source test\` は単一の facet 値のみ試す:
+range facet は上限 (最新年)、enum facet は最初の値を使う。
+どの値を試したかは警告で示され、キーワード調整が 1 スライスに
+暗黙的に限定されないようにする。全 facet 値を sweep するには
+\`radar watch run --backfill\` を実行すること。
+
+オプション:
+  --limit N        出力する一致アイテムの最大数 (既定 10)
+  --show-content   各アイテム本文の先頭 200 文字、加えて
+                   (kind=json-api) セレクタ採用テーブルとページネーション
+                   プレビュー (次 URL / Link ヘッダ / nextCursor) も出力する。
+  -v, --verbose    progress-reporter の raw() パススルーを有効化する (アダプタの stdout)。
+                   kind=html-js (Playwright フェーズマーカー) で最も有用。
+  -q, --quiet      進捗レポーターを完全に抑制する。RADAR_NO_PROGRESS=1 も
+                   同じ効果。`,
+  "cli.source.recipesHelp": `使い方: radar source recipes
+
+バンドル済みレシピ (radar パッケージ内の recipes/*.yaml) を一覧表示する。
+各レシピは次のように適用できる:
+  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]
+
+バンドル済みレシピは radar npm パッケージに同梱される。ユーザー定義レシピは
+まだ未対応。新しいバンドルレシピを追加するには、radar リポジトリの recipes/
+ディレクトリに YAML を寄稿すること。`,
+  "cli.source.help": `使い方: radar source <add|list|recipes|remove|test> [...]
+
+サブコマンド:
+  add <id> --kind <kind> --url <url> [...]
+  add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]
+  list [--enabled-only]
+  recipes
+  remove <id>
+  test <id> [--limit N] [--show-content]`,
+
+  // --- workflow help (#311) -------------------------------------------------
+  "cli.workflow.help": `使い方: radar workflow <subcommand> [...]
+
+サブコマンド:
+  generate <type>  GitHub Actions ワークフロー YAML を生成する
+                   Types: watch | combined | combined-with-triage
+
+type 別のオプションは \`radar workflow generate <type> --help\` を参照。`,
+  "cli.workflow.generateHelp": `使い方: radar workflow generate <type> [options]
+
+Types:
+  watch                  定期的な \`radar watch run\` (cron + rebase リトライ付き state コミット)
+  combined               定期的な \`radar watch run\` -> ハードキャップ付き auto research --batch
+  combined-with-triage   \`watch run\` -> \`triage --apply\` -> \`research --batch\` -> グループ別 \`research --digest\` -> \`review --batch\` を 1 ジョブで
+
+type 別のオプションは \`radar workflow generate <type> --help\` を参照。`,
+
+  // --- routine help (#311) --------------------------------------------------
+  "cli.routine.help": `使い方: radar routine <subcommand> [...]
+
+サブコマンド:
+  generate <type>  Claude Code Routine YAML を生成する (.claude/routines/)
+                   Types: watch | pipeline
+  fire <trig_id>   登録済みルーティンを外部から起動する (/fire API)
+
+サブコマンド別のオプションは \`radar routine <subcommand> --help\` を参照。`,
+  "cli.routine.generateHelp": `使い方: radar routine generate <type> [options]
+
+Types:
+  watch     定期的な \`radar watch run\` 自セッションルーティン。items/state を claude/* ブランチにコミットする
+  pipeline  watch -> triage -> research -> review の全工程を 1 アイテムずつ行う自セッションルーティン
+
+type 別のオプションは \`radar routine generate <type> --help\` を参照。`,
+
+  // --- init help (#311) -----------------------------------------------------
+  "cli.init.help": `使い方: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]
+                          [--no-claude-skills] [--no-gemini-commands]
+                          [--no-agents-md] [--no-claude-md] [--no-templates]
+                          [--no-feedradar-md]
+
+ワークスペースのディレクトリを作成し、バンドル済みスキルをコピーする:
+  - エンジン SKILL (SSoT): .agents/skills/{research,review,update}/SKILL.md
+  - Claude Code スラッシュコマンドラッパー: .claude/skills/{research,review,update,dismiss}/SKILL.md
+  - Gemini CLI スラッシュコマンド: .gemini/commands/{research,review,update,dismiss}.toml
+  - エージェント非依存の指示書: AGENTS.md (Codex / Gemini / Copilot が自動で読む)
+  - Claude Code 用ワークスペース指示書: CLAUDE.md (@AGENTS.md を import し Claude が読むようにする)
+  - スターターレポートテンプレート: templates/default.md (単一アイテム) と templates/digest.md (複数アイテムのダイジェスト)
+  - 人間向けワークスペースガイド: FEEDRADAR.md (自然言語 / スラッシュの使い方)
+
+オプション:
+  --lang <en|ja>         生成するレポートテンプレートとワークスペース文書の言語
+                         (既定: en; RADAR_LANG も尊重; radar.config.yaml に永続化)
+  --force                既存ファイルを上書きする
+  --with-routines        .claude/routines/watch-daily.yaml を生成する (Claude Routines の雛形)
+  --with-actions         .github/workflows/watch.yaml を生成する (GitHub Actions cron の雛形)
+  --no-claude-skills     .claude/skills/ へのスラッシュコマンドラッパー書き込みをスキップする
+                         (@ozzylabs/skills の Renovate preset がそのディレクトリを管理する場合に有用)
+  --no-gemini-commands   .gemini/commands/ への Gemini CLI スラッシュコマンド書き込みをスキップする
+                         (エンジン SKILL は dual-mode で対話 Gemini にも対応する)
+  --no-agents-md         ワークスペースルートへの AGENTS.md 書き込みをスキップする
+                         (ワークスペースに独自の AGENTS.md がある場合に有用;
+                          バンドル CLAUDE.md は @AGENTS.md を import するため --no-claude-md を含意する)
+  --no-claude-md         ワークスペースルートへの CLAUDE.md 書き込みをスキップする
+                         (ワークスペースに独自の CLAUDE.md がある場合に有用)
+  --no-templates         templates/default.md と templates/digest.md の書き込みをスキップする
+                         (research エンジン SKILL は組み込みの構造にフォールバックする)
+  --no-feedradar-md      ワークスペースルートへの FEEDRADAR.md 書き込みをスキップする
+                         (ワークスペースに独自のユーザー向け文書がある場合に有用)`,
 };
