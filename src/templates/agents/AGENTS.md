@@ -50,13 +50,13 @@ radar init --force                  # 既存ファイルを上書き
 # 監視対象の管理
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
 radar source list
-radar source recipes                                   # バンドル recipe を一覧表示 (ADR-0012)
+radar source recipes                                   # バンドル recipe を一覧表示
 radar source add <id> --recipe <name> [--keywords ... --tags ... --name ...]  # recipe ベースで 1 行追加
 radar source test <id> [--limit N] [--show-content]   # state/items を書き換えず取得 + フィルタを試す
 radar source remove <id>
 
-# JSON API recipe を pagination 付きで追加（ADR-0012）
-# `facets:` (年・カテゴリ単位の sweep) は flag では設定できず recipe のみ (ADR-0017)
+# JSON API recipe を pagination 付きで追加
+# `facets:` (年・カテゴリ単位の sweep) は flag では設定できず recipe のみ
 radar source add aws-whats-new --kind json-api \
   --url "https://aws.amazon.com/api/dirs/items/search?item.directoryId=whats-new-v2&size=100&page=0" \
   --keywords "Bedrock,Claude" \
@@ -74,25 +74,25 @@ radar source add example-microblog --kind json-feed \
 radar watch run
 
 # 過去全履歴の一括取り込み (kind: json-api / github-releases / npm-registry)
-# AWS は recipe の facets.year + per-facet maxPages=30 で 21,834 件を完全カバー (ADR-0017)
+# AWS は recipe の facets.year + per-facet maxPages=30 で 21,834 件を完全カバー
 radar watch run --source aws-whats-new --backfill
 
 # 検出済み item に対する操作
-radar research <item-id> --agent <agent> [--verbose]   # 調査レポートを生成 (status: detected -> researched)。--verbose で agent stdout を直接見る (ADR-0015)
-radar research --digest <item-id> <item-id> ... [--agent <agent>]  # 複数 item を 1 digest にまとめる (ADR-0011)
-radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (ADR-0014 D3a、--max-items 既定 10)
+radar research <item-id> --agent <agent> [--verbose]   # 調査レポートを生成 (status: detected -> researched)。--verbose で agent stdout を直接見る
+radar research --digest <item-id> <item-id> ... [--agent <agent>]  # 複数 item を 1 digest にまとめる
+radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>]  # detected を一括 research (--max-items 既定 10)
 radar review <research-id> --agent <agent>   # 既存レポートをレビュー (status: researched -> reviewed)
 radar update <research-id> --agent <agent>   # v+1 を生成 (item status は変えない)
 radar dismiss <item-id>                       # LLM 不要、item を dismissed に
 
-# GitHub Actions workflow の後追い生成 (ADR-0014)
+# GitHub Actions workflow の後追い生成
 radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]
 radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]
 ```
 
-> **自動 research のコスト管理 (重要)**: `radar workflow generate combined` は watch → 自動 research を連鎖する workflow を生成し、`--max-items N` (既定 10) のハードキャップを YAML literal + CLI default の **二重防御**で焼き込む (ADR-0014 D3a)。`--max-items 100` のように大きい値を渡す前に必ず agent provider の billing alert を設定すること。暴走に気付いたら GitHub UI から workflow を `Disable workflow` で即停止する。詳細は `docs/user-guide.md` の「[`radar workflow generate`](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#radar-workflow-generate)」を参照。
+> **自動 research のコスト管理 (重要)**: `radar workflow generate combined` は watch → 自動 research を連鎖する workflow を生成し、`--max-items N` (既定 10) のハードキャップを YAML literal + CLI default の **二重防御**で焼き込む。`--max-items 100` のように大きい値を渡す前に必ず agent provider の billing alert を設定すること。暴走に気付いたら GitHub UI から workflow を `Disable workflow` で即停止する。詳細は `docs/user-guide.md` の「[`radar workflow generate`](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#radar-workflow-generate)」を参照。
 >
-> **進捗表示 (ADR-0015)**: `research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test` は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を出力する。`--verbose` で agent stdout を pass-through（デバッグ・「フリーズに見える」時の第一手）、`--quiet` または `RADAR_NO_PROGRESS=1` で完全に黙らせる。詳細は `docs/user-guide.md` の「[進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet)」を参照。
+> **進捗表示**: `research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test` は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を出力する。`--verbose` で agent stdout を pass-through（デバッグ・「フリーズに見える」時の第一手）、`--quiet` または `RADAR_NO_PROGRESS=1` で完全に黙らせる。詳細は `docs/user-guide.md` の「[進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet)」を参照。
 
 `<agent>` の値: `claude-code` / `codex-cli` / `gemini-cli` / `copilot`
 
@@ -144,7 +144,7 @@ radar research <item-id>      # 自動 triage は推奨しない (ユーザー�
 
 `watch run` は cron / GitHub Actions / Claude Routines から呼ぶことを想定しています。`research` / `review` / `update` / `dismiss` は人間の判断が伴うため、interactive session 経由を推奨します。
 
-### scheduled triage workflow 例 (ADR-0018 §W5)
+### scheduled triage workflow 例
 
 `triagePolicy:` を持つ source を登録済みの場合、scheduled GHA cron で `watch → triage → research → review` を**無人実行**できます。雛形は `radar workflow generate combined-with-triage` で生成:
 
@@ -170,13 +170,13 @@ radar workflow generate combined-with-triage \
 5. radar review --batch --status researched --agent codex-cli # researched → reviewed (cross-agent)
 ```
 
-末尾には `triaged_unsure` キュー深度を Slack 通知する `if: always()` step と、`peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる step が付く。**triage の cost は research に比べて 1-2 桁安い** (cheap-model channel、`gemini-2.5-flash-lite` 想定で月数千 item でも \$0.10 未満) ため、cost gating の主防御は引き続き `--max-items` (ADR-0014 D3a)。
+末尾には `triaged_unsure` キュー深度を Slack 通知する `if: always()` step と、`peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめる step が付く。**triage の cost は research に比べて 1-2 桁安い** (cheap-model channel、`gemini-2.5-flash-lite` 想定で月数千 item でも \$0.10 未満) ため、cost gating の主防御は引き続き `--max-items`。
 
 詳細・secrets setup・policy 書き方・cost 試算・troubleshooting は `radar` リポジトリの [`docs/user-guide.md` §triage workflow](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#triage-workflow) を参照。
 
 ## エージェント選択ガイド (cross-agent review)
 
-[ADR-0001](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0001-agent-adapter-interface.md) に基づき、`research` と `review` は **別の agent** で実行することを推奨します:
+`research` と `review` は **別の agent** で実行することを推奨します:
 
 ```bash
 radar research <item-id> --agent codex-cli
@@ -196,7 +196,7 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 `sources/` `items/` `state/` `research/` `templates/` は **このディレクトリで git にコミットする** ことを推奨します。理由は以下:
 
 - 定期実行 scheduler (Claude Routines / GitHub Actions) は実行ごとに fresh clone を行うため、`state/*.yaml` の `lastSeenIds` が引き継がれないと毎回全件再検出してしまう
-- `research/` を git で管理すると、過去レポートの履歴・差分が追える (ADR-0003 で immutable history を採用)
+- `research/` を git で管理すると、過去レポートの履歴・差分が追える (immutable history を採用)
 - `items/` の status 遷移 (`detected` → `researched` → `reviewed`) も git 履歴に残る
 
 `init` は `sources/` `items/` `state/` `research/` に `.gitkeep` placeholder を配置するため、初期状態 (中身が空) でも `git add .` でディレクトリ構造が消えずに追跡されます。
@@ -205,7 +205,7 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 
 ## セキュリティ警告 (untrusted external content)
 
-`radar` が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) のコンテンツは **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+`radar` が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) のコンテンツは **untrusted** として扱われます。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - agent に渡すコンテンツは boundary marker で囲まれ、procedure 本体と分離される
 - `sources/<id>.yaml` の `trustLevel` で `"trusted" | "untrusted"` を per-source で指定可能 (既定 `"untrusted"`)
@@ -219,5 +219,5 @@ agent の選択は CLI が強制せず、ユーザー判断です。
 
 - [`docs/user-guide.md`](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md) — 全コマンドのリファレンス、scheduler 雛形、認証設定
 - [`docs/architecture.md`](https://github.com/ozzy-labs/feedradar/blob/main/docs/architecture.md) — モジュール構成、データフロー、Phase 別スコープ
-- [`docs/adr/`](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/README.md) — 設計判断の記録 (ADR-0001 ~ 0009)
+- [`docs/adr/`](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/README.md) — 設計判断の記録
 - [`docs/design/`](https://github.com/ozzy-labs/feedradar/tree/main/docs/design) — `filter-spec.md` / `skill-design.md` / `threat-model.md`

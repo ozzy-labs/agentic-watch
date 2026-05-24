@@ -55,11 +55,10 @@ research procedure yourself in this session:
 
 - If the CLI exits non-zero (item not found, schema validation, adapter
   failure), surface the error message and exit code; do not retry blindly.
-- Cross-review with a different agent is recommended (ADR-0001 / user-guide
-  §クロスエージェント運用). After this skill produces `research/<id>.md`, the
+- Cross-review with a different agent is recommended. After this skill produces `research/<id>.md`, the
   user typically follows up with `/review <id> --agent <different-agent>`.
 - The CLI's default agent is `claude-code`; override with `--agent`.
 - Host-agent mode (`--emit-payload` + `--commit`) is an interactive-only
   opt-in; CI / headless runs MUST use the default spawn flow. In host mode
   untrusted item content enters this interactive session itself, so strictly
-  follow the engine SKILL's M2a / M2b / M3b untrusted-content boundary rules.
+  follow the engine SKILL's untrusted-content boundary rules.

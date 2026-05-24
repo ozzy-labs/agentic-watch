@@ -259,27 +259,26 @@ function printRunHelp(log: (m: string) => void): void {
   log("  --policy <path>          override per-source policy with a YAML file");
   log("  --max-items N            hard cap on items triaged in this run");
   log("  --audit-log <path>       append JSONL audit records of every triage call");
-  log("  --emit-payload           Host-agent mode (ADR-0019): print the triage payload to");
+  log("  --emit-payload           Host-agent mode: print the triage payload to");
   log("                           stdout and DO NOT spawn an agent. The interactive host");
   log("                           session classifies the items itself, writes a decisions");
   log("                           JSON, then finalizes with `radar triage --commit <path>`.");
   log("                           Requires a single source group: pass --source unless only");
   log("                           one source has detected items. Interactive/opt-in only —");
   log("                           CI/headless must use the default spawn path.");
-  log("  --commit <path>          Host-agent mode (ADR-0019): validate a host-written");
+  log("  --commit <path>          Host-agent mode: validate a host-written");
   log("                           decisions JSON (under <cwd>/triage/) against the source's");
   log("                           policy + detected items and apply the status transitions.");
   log("  -v, --verbose            verbose progress output");
   log("  -q, --quiet              suppress progress output entirely");
   log("");
-  log("Sources missing a `triagePolicy:` block are skipped with a warning. See");
-  log("ADR-0018 for the policy schema reference.");
+  log("Sources missing a `triagePolicy:` block are skipped with a warning.");
 }
 
 function printFeedbackHelp(log: (m: string) => void): void {
   log("Usage: radar triage feedback <item-id> --correct | --wrong [--reason <text>]");
   log("");
-  log("Record human feedback on a prior triage decision (ADR-0018 §W5).");
+  log("Record human feedback on a prior triage decision.");
   log("Feedback is appended to items/<id>.yaml > triage.feedback, used by");
   log("`radar triage stats` (#242) for policy tuning.");
   log("");
@@ -1207,7 +1206,7 @@ function parseTriageStatsArgs(args: string[]): TriageStatsArgs {
 function printStatsHelp(log: (m: string) => void): void {
   log("Usage: radar triage stats [--since <duration>] [--source <id>] [--json]");
   log("");
-  log("Aggregate triage decisions and human feedback (ADR-0018 §W5, #242).");
+  log("Aggregate triage decisions and human feedback.");
   log("Use after running `radar triage --apply` for some weeks; the output");
   log("highlights precision / recall drift and suggests `triagePolicy.rules:`");
   log("tweaks. See docs/user-guide.md `policy tuning workflow` for the");
@@ -1679,6 +1678,6 @@ export const __test__ = {
 
 export const triageCommand: Command = {
   name: "triage",
-  summary: "LLM-based triage of detected items (ADR-0018)",
+  summary: "LLM-based triage of detected items",
   run: (args) => runTriage(args),
 };

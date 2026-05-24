@@ -201,7 +201,7 @@ export function printFireRoutineHelp(log: (m: string) => void): void {
   log("Usage: radar routine fire <trig_id> [options]");
   log("");
   log("Triggers a registered Claude Code Routine from the outside via the");
-  log("/fire API (ADR-0020). The call returns as soon as the routine session");
+  log("/fire API. The call returns as soon as the routine session");
   log("is created — it does NOT wait for the session to finish.");
   log("");
   log("Arguments:");

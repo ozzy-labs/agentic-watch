@@ -114,8 +114,7 @@ function printHelp(log: (m: string) => void): void {
   );
   log("  --status <status>     Batch-mode filter: detected | triaged_unsure (default: detected).");
   log("                        Only these two statuses can transition to `dismissed`");
-  log("                        per the ADR-0008 / ADR-0018 state machine; other values");
-  log("                        are rejected.");
+  log("                        per the state machine; other values are rejected.");
   log(
     `  --max-items N         Batch-mode hard-cap on processed items (default: ${DISMISS_BATCH_DEFAULT_MAX_ITEMS}).`,
   );
@@ -124,11 +123,11 @@ function printHelp(log: (m: string) => void): void {
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each item's matchedKeywords (case-insensitive). Default: all.");
   log("");
-  log("Transitions the item's status to `dismissed` (ADR-0008). Valid from `detected`");
+  log("Transitions the item's status to `dismissed`. Valid from `detected`");
   log("or `triaged_unsure`; items in `researched` / `reviewed` / `dismissed` /");
   log("`triaged_research` / `triaged_digest` cannot be dismissed.");
   log("");
-  log("Inverse: `radar undismiss <item-id> [--force]` (ADR-0018 §W6).");
+  log("Inverse: `radar undismiss <item-id> [--force]`.");
 }
 
 /**
@@ -201,7 +200,7 @@ async function dismissItems(
   if (offenders.length > 0) {
     for (const item of offenders) {
       error(
-        `dismiss: item '${item.id}' is in status '${item.status}', expected one of ${DISMISS_ALLOWED_STATUSES.join(" | ")} (dismiss transitions to 'dismissed' only from these; ADR-0008 / ADR-0018). Valid next statuses for '${item.status}': ${allowedTransitions(item.status).join(", ") || "(none)"}`,
+        `dismiss: item '${item.id}' is in status '${item.status}', expected one of ${DISMISS_ALLOWED_STATUSES.join(" | ")} (dismiss transitions to 'dismissed' only from these). Valid next statuses for '${item.status}': ${allowedTransitions(item.status).join(", ") || "(none)"}`,
       );
     }
     return 1;

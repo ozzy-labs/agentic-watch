@@ -37,11 +37,9 @@ function printGenerateHelp(log: (m: string) => void): void {
   log(
     "  watch                  Periodic `radar watch run` (cron + state commit with rebase retry)",
   );
+  log("  combined               Periodic `radar watch run` -> auto research --batch with hard cap");
   log(
-    "  combined               Periodic `radar watch run` -> auto research --batch with hard cap (ADR-0014)",
-  );
-  log(
-    "  combined-with-triage   `watch run` -> `triage --apply` -> `research --batch` -> per-group `research --digest` -> `review --batch` in one job (ADR-0018 §W5)",
+    "  combined-with-triage   `watch run` -> `triage --apply` -> `research --batch` -> per-group `research --digest` -> `review --batch` in one job",
   );
   log("");
   log("Run `radar workflow generate <type> --help` for type-specific options.");

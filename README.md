@@ -11,13 +11,13 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 ## Highlights
 
 - **Multi-agent**: switch between Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI via adapters.
-- **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe-driven, with `--backfill` for full history)** are all driven through the same `Source` abstraction ([ADR-0012](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md)).
-- **Bundled recipes**: `radar source recipes` lists maintained YAML recipes (e.g. AWS What's New, dev.to) and `radar source add <id> --recipe <name>` applies one in a single line — no boilerplate ([ADR-0012 §D3](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md)).
-- **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report ([ADR-0011](./docs/adr/0011-digest-research-output.md)).
+- **Multiple feed kinds**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe-driven, with `--backfill` for full history)** are all driven through the same `Source` abstraction.
+- **Bundled recipes**: `radar source recipes` lists maintained YAML recipes (e.g. AWS What's New, dev.to) and `radar source add <id> --recipe <name>` applies one in a single line — no boilerplate.
+- **Digest mode**: bundle multiple items hit in a short period — or across feeds on the same topic — into a single cross-cutting report.
 - **User-owned data**: `sources/` `items/` `state/` `research/` `templates/` live in **your workspace directory**. This package ships only the engine.
-- **Scheduled workflows**: `radar workflow generate watch` / `combined` emits GitHub Actions YAML on demand — combine watch with auto-research under a hard-capped `--max-items` budget so a runaway feed cannot blow your LLM bill ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md)).
-- **Claude Routines**: `radar routine generate watch` / `pipeline` emits `.claude/routines/*.yaml` for unattended runs on Anthropic's cloud — one self-session Claude (no spawn, no extra API key), output gated to PR / `claude/*` branches only ([ADR-0020](./docs/adr/0020-claude-routines-generation.md)).
-- **Progress reporting & verbose mode**: long-running commands (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) stream phase markers + a spinner + side metrics (`stdout` / `output` / `page x/N`) on stderr. Pass `--verbose` to also stream the agent CLI's stdout/stderr, `--quiet` (or `RADAR_NO_PROGRESS=1` for CI) to silence the reporter ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md)).
+- **Scheduled workflows**: `radar workflow generate watch` / `combined` emits GitHub Actions YAML on demand — combine watch with auto-research under a hard-capped `--max-items` budget so a runaway feed cannot blow your LLM bill.
+- **Claude Routines**: `radar routine generate watch` / `pipeline` emits `.claude/routines/*.yaml` for unattended runs on Anthropic's cloud — one self-session Claude (no spawn, no extra API key), output gated to PR / `claude/*` branches only.
+- **Progress reporting & verbose mode**: long-running commands (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) stream phase markers + a spinner + side metrics (`stdout` / `output` / `page x/N`) on stderr. Pass `--verbose` to also stream the agent CLI's stdout/stderr, `--quiet` (or `RADAR_NO_PROGRESS=1` for CI) to silence the reporter.
 - **Single npm package**: distributed as `@ozzylabs/feedradar` via OIDC Trusted Publishers.
 
 ## Install
@@ -26,7 +26,7 @@ Tracking multiple official blogs, docs, and release notes — and summarizing wh
 npm i -g @ozzylabs/feedradar
 ```
 
-To use the `kind: html-js` adapter (SPA / CSR pages rendered after JS runs), install Playwright separately — it is declared as an *optional* peer dep so users who only need RSS / static HTML do not pay the ~300MB Chromium footprint ([ADR-0010](./docs/adr/0010-html-js-adapter-and-distribution.md)):
+To use the `kind: html-js` adapter (SPA / CSR pages rendered after JS runs), install Playwright separately — it is declared as an *optional* peer dep so users who only need RSS / static HTML do not pay the ~300MB Chromium footprint:
 
 ```bash
 npm i -g playwright
@@ -70,17 +70,17 @@ radar research <item-id>
 # Other subcommands
 radar source list             # list sources
 radar source test <id>        # dry-run preview a source (no state/items mutation)
-radar research --digest <id1> <id2> ...  # bundle multiple items into one digest report (ADR-0011)
+radar research --digest <id1> <id2> ...  # bundle multiple items into one digest report
 radar dismiss <item-id> ...   # move one or more items to dismissed (no LLM)
 radar dismiss --batch         # bulk-dismiss detected/triaged_unsure items (--status/--filter-tags/--max-items)
 radar review <research-id>    # cross-review a report with a different agent
 radar update <research-id>    # refresh an existing report against the latest item (v+1)
 radar doctor                  # check workspace / agent CLI / Playwright / proxy / TLS health
                               #   --no-proxy-check skips the live proxy round-trip (offline-friendly)
-radar workflow generate watch     # emit a GitHub Actions watch workflow on demand (ADR-0014)
-radar workflow generate combined  # watch + auto-research with --max-items hard cap (ADR-0014)
-radar routine generate watch      # emit a Claude Routines watch YAML (self-session, no spawn) (ADR-0020)
-radar routine generate pipeline   # full watch -> triage -> research -> review self-session routine (ADR-0020)
+radar workflow generate watch     # emit a GitHub Actions watch workflow on demand
+radar workflow generate combined  # watch + auto-research with --max-items hard cap
+radar routine generate watch      # emit a Claude Routines watch YAML (self-session, no spawn)
+radar routine generate pipeline   # full watch -> triage -> research -> review self-session routine
 radar --help                  # help
 ```
 
@@ -114,7 +114,7 @@ src/
     templates.ts        research template loader
     state.ts            state/<sourceId>.yaml load / save
     config.ts           radar.config.yaml load / validate
-    injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
+    injection-detector.ts  prompt injection regex pre-filter
     feeds/              rss / html / html-js / github-releases / npm-registry / json-feed / json-api
   agents/               4 CLI adapters (claude-code / codex-cli / gemini-cli / copilot)
   schemas/              Zod schemas (Source / Item / State / Research)

@@ -261,7 +261,7 @@ export async function generateWatch(options: GenerateWatchOptions): Promise<Gene
     // beyond confirming the workflow's `permissions: contents: write`.
     log("  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)");
   } else {
-    log(`  ${envKey} — required for the '${agent}' agent (ADR-0014 D5)`);
+    log(`  ${envKey} — required for the '${agent}' agent`);
     log("  GITHUB_TOKEN — auto-provisioned by GitHub Actions (no manual setup needed)");
   }
 
@@ -337,7 +337,7 @@ export function printGenerateWatchHelp(log: (m: string) => void): void {
   log("");
   log("Generates a GitHub Actions workflow that runs `radar watch run` on a cron schedule.");
   log("The generated workflow includes git pull --rebase retry logic to mitigate push");
-  log("conflicts with other concurrent workflows (ADR-0014 D4).");
+  log("conflicts with other concurrent workflows.");
   log("");
   log("Options:");
   log('  --cron <expression>   5-field cron expression (default: "0 0 * * *")');

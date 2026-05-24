@@ -11,13 +11,13 @@
 ## 主な特徴
 
 - **多エージェント対応**: Claude Code / Codex CLI / Gemini CLI / GitHub Copilot CLI を adapter 経由で切り替え。
-- **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe ベース、過去全件取り込みの `--backfill` 対応)** を同一の `Source` 抽象で扱う ([ADR-0012](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md))。
-- **バンドル recipe**: `radar source recipes` で同梱済み YAML recipe (例: AWS What's New / dev.to) を一覧、`radar source add <id> --recipe <name>` で 1 行で source 化 ([ADR-0012 §D3](./docs/adr/0012-json-api-adapter-and-recipe-strategy.md))。
-- **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる ([ADR-0011](./docs/adr/0011-digest-research-output.md))。
+- **複数フィード種別**: RSS / HTML / **HTML (JS rendered)** / GitHub Releases / npm registry / **JSON Feed (1.0 / 1.1)** / **JSON API (recipe ベース、過去全件取り込みの `--backfill` 対応)** を同一の `Source` 抽象で扱う。
+- **バンドル recipe**: `radar source recipes` で同梱済み YAML recipe (例: AWS What's New / dev.to) を一覧、`radar source add <id> --recipe <name>` で 1 行で source 化。
+- **Digest モード**: 短期間に複数ヒットした item や、複数 feed に跨る同テーマの item を 1 本の横断レポートにまとめる。
 - **ユーザー側データ管理**: `sources/` `items/` `state/` `research/` `templates/` は **ユーザーの任意ディレクトリ** に置き、本パッケージは engine のみを提供する。
-- **定期実行 workflow 後追い生成**: `radar workflow generate watch` / `combined` で GitHub Actions YAML を CLI から後追い生成。`combined` は watch + 自動 research を `--max-items` ハードキャップ付きで実行し、暴走 feed による LLM cost 爆発を設計レベルで遮断 ([ADR-0014](./docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
-- **Claude Routines 生成**: `radar routine generate watch` / `pipeline` で Anthropic クラウド向けの無人実行設定 `.claude/routines/*.yaml` を生成。Claude 単一セッションで完結し（spawn しない・追加 API キー不要）、出力は PR か `claude/*` ブランチに限定する ([ADR-0020](./docs/adr/0020-claude-routines-generation.md))。
-- **進捗表示と verbose mode**: 長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) が phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を stderr に出力する。`--verbose` で agent CLI の stdout/stderr を pass-through、`--quiet`（CI なら `RADAR_NO_PROGRESS=1`）で reporter を完全に黙らせる ([ADR-0015](./docs/adr/0015-progress-reporting-ux.md))。
+- **定期実行 workflow 後追い生成**: `radar workflow generate watch` / `combined` で GitHub Actions YAML を CLI から後追い生成。`combined` は watch + 自動 research を `--max-items` ハードキャップ付きで実行し、暴走 feed による LLM cost 爆発を設計レベルで遮断。
+- **Claude Routines 生成**: `radar routine generate watch` / `pipeline` で Anthropic クラウド向けの無人実行設定 `.claude/routines/*.yaml` を生成。Claude 単一セッションで完結し（spawn しない・追加 API キー不要）、出力は PR か `claude/*` ブランチに限定する。
+- **進捗表示と verbose mode**: 長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) が phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を stderr に出力する。`--verbose` で agent CLI の stdout/stderr を pass-through、`--quiet`（CI なら `RADAR_NO_PROGRESS=1`）で reporter を完全に黙らせる。
 - **npm 単体配布**: OIDC Trusted Publishers で `@ozzylabs/feedradar` を npm 配布。
 
 ## インストール
@@ -26,7 +26,7 @@
 npm i -g @ozzylabs/feedradar
 ```
 
-`kind: html-js` adapter（JS 実行後に DOM が組み立てられる SPA / CSR ページ向け）を使う場合は Playwright を別途 install する。Playwright は **optional peer dep** として宣言されているため、RSS / static HTML のみ使うユーザーには ~300MB の Chromium footprint を強いない（[ADR-0010](./docs/adr/0010-html-js-adapter-and-distribution.md)）:
+`kind: html-js` adapter（JS 実行後に DOM が組み立てられる SPA / CSR ページ向け）を使う場合は Playwright を別途 install する。Playwright は **optional peer dep** として宣言されているため、RSS / static HTML のみ使うユーザーには ~300MB の Chromium footprint を強いない:
 
 ```bash
 npm i -g playwright
@@ -70,16 +70,16 @@ radar research <item-id>
 # その他のサブコマンド
 radar source list             # ソース一覧
 radar source test <id>        # ソースをドライラン実行（state/items を書き換えない）
-radar research --digest <id1> <id2> ...  # 複数 item を 1 つの digest レポートに束ねる（ADR-0011）
+radar research --digest <id1> <id2> ...  # 複数 item を 1 つの digest レポートに束ねる
 radar dismiss <item-id>       # 不要 item を dismissed に遷移（LLM 不要）
 radar review <research-id>    # レポートを別エージェントで相互レビュー
 radar update <research-id>    # 既存レポートを最新 item で更新（v+1）
 radar doctor                  # workspace / agent CLI / Playwright / proxy / TLS の health check
                               #   --no-proxy-check で live proxy round-trip をスキップ (offline 環境向け)
-radar workflow generate watch     # GitHub Actions watch workflow を後追い生成 (ADR-0014)
-radar workflow generate combined  # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
-radar routine generate watch      # Claude Routines watch YAML を生成（自セッション・spawn しない）(ADR-0020)
-radar routine generate pipeline   # watch -> triage -> research -> review の自セッション routine (ADR-0020)
+radar workflow generate watch     # GitHub Actions watch workflow を後追い生成
+radar workflow generate combined  # watch + 自動 research を --max-items ハードキャップ付きで生成
+radar routine generate watch      # Claude Routines watch YAML を生成（自セッション・spawn しない）
+radar routine generate pipeline   # watch -> triage -> research -> review の自セッション routine
 radar --help                  # ヘルプ
 ```
 
@@ -113,7 +113,7 @@ src/
     templates.ts        research テンプレートの読み込み
     state.ts            state/<sourceId>.yaml の load / save
     config.ts           radar.config.yaml の load / 検証
-    injection-detector.ts  prompt injection regex pre-filter (ADR-0009 M1a)
+    injection-detector.ts  prompt injection regex pre-filter
     feeds/              rss / html / html-js / github-releases / npm-registry / json-feed / json-api
   agents/               4 CLI adapters（claude-code / codex-cli / gemini-cli / copilot）
   schemas/              Zod スキーマ（Source / Item / State / Research）

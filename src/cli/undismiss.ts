@@ -73,7 +73,7 @@ function printHelp(log: (m: string) => void): void {
   log("Options:");
   log("  --force, -f           Required when reversing a human-origin dismiss");
   log("");
-  log("Reverses `dismissed → detected` (ADR-0018 §W6).");
+  log("Reverses `dismissed → detected`.");
   log("Triage-origin dismisses revert silently; human-origin dismisses require --force.");
   log("");
   log("Inverse of `radar dismiss`.");
@@ -153,7 +153,7 @@ export async function runUndismiss(
 
   if (!triageOrigin && !parsed.force) {
     error(
-      `undismiss: item '${item.id}' was dismissed by human; pass --force to revert (this is a deliberate safety gate; ADR-0018 §W6)`,
+      `undismiss: item '${item.id}' was dismissed by human; pass --force to revert (this is a deliberate safety gate)`,
     );
     return 2;
   }

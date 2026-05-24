@@ -1,4 +1,4 @@
-# `radar workflow generate combined` template (ADR-0014 D2 / D3 / D4 / D5).
+# `radar workflow generate combined` template.
 #
 # Chains `radar watch run` -> "skip if no new items" guard -> `radar research
 # --batch` -> `git commit/push --rebase` retry inside a single job so the
@@ -7,19 +7,19 @@
 #
 # Placeholders rendered by `src/cli/workflow/generate-combined.ts`:
 #   {{cron}}        — schedule cron expression (default "0 0 * * *")
-#   {{maxItems}}    — `--max-items` hard cap (ADR-0014 D3a; default 10)
+#   {{maxItems}}    — `--max-items` hard cap (default 10)
 #   {{filterTags}}  — `--filter-tags` arg as a single CLI literal (empty when
 #                     filtering is off so the line collapses to bare `--batch`)
 #   {{agent}}       — agent id literal (claude-code|codex-cli|gemini-cli|copilot)
 #   {{secretsBlock}} — agent-specific `env:` body (no shared default; the
 #                     CLI generator selects one of four prebuilt fragments,
-#                     never injecting OAuth tokens per ADR-0014 D5)
+#                     never injecting OAuth tokens)
 #
 # Hard-cap rationale: this YAML embeds `--max-items {{maxItems}}` as a literal
 # so a workflow audit shows the cap without needing to re-read CLI source.
 # The CLI re-enforces the cap (`RESEARCH_BATCH_DEFAULT_MAX_ITEMS` in
 # `src/cli/research.ts`) so even hand-edited YAML cannot blow it inside one
-# invocation (ADR-0014 D3a 二重防御).
+# invocation (defense in depth: YAML literal + CLI default).
 
 name: feedradar-combined
 
@@ -64,7 +64,7 @@ jobs:
 
       - name: Skip research when no new items
         id: detect_changes
-        # ADR-0014: skip the research step entirely when `watch run` produced
+        # Skip the research step entirely when `watch run` produced
         # no new items. Otherwise a runaway-detection cap would still burn a
         # full `radar research --batch` invocation (template load, item walk)
         # on a fresh-empty queue.
@@ -87,7 +87,7 @@ jobs:
 
       - name: Commit and push with retry
         if: steps.detect_changes.outputs.has_changes == 'true'
-        # ADR-0014 D4: three-attempt push with `git pull --rebase --autostash`
+        # Three-attempt push with `git pull --rebase --autostash`
         # between failures. Tuned for two concurrent feedradar workflows (e.g.
         # watch-hourly + combined-weekly) racing on items/ / state/ / research/.
         run: |

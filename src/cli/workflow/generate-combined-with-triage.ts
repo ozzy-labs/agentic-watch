@@ -246,7 +246,7 @@ export function buildFinalStep(outputMode: OutputMode): string {
       "        # direct-commit output mode (#258): push straight to the default",
       "        # branch instead of opening a PR. Commit only when items/ state/",
       "        # research/ actually changed, then retry the push up to 3 times with",
-      "        # `git pull --rebase --autostash` between attempts (ADR-0014 D4),",
+      "        # `git pull --rebase --autostash` between attempts,",
       "        # mirroring the watch / combined generators.",
       "        #",
       "        # NB: this mode pushes without a human review gate, so do NOT put a",
@@ -283,7 +283,7 @@ export function buildFinalStep(outputMode: OutputMode): string {
     "        # `peter-evans/create-pull-request@v6` stages items/ state/ research/",
     "        # into a single PR per cron tick. Human reviews the PR before",
     "        # research/ lands on main, giving an explicit gate on auto-generated",
-    "        # content (ADR-0014 §X5 / ADR-0018 §W5).",
+    "        # content.",
     "        uses: peter-evans/create-pull-request@v6",
     "        with:",
     '          commit-message: "chore(feedradar): daily watch + triage + research"',
@@ -293,7 +293,7 @@ export function buildFinalStep(outputMode: OutputMode): string {
     '          title: "feedradar: daily triage + research (run $' + '{{ github.run_id }})"',
     "          body: |",
     "            Automated feedradar pipeline output. Review the research/ Markdown",
-    "            before merging — generated content is untrusted (ADR-0009).",
+    "            before merging — generated content is untrusted.",
     "          branch: feedradar/daily",
     "          base: $" + "{{ github.ref_name }}",
     "          delete-branch: true",
@@ -610,8 +610,7 @@ export function printGenerateCombinedWithTriageHelp(log: (m: string) => void): v
   log("");
   log("Generates a GitHub Actions workflow that chains `radar watch run` ->");
   log("`radar triage --apply` -> `radar research --batch --status triaged_research` ->");
-  log("per-group `radar research --digest` -> `radar review --batch` in one job");
-  log("(ADR-0018 §W5).");
+  log("per-group `radar research --digest` -> `radar review --batch` in one job.");
   log("");
   log("Options:");
   log(`  --watch-cron <expression>  5-field cron expression (default: "${DEFAULT_WATCH_CRON}")`);

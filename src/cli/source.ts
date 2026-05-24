@@ -431,9 +431,9 @@ function printAddHelp(log: (m: string) => void): void {
   log("                           optional: summary, publishedAt, body, tags");
   log("                           For kind=html-js, selectors evaluate against the post-JS DOM.");
   log("                           The `js:` block (waitFor / timeout / userAgent) cannot be set");
-  log("                           via flags; edit sources/<id>.yaml after add. See ADR-0010.");
+  log("                           via flags; edit sources/<id>.yaml after add.");
   log("");
-  log("  For kind=json-api (ADR-0012 / #174):");
+  log("  For kind=json-api:");
   log(
     "    --pagination-strategy <s>  page | offset | cursor | link-header | token | none (default: page)",
   );
@@ -454,7 +454,7 @@ function printAddHelp(log: (m: string) => void): void {
   log("  so simple APIs work without selectors. Edit sources/<id>.yaml directly when explicit");
   log("  selectors are needed (nested fields, non-standard envelopes).");
   log("");
-  log("  Facet sweep (e.g. year-by-year sweep) cannot be configured via flags; see ADR-0017");
+  log("  Facet sweep (e.g. year-by-year sweep) cannot be configured via flags;");
   log(
     "  and bundle the year sweep through `--recipe aws-whats-new`. Recipe-only structural field.",
   );
@@ -484,14 +484,14 @@ function printTestHelp(log: (m: string) => void): void {
   log("state/ and items/ are not touched (no persistence). Useful for tuning");
   log("keywords when adding a new source.");
   log("");
-  log("For kind=json-api (ADR-0012 / #174), `source test` fetches PAGE 0 ONLY.");
+  log("For kind=json-api, `source test` fetches PAGE 0 ONLY.");
   log("Pagination is NOT walked even when the recipe declares multiple pages —");
   log("`--limit N` caps how many matched items are PRINTED, it does not change");
   log("the page budget. Use `radar watch run --backfill` for full-history ingest.");
   log("Page 0's `Link` header / `nextCursor` extraction is surfaced via");
   log("`--show-content` for pagination tuning without state mutation.");
   log("");
-  log("For facet-sweep recipes (ADR-0017 / #256), `source test` probes a SINGLE");
+  log("For facet-sweep recipes, `source test` probes a SINGLE");
   log("facet value: range facets use the upper bound (latest year), enum facets");
   log("use the first listed value. A warning names which value was tested so");
   log("keyword tuning is not silently scoped to one slice. Run `radar watch run");
@@ -511,7 +511,7 @@ function printTestHelp(log: (m: string) => void): void {
 function printRecipesHelp(log: (m: string) => void): void {
   log("Usage: radar source recipes");
   log("");
-  log("List bundled recipes (recipes/*.yaml in the radar package — ADR-0012 §D3).");
+  log("List bundled recipes (recipes/*.yaml in the radar package).");
   log("Each recipe can be applied via:");
   log("  radar source add <id> --recipe <name> [--keywords <kw>] [--tags <t>] [--name <display>]");
   log("");
