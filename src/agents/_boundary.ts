@@ -1,4 +1,40 @@
+import type { Locale } from "../core/locale.js";
 import type { AgentId, Item, ResearchFrontmatter, TrustLevel } from "../schemas/index.js";
+
+/**
+ * Build the output-language directive appended to each adapter's prompt
+ * (ADR-0021 §5, #316).
+ *
+ * The SKILL procedure and the rest of the prompt stay in English (English is
+ * the canonical source — ADR-0021 §5); only the *generated report body* should
+ * follow the user's resolved locale. This helper returns a single instruction
+ * line telling the agent which language to write the report prose in, so it
+ * matches the per-locale template headings (`src/templates/<locale>/…`, #314 /
+ * #322) the CLI also hands over via `templateBody`.
+ *
+ * - `ja` → an explicit "write the body in Japanese" instruction.
+ * - `en` → an explicit "write the body in English" instruction.
+ *
+ * `noun` names the artifact for the sentence ("research report" / "review
+ * block" / "updated research report"). The directive never asks the agent to
+ * translate the `# <Title>` (item title stays in its source language) or the
+ * digest filename slug — those are out of scope per #316.
+ */
+export function reportLanguageDirective(noun: string, locale: Locale): string {
+  switch (locale) {
+    case "ja":
+      return `Write the ${noun} body in Japanese (headings, prose, and labels). Do NOT translate the \`# <Title>\` heading (keep the item title in its source language) or any filename / slug.`;
+    case "en":
+      return `Write the ${noun} body in English.`;
+    default: {
+      // Exhaustiveness guard — adding a Locale without a branch is a compile
+      // error. Mirrors `applyZodLocale` in src/core/locale.ts.
+      const _exhaustive: never = locale;
+      void _exhaustive;
+      return `Write the ${noun} body in English.`;
+    }
+  }
+}
 
 /**
  * Trust-boundary marker helper for adapter prompt builders.

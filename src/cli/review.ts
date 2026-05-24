@@ -7,6 +7,7 @@ import { renderReviewPayloadBlock } from "../agents/_boundary.js";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
+import type { Locale } from "../core/locale.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
@@ -14,6 +15,7 @@ import { isValidTransition } from "../core/transitions.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
+import { LangFlagError, resolveCommandLocale } from "./_locale.js";
 import {
   buildAgentProgressCallback,
   buildReporter,
@@ -518,6 +520,7 @@ async function discoverBatchCandidates(
 async function runReviewBatch(
   parsed: ReviewArgs,
   cwd: string,
+  locale: Locale,
   options: ReviewCommandOptions,
   log: (m: string) => void,
   warn: (m: string) => void,
@@ -647,7 +650,11 @@ async function runReviewBatch(
     progress: options.progress ?? progress,
   };
   for (const m of selected) {
-    const innerArgs = [m.researchId, "--agent", agent];
+    // Forward the already-resolved locale (#316) as an explicit `--lang` so an
+    // outer `--lang` (which this batch consumed) keeps its top priority in the
+    // per-candidate child invocation rather than silently falling back to
+    // RADAR_LANG / config.locale.
+    const innerArgs = [m.researchId, "--agent", agent, "--lang", locale];
     if (parsed.template !== undefined) {
       innerArgs.push("--template", parsed.template);
     }
@@ -705,9 +712,33 @@ export async function runReview(
   }
   const progress = options.progress ?? buildReporter({ level: progressState.level });
 
+  // Resolve the report-output locale (#316) BEFORE the command parser sees argv
+  // (strips `--lang`). `config.locale` is the lowest-priority source, read
+  // best-effort here; a malformed config is reported authoritatively by the
+  // agent resolver below, so we tolerate the error as "no config locale".
+  let configLocale: string | undefined;
+  try {
+    configLocale = (await loadRadarConfig(cwd)).locale;
+  } catch {
+    configLocale = undefined;
+  }
+  let langRest: string[];
+  let locale: Locale;
+  try {
+    const resolved = resolveCommandLocale(progressState.rest, configLocale, { warn });
+    langRest = resolved.rest;
+    locale = resolved.locale;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`review: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ReviewArgs;
   try {
-    parsed = parseArgs(progressState.rest);
+    parsed = parseArgs(langRest);
   } catch (e) {
     error(`review: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -741,7 +772,7 @@ export async function runReview(
     return 2;
   }
   if (parsed.batch) {
-    return runReviewBatch(parsed, cwd, options, log, warn, error, progress);
+    return runReviewBatch(parsed, cwd, locale, options, log, warn, error, progress);
   }
   // Surface the batch-only flags when used outside `--batch`; matches
   // `research.ts`'s "no silent ignore" stance so a typo in scheduled YAML
@@ -952,6 +983,7 @@ export async function runReview(
       researchFrontmatter: preFm,
       researchBody,
       cwd,
+      locale,
       onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {

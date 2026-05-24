@@ -44,6 +44,7 @@ function buildResearchRequest(): ResearchRequest {
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/feedradar/research/20260510_demo_v1.md",
     cwd: "/tmp/feedradar",
+    locale: "en",
   };
 }
 
@@ -56,6 +57,7 @@ function buildReviewRequest(): ReviewRequest {
     researchFrontmatter: SAMPLE_FRONTMATTER,
     researchBody: "---\nid: demo\n---\n\n# body\n",
     cwd: "/tmp/feedradar",
+    locale: "en",
   };
 }
 
@@ -71,6 +73,7 @@ function buildUpdateRequest(): UpdateRequest {
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/feedradar/research/20260510_anthropic-news-claude-code-shiny_v2.md",
     cwd: "/tmp/feedradar",
+    locale: "en",
   };
 }
 

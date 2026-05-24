@@ -63,6 +63,7 @@ function buildResearchRequest(overrides: Partial<ResearchRequest> = {}): Researc
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/feedradar-test/research/sample_v1.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -76,6 +77,7 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nid: sample\n---\n# v1 body\n",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -93,6 +95,7 @@ function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReque
     outputPath:
       "/tmp/feedradar-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -434,6 +437,50 @@ describe("agents/claude-code adapter", () => {
     it("default adapter exposes id 'claude-code'", async () => {
       const { claudeCodeAdapter } = await import("../../src/agents/claude-code.js");
       expect(claudeCodeAdapter.id).toBe("claude-code");
+    });
+  });
+
+  // #316 / ADR-0021 §5: the prompt stays English; only a single output-language
+  // directive line follows the resolved locale. The boundary / SKILL framing is
+  // identical across locales (regression: the rest of the prompt is unchanged).
+  describe("report output-language directive (locale)", () => {
+    async function promptFor(
+      method: "research" | "review" | "update",
+      locale: "en" | "ja",
+    ): Promise<string> {
+      const run = vi.fn().mockResolvedValue({ code: 0, stdout: "", stderr: "" });
+      const adapter = createClaudeCodeAdapter({ run });
+      if (method === "research") await adapter.research(buildResearchRequest({ locale }));
+      else if (method === "review") await adapter.review(buildReviewRequest({ locale }));
+      else await adapter.update(buildUpdateRequest({ locale }));
+      return run.mock.calls[0][0] as string;
+    }
+
+    it("research prompt asks for Japanese body on locale=ja", async () => {
+      const prompt = await promptFor("research", "ja");
+      expect(prompt).toContain("Write the research report body in Japanese");
+      // The English SKILL framing is still present (prompt itself stays English).
+      expect(prompt).toContain(".agents/skills/research/SKILL.md");
+    });
+
+    it("research prompt asks for English body on locale=en", async () => {
+      const prompt = await promptFor("research", "en");
+      expect(prompt).toContain("Write the research report body in English.");
+      expect(prompt).not.toContain("Japanese");
+    });
+
+    it("review prompt directive names the review block per locale", async () => {
+      expect(await promptFor("review", "ja")).toContain("Write the review block body in Japanese");
+      expect(await promptFor("review", "en")).toContain("Write the review block body in English.");
+    });
+
+    it("update prompt directive names the updated report per locale", async () => {
+      expect(await promptFor("update", "ja")).toContain(
+        "Write the updated research report body in Japanese",
+      );
+      expect(await promptFor("update", "en")).toContain(
+        "Write the updated research report body in English.",
+      );
     });
   });
 });

@@ -148,3 +148,20 @@ describe("core/triage/buildTriagePrompt — determinism", () => {
     expect(a).toBe(b);
   });
 });
+
+/**
+ * Locale invariance (#316 / ADR-0021 §5): unlike research / review / update,
+ * the triage prompt is fixed English for JSON-schema parse stability. It takes
+ * no `locale` parameter, so it cannot vary by UI locale — and it must never
+ * carry a report-style output-language directive that would skew the agent's
+ * JSON output language.
+ */
+describe("core/triage/buildTriagePrompt — locale invariance (#316)", () => {
+  it("never embeds a report output-language directive (English-fixed prompt)", () => {
+    const items = [makeItem({ id: "src-1-2026-05-23-loc" })];
+    const prompt = buildTriagePrompt({ items, policy: POLICY });
+    // The research/review/update directives all match this pattern; triage must
+    // not pick one up (it would bias the JSON-array language / break parsing).
+    expect(prompt).not.toMatch(/Write the .* body in (Japanese|English)/);
+  });
+});

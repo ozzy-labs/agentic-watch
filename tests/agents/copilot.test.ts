@@ -33,6 +33,7 @@ function makeResearchRequest(overrides: Partial<ResearchRequest> = {}): Research
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/research/20260510_anthropic-news_v1.md",
     cwd: "/tmp/workspace",
+    locale: "en",
     ...overrides,
   };
 }
@@ -57,6 +58,7 @@ function makeReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReques
     researchFrontmatter: SAMPLE_FRONTMATTER,
     researchBody: "---\nid: x\n---\nbody\n",
     cwd: "/tmp/workspace",
+    locale: "en",
     ...overrides,
   };
 }
@@ -73,6 +75,7 @@ function makeUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReques
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     cwd: "/tmp/workspace",
+    locale: "en",
     ...overrides,
   };
 }

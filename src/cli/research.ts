@@ -23,6 +23,7 @@ import { renderResearchPayloadBlock } from "../agents/_boundary.js";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems, saveItems } from "../core/items.js";
+import type { Locale } from "../core/locale.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
@@ -30,6 +31,7 @@ import { isValidTransition } from "../core/transitions.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
+import { LangFlagError, resolveCommandLocale } from "./_locale.js";
 import {
   buildAgentProgressCallback,
   buildReporter,
@@ -636,6 +638,8 @@ async function processResearchInvocation(params: {
   agent: AgentId;
   templateId: string;
   template: ResearchTemplate;
+  /** Resolved report-output locale (#316); passed verbatim to the adapter. */
+  locale: Locale;
   now: Date;
   triageGroup?: string;
   log: (m: string) => void;
@@ -650,6 +654,7 @@ async function processResearchInvocation(params: {
     agent,
     templateId,
     template,
+    locale,
     now,
     triageGroup,
     log,
@@ -694,6 +699,7 @@ async function processResearchInvocation(params: {
       items,
       outputPath,
       cwd,
+      locale,
       onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {
@@ -836,6 +842,7 @@ function parseFilterTags(raw: string | undefined): string[] {
 async function runResearchBatch(
   parsed: ResearchArgs,
   cwd: string,
+  locale: Locale,
   log: (m: string) => void,
   warn: (m: string) => void,
   error: (m: string) => void,
@@ -933,6 +940,7 @@ async function runResearchBatch(
       agent,
       templateId,
       template,
+      locale,
       now,
       log,
       warn,
@@ -976,9 +984,35 @@ export async function runResearch(
   // no shared global reporter, so concurrent CLI invocations are isolated.
   const progress = options.progress ?? buildReporter({ level: progressState.level });
 
+  // Resolve the report-output locale (#316) BEFORE the command-specific parser
+  // sees argv: `resolveCommandLocale` strips `--lang` so `parseArgs` never trips
+  // on it (mirrors the `--verbose` / `--quiet` strip above). `config.locale` is
+  // the lowest-priority source; we read it best-effort here (RadarConfigError is
+  // surfaced authoritatively by `resolveAgent` below, so we tolerate it as
+  // "no config locale" and let the agent resolver report the malformed config).
+  let configLocale: string | undefined;
+  try {
+    configLocale = (await loadRadarConfig(cwd)).locale;
+  } catch {
+    configLocale = undefined;
+  }
+  let langRest: string[];
+  let locale: Locale;
+  try {
+    const resolved = resolveCommandLocale(progressState.rest, configLocale, { warn });
+    langRest = resolved.rest;
+    locale = resolved.locale;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`research: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ResearchArgs;
   try {
-    parsed = parseArgs(progressState.rest);
+    parsed = parseArgs(langRest);
   } catch (e) {
     error(`research: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -1021,7 +1055,7 @@ export async function runResearch(
     return 2;
   }
   if (parsed.batch) {
-    return runResearchBatch(parsed, cwd, log, warn, error, progress);
+    return runResearchBatch(parsed, cwd, locale, log, warn, error, progress);
   }
   if (parsed.status !== undefined) {
     error("research: --status requires --batch");
@@ -1123,6 +1157,7 @@ export async function runResearch(
     agent,
     templateId,
     template,
+    locale,
     now: new Date(),
     triageGroup: parsed.triageGroup,
     log,

@@ -3,6 +3,7 @@ import {
   renderItemForPrompt,
   renderItemsForPrompt,
   renderTriagePayloadBlock,
+  reportLanguageDirective,
   resolveTrustLevel,
   wrapUntrusted,
 } from "../../src/agents/_boundary.js";
@@ -184,5 +185,41 @@ describe("agents/_boundary.renderTriagePayloadBlock (#279 / ADR-0019)", () => {
     expect(out).toContain("the radar CLI parses your JSON");
     // Boundary markers ride into both modes identically (ADR-0009 M1c).
     expect(out).toContain('<untrusted_item id="item-1"');
+  });
+});
+
+/**
+ * `reportLanguageDirective` (#316, ADR-0021 §5): the only locale-dependent
+ * fragment appended to each adapter's otherwise-English prompt. Pins the exact
+ * directive per locale and the "title / slug stay untranslated" carve-out.
+ */
+describe("agents/_boundary reportLanguageDirective", () => {
+  it("instructs Japanese output for locale=ja and protects the title / slug", () => {
+    const directive = reportLanguageDirective("research report", "ja");
+    expect(directive).toContain("Write the research report body in Japanese");
+    // Carve-out: the # <Title> heading + filename / slug are never translated.
+    expect(directive).toContain("Do NOT translate");
+    expect(directive).toContain("`# <Title>`");
+    expect(directive).toContain("slug");
+  });
+
+  it("instructs English output for locale=en", () => {
+    expect(reportLanguageDirective("research report", "en")).toBe(
+      "Write the research report body in English.",
+    );
+  });
+
+  it("names the artifact noun verbatim (research / review / update share one helper)", () => {
+    expect(reportLanguageDirective("review block", "ja")).toContain(
+      "Write the review block body in Japanese",
+    );
+    expect(reportLanguageDirective("updated research report", "en")).toBe(
+      "Write the updated research report body in English.",
+    );
+  });
+
+  it("emits exactly one line (it is appended to a join('\\n') prompt array)", () => {
+    expect(reportLanguageDirective("research report", "ja")).not.toContain("\n");
+    expect(reportLanguageDirective("research report", "en")).not.toContain("\n");
   });
 });
