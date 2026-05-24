@@ -1,0 +1,392 @@
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  isSafeRoutinePath,
+  isSubHourlyCron,
+  isValidCron,
+  type RoutineIO,
+  SUPPORTED_MODELS,
+  type SupportedModel,
+} from "./generate-watch.js";
+
+/**
+ * `radar routine generate pipeline` (ADR-0020 D5 `pipeline`).
+ *
+ * Emits a Claude Routine YAML whose single session runs the FULL FeedRadar
+ * pipeline in sequence — `radar watch run` -> triage -> research -> review —
+ * processing items ONE AT A TIME via the self-session `--emit-payload` /
+ * `--commit` entrypoints (NOT `--batch`; ADR-0020 D2). The blast radius is
+ * bounded by CLI flags (`--max-items` / `--limit`), not the prompt's
+ * discretion (D3e), so a `--max-items` flag is the only structural addition
+ * over the `watch` generator.
+ *
+ * The cron / output-path / repository validators and the model roster are
+ * shared with `generate-watch.ts` rather than re-declared: routines enforce
+ * the identical 1-hour-minimum cron and `.claude/routines/*.yaml` output
+ * gate regardless of `<type>`, so a single source keeps the two in lockstep.
+ */
+
+/**
+ * Default for `--max-items`: how many items one run may triage / research /
+ * review. Kept small so the routine's per-run blast radius stays bounded by a
+ * deterministic CLI cap (ADR-0020 D3e) rather than the prompt's discretion.
+ * Mirrors the conservative default of the GHA `combined-with-triage` cap.
+ */
+export const PIPELINE_DEFAULT_MAX_ITEMS = 10;
+
+/**
+ * Resolve the directory holding the bundled routine templates.
+ *
+ * Mirrors `resolveTemplatesRoot` in `generate-watch.ts`: the compiled CLI lives
+ * at `dist/cli/routine/generate-pipeline.js`, so the bundled templates sit at
+ * `../../templates` relative to this module. Tests run from source
+ * (`src/cli/routine/generate-pipeline.ts`), where the same relative path lands
+ * at `src/templates/`.
+ */
+async function resolveTemplatesRoot(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, "..", "..", "templates");
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Render the bundled `pipeline.yaml.tmpl` by substituting the `{{name}}` /
+ * `{{repository}}` / `{{cron}}` / `{{timezone}}` / `{{model}}` / `{{maxItems}}`
+ * placeholders.
+ *
+ * Literal `replace` (not a templating engine): the placeholders are simple
+ * tokens and we must not expand any other `{{...}}`-looking text in the body.
+ * Exported for unit testing in isolation.
+ */
+export function renderPipelineRoutineTemplate(
+  template: string,
+  values: {
+    name: string;
+    repository: string;
+    cron: string;
+    timezone: string;
+    model: string;
+    maxItems: number;
+  },
+): string {
+  return template
+    .replace(/\{\{name\}\}/g, values.name)
+    .replace(/\{\{repository\}\}/g, values.repository)
+    .replace(/\{\{cron\}\}/g, values.cron)
+    .replace(/\{\{timezone\}\}/g, values.timezone)
+    .replace(/\{\{model\}\}/g, values.model)
+    .replace(/\{\{maxItems\}\}/g, String(values.maxItems));
+}
+
+export interface GeneratePipelineRoutineOptions {
+  cwd: string;
+  name: string;
+  repository: string;
+  cron: string;
+  timezone: string;
+  model: SupportedModel;
+  maxItems: number;
+  output: string;
+  force: boolean;
+  /** Test seam: override the templates root location. */
+  templatesRoot?: string;
+  io?: RoutineIO;
+}
+
+export interface GeneratePipelineRoutineResult {
+  /** Relative path (from `cwd`) of the file that was written. */
+  outputPath: string;
+}
+
+/**
+ * Core implementation of `radar routine generate pipeline` (ADR-0020 D5
+ * `pipeline`).
+ *
+ * Validates the cron (5-field + 1-hour-minimum), output path, repository, and
+ * `--max-items` (>= 1), renders the bundled `pipeline.yaml.tmpl`, and writes it
+ * under `.claude/routines/`. The completion stdout tells the user how to paste
+ * the multi-line fields into the Web UI (yq extraction) and how to apply the
+ * schedule via `/schedule`, since Routines has no declarative apply API
+ * (ADR-0020 D1).
+ */
+export async function generatePipelineRoutine(
+  options: GeneratePipelineRoutineOptions,
+): Promise<GeneratePipelineRoutineResult> {
+  const { cwd, name, repository, cron, timezone, model, maxItems, output, force } = options;
+  const log = options.io?.log ?? ((m: string) => console.log(m));
+  const warn = options.io?.warn ?? ((m: string) => console.warn(m));
+
+  if (!isValidCron(cron)) {
+    throw new Error(
+      `invalid --cron expression '${cron}' (expected 5-field POSIX cron, e.g. "0 * * * *")`,
+    );
+  }
+  if (isSubHourlyCron(cron)) {
+    throw new Error(
+      `invalid --cron '${cron}': Claude Routines require a minimum interval of 1 hour ` +
+        `(use a fixed minute, e.g. "0 * * * *" hourly or "0 0 * * *" daily; ` +
+        `sub-hourly forms like "*/5 * * * *" or "0,30 * * * *" are rejected)`,
+    );
+  }
+  if (!Number.isInteger(maxItems) || maxItems < 1) {
+    throw new Error(`invalid --max-items '${maxItems}' (expected a positive integer)`);
+  }
+  if (!isSafeRoutinePath(output, cwd)) {
+    throw new Error(
+      `invalid --output '${output}' (must be a relative path under .claude/routines/ ending in .yaml)`,
+    );
+  }
+  if (!/^[^/\s]+\/[^/\s]+$/.test(repository)) {
+    throw new Error(`invalid --repo '${repository}' (expected owner/repo)`);
+  }
+
+  const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
+  const templatePath = join(templatesRoot, "routines", "pipeline.yaml.tmpl");
+  if (!(await pathExists(templatePath))) {
+    throw new Error(`bundled template not found: ${templatePath}`);
+  }
+  const template = await readFile(templatePath, "utf8");
+  const rendered = renderPipelineRoutineTemplate(template, {
+    name,
+    repository,
+    cron,
+    timezone,
+    model,
+    maxItems,
+  });
+
+  const destAbs = isAbsolute(output) ? output : join(cwd, output);
+  const destRel = isAbsolute(output) ? relative(cwd, output) : output;
+
+  if ((await pathExists(destAbs)) && !force) {
+    throw new Error(`output file already exists: ${destRel} (use --force to overwrite)`);
+  }
+  if ((await pathExists(destAbs)) && force) {
+    warn(`routine generate pipeline: overwriting existing file ${destRel}`);
+  }
+
+  await mkdir(dirname(destAbs), { recursive: true });
+  await writeFile(destAbs, rendered, "utf8");
+
+  log(`routine generate pipeline: wrote ${destRel}`);
+  log(
+    `routine generate pipeline: name='${name}', repo='${repository}', cron='${cron}', model='${model}', max-items=${maxItems}`,
+  );
+  log("");
+  log("Routines has no declarative apply API — paste this routine into the Web UI by hand:");
+  log("  1. Open https://claude.ai/code/routines and click New routine.");
+  log(
+    "  2. Fill the form fields from the YAML (Name / Model / Repositories / Trigger / Permissions).",
+  );
+  log("  3. For the multi-line Instructions and Setup script fields, extract them with yq:");
+  log(`       yq -r '.instructions'             ${destRel}`);
+  log(`       yq -r '.environment.setup_script' ${destRel}`);
+  log(
+    "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
+  );
+  log("");
+  log("Or apply the schedule from the CLI with /schedule, e.g.:");
+  log(`     /schedule create --name '${name}' --cron '${cron}' --repo '${repository}'`);
+  log("");
+  log("Single Claude session, no spawn (ADR-0020 D2): unlike the GHA combined-with-triage");
+  log("workflow, there is NO cross-agent review here — one Claude does every step.");
+  log(
+    `Item caps are CLI-enforced (ADR-0020 D3e): triage --max-items ${maxItems} / items --limit ${maxItems}.`,
+  );
+  log(
+    "Output gate (ADR-0020 D3a): this routine writes to a claude/* branch / PR only — never main directly.",
+  );
+
+  return { outputPath: destRel };
+}
+
+interface ParsedFlags {
+  name: string;
+  repository: string;
+  cron: string;
+  timezone: string;
+  model: SupportedModel;
+  maxItems: number;
+  output: string;
+  force: boolean;
+  help: boolean;
+}
+
+/**
+ * Parse `routine generate pipeline` flags.
+ *
+ * `--output` defaults to `.claude/routines/<name>.yaml`, so it is resolved
+ * AFTER the loop once `--name` is known (a `--output` flag, if given, wins).
+ */
+export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
+  let name = "feedradar-pipeline";
+  let repository = "<owner>/<repo>";
+  let cron = "0 * * * *"; // hourly — the Routines minimum interval.
+  let timezone = "UTC";
+  let model: SupportedModel = "claude-sonnet-4-6";
+  let maxItems = PIPELINE_DEFAULT_MAX_ITEMS;
+  let output: string | undefined;
+  let force = false;
+  let help = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-h" || a === "--help") {
+      help = true;
+      continue;
+    }
+    if (a === "--name") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      name = value;
+      continue;
+    }
+    if (a === "--repo" || a === "--repository") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      repository = value;
+      continue;
+    }
+    if (a === "--cron") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      cron = value;
+      continue;
+    }
+    if (a === "--timezone" || a === "--tz") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      timezone = value;
+      continue;
+    }
+    if (a === "--model") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(SUPPORTED_MODELS as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --model expects one of: ${SUPPORTED_MODELS.join(" | ")}, got '${value}'`,
+        );
+      }
+      model = value as SupportedModel;
+      continue;
+    }
+    if (a === "--max-items") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1) {
+        throw new Error(`option --max-items expects a positive integer, got '${value}'`);
+      }
+      maxItems = n;
+      continue;
+    }
+    if (a === "--output") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      output = value;
+      continue;
+    }
+    if (a === "--force" || a === "-f") {
+      force = true;
+      continue;
+    }
+    if (a?.startsWith("--") || a?.startsWith("-")) {
+      throw new Error(`unknown option: ${a}`);
+    }
+    throw new Error(`unexpected positional argument: ${a}`);
+  }
+
+  return {
+    name,
+    repository,
+    cron,
+    timezone,
+    model,
+    maxItems,
+    output: output ?? join(".claude", "routines", `${name}.yaml`),
+    force,
+    help,
+  };
+}
+
+export function printGeneratePipelineRoutineHelp(log: (m: string) => void): void {
+  log("Usage: radar routine generate pipeline [options]");
+  log("");
+  log("Generates a Claude Code Routine YAML whose single session runs the FULL");
+  log("pipeline — `radar watch run` -> triage -> research -> review — IN SEQUENCE,");
+  log("processing items ONE AT A TIME (ADR-0020 D5 `pipeline`). It does NOT spawn");
+  log("other agents (D2), so the cross-agent review of the GHA combined-with-triage");
+  log("workflow is NOT present. Per-run item count is bounded by CLI flags (D3e).");
+  log("");
+  log("Options:");
+  log('  --name <name>         Routine name (default: "feedradar-pipeline")');
+  log("                        Also the default output filename.");
+  log("  --repo <owner/repo>   Target repository (default: <owner>/<repo>)");
+  log('  --cron <expression>   5-field cron, min interval 1 HOUR (default: "0 * * * *")');
+  log('                        Sub-hourly (e.g. "*/5 * * * *") is rejected.');
+  log('  --timezone <tz>       Schedule timezone (default: "UTC")');
+  log(`  --model <name>        ${SUPPORTED_MODELS.join(" | ")}`);
+  log("                        (default: claude-sonnet-4-6)");
+  log(`  --max-items N         Hard cap on items triaged/researched/reviewed per run`);
+  log(
+    `                        (default: ${PIPELINE_DEFAULT_MAX_ITEMS}). Drives triage --max-items and items --limit.`,
+  );
+  log("  --output <path>       Output file under .claude/routines/");
+  log("                        (default: .claude/routines/<name>.yaml)");
+  log("  --force, -f           Overwrite existing output file");
+}
+
+/**
+ * Entry point invoked by `runRoutine` (in `src/cli/routine.ts`) when the user
+ * types `radar routine generate pipeline`. Translates parsed flags into
+ * `generatePipelineRoutine` arguments and surfaces validation errors with the
+ * `routine generate pipeline:` prefix to match the rest of the CLI.
+ */
+export async function runGeneratePipelineRoutine(
+  args: string[],
+  io: RoutineIO = {},
+  cwd: string = process.cwd(),
+): Promise<number> {
+  const log = io.log ?? ((m: string) => console.log(m));
+  const error = io.error ?? ((m: string) => console.error(m));
+
+  let parsed: ParsedFlags;
+  try {
+    parsed = parseGeneratePipelineRoutineArgs(args);
+  } catch (e) {
+    error(`routine generate pipeline: ${e instanceof Error ? e.message : String(e)}`);
+    return 2;
+  }
+  if (parsed.help) {
+    printGeneratePipelineRoutineHelp(log);
+    return 0;
+  }
+
+  try {
+    await generatePipelineRoutine({
+      cwd,
+      name: parsed.name,
+      repository: parsed.repository,
+      cron: parsed.cron,
+      timezone: parsed.timezone,
+      model: parsed.model,
+      maxItems: parsed.maxItems,
+      output: parsed.output,
+      force: parsed.force,
+      io,
+    });
+    return 0;
+  } catch (e) {
+    error(`routine generate pipeline: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
+}
