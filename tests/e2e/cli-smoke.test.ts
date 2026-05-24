@@ -714,9 +714,11 @@ describe("e2e/cli (binary smoke)", () => {
       expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
       const outputPath = join(".claude", "routines", "feedradar-watch.yaml");
       expect(result.stdout).toContain(`routine generate watch: wrote ${outputPath}`);
-      // Stdout surfaces the Web UI paste workflow (yq) and the /schedule example.
+      // Stdout surfaces the Web UI paste workflow (yq) and a corrected /schedule
+      // caveat — never the fabricated `/schedule create ...` syntax (issue #300).
       expect(result.stdout).toContain("yq -r '.instructions'");
       expect(result.stdout).toContain("/schedule");
+      expect(result.stdout).not.toContain("/schedule create");
 
       const written = await readFile(join(workdir, outputPath), "utf8");
       // No placeholder leaks.
@@ -776,10 +778,12 @@ describe("e2e/cli (binary smoke)", () => {
       expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
       const outputPath = join(".claude", "routines", "feedradar-pipeline.yaml");
       expect(result.stdout).toContain(`routine generate pipeline: wrote ${outputPath}`);
-      // Stdout surfaces the Web UI paste workflow (yq) and the /schedule example
-      // (same operator affordances as the watch generator).
+      // Stdout surfaces the Web UI paste workflow (yq) and a corrected /schedule
+      // caveat (same operator affordances as the watch generator) — never the
+      // fabricated `/schedule create ...` syntax (issue #300).
       expect(result.stdout).toContain("yq -r '.instructions'");
       expect(result.stdout).toContain("/schedule");
+      expect(result.stdout).not.toContain("/schedule create");
 
       const written = await readFile(join(workdir, outputPath), "utf8");
       // No placeholder leaks (every {{token}} must be substituted).

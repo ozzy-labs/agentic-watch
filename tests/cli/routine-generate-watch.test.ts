@@ -359,13 +359,19 @@ describe("cli/routine/generate-watch", () => {
       expect(warnings.some((w) => /overwriting/.test(w))).toBe(true);
     });
 
-    it("prints Web UI paste instructions (yq) and a /schedule example", async () => {
+    it("prints Web UI paste instructions (yq) and a corrected /schedule caveat", async () => {
       await run();
       const joined = logs.join("\n");
       expect(joined).toContain("yq -r '.instructions'");
       expect(joined).toContain("yq -r '.environment.setup_script'");
       expect(joined).toContain("/schedule");
       expect(joined).toContain("claude.ai/code/routines");
+      // Issue #300: the old `/schedule create --name --cron --repo` example is a
+      // fabricated syntax — it must not appear. Instead the output describes the
+      // real conversational form and the Web-UI-only caveats.
+      expect(joined).not.toContain("/schedule create");
+      expect(joined).toContain("`/schedule <description>`");
+      expect(joined).toContain("Allow unrestricted branch");
     });
   });
 

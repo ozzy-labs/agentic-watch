@@ -200,8 +200,13 @@ export async function generatePipelineRoutine(
     "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
   );
   log("");
-  log("Or apply the schedule from the CLI with /schedule, e.g.:");
-  log(`     /schedule create --name '${name}' --cron '${cron}' --repo '${repository}'`);
+  log("Note on /schedule (Claude Code): it is conversational — `/schedule <description>`");
+  log("to create one, plus `list` / `update` / `run` subcommands. There is no flag-based");
+  log("form (no `--name` / `--cron` / `--repo` arguments). It also cannot ingest this YAML");
+  log("verbatim, so for the long Instructions field the Web UI paste flow above (yq");
+  log("extraction) is the practical path. Finally, the unrestricted-git-push permission an");
+  log("auto-merge routine needs is set only via the Web UI 'Allow unrestricted branch");
+  log("pushes' toggle — /schedule cannot configure it.");
   log("");
   log("Single Claude session, no spawn (ADR-0020 D2): unlike the GHA combined-with-triage");
   log("workflow, there is NO cross-agent review here — one Claude does every step.");
