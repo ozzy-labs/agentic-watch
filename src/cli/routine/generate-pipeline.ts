@@ -2,10 +2,12 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  collectSourceHosts,
   isSafeRoutinePath,
   isSubHourlyCron,
   isValidCron,
   type RoutineIO,
+  renderNetworkAccessBlock,
   SUPPORTED_MODELS,
   type SupportedModel,
 } from "./generate-watch.js";
@@ -76,6 +78,7 @@ export function renderPipelineRoutineTemplate(
     timezone: string;
     model: string;
     maxItems: number;
+    networkAccessBlock: string;
   },
 ): string {
   return template
@@ -84,7 +87,8 @@ export function renderPipelineRoutineTemplate(
     .replace(/\{\{cron\}\}/g, values.cron)
     .replace(/\{\{timezone\}\}/g, values.timezone)
     .replace(/\{\{model\}\}/g, values.model)
-    .replace(/\{\{maxItems\}\}/g, String(values.maxItems));
+    .replace(/\{\{maxItems\}\}/g, String(values.maxItems))
+    .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock);
 }
 
 export interface GeneratePipelineRoutineOptions {
@@ -155,6 +159,7 @@ export async function generatePipelineRoutine(
     throw new Error(`bundled template not found: ${templatePath}`);
   }
   const template = await readFile(templatePath, "utf8");
+  const hosts = await collectSourceHosts(cwd, (m) => warn(`routine generate pipeline: ${m}`));
   const rendered = renderPipelineRoutineTemplate(template, {
     name,
     repository,
@@ -162,6 +167,7 @@ export async function generatePipelineRoutine(
     timezone,
     model,
     maxItems,
+    networkAccessBlock: renderNetworkAccessBlock(hosts),
   });
 
   const destAbs = isAbsolute(output) ? output : join(cwd, output);

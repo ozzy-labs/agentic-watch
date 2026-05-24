@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadSources } from "../../core/watcher.js";
 
 /**
  * Sinks for the `routine generate watch` command's user-facing output.
@@ -23,9 +24,96 @@ export interface RoutineIO {
 export const SUPPORTED_MODELS = [
   "claude-sonnet-4-6",
   "claude-opus-4-7",
-  "claude-haiku-4-6",
+  "claude-haiku-4-5",
 ] as const;
 export type SupportedModel = (typeof SUPPORTED_MODELS)[number];
+
+/**
+ * Collect the distinct outbound hosts a routine must reach to fetch the
+ * workspace's subscribed feeds.
+ *
+ * Reads `sources/*.yaml` from `cwd` and extracts the URL hostname of every
+ * source (skipping `npm-registry`, which has a fixed `registry.npmjs.org`
+ * host injected separately, and bare-package URLs that do not parse). The
+ * result drives the `network_access` block (`renderNetworkAccessBlock`):
+ * Claude Routines' Default **Trusted** mode returns `403`
+ * (`x-deny-reason: host_not_allowed`) for any host outside its built-in
+ * allowlist, so a watch/pipeline routine that fetches arbitrary RSS / HTTP
+ * feeds needs **Custom** access scoped to exactly these hosts (ADR-0020 D3c /
+ * ADR-0009 D5b — outbound limited to `sources/*.yaml` hosts; we do NOT open
+ * `Full`).
+ *
+ * Malformed source files are skipped (reported via `onError`) rather than
+ * aborting — mirrors `loadSources`. Returns a sorted, de-duplicated list.
+ */
+export async function collectSourceHosts(
+  cwd: string,
+  onError: (message: string) => void = () => {},
+): Promise<string[]> {
+  const sources = await loadSources(join(cwd, "sources"), onError);
+  const hosts = new Set<string>();
+  for (const source of sources) {
+    // npm-registry accepts a bare-package form (`@scope/pkg`) that is not a
+    // URL; its real outbound host is the npm registry, added below.
+    if (source.kind === "npm-registry") {
+      hosts.add("registry.npmjs.org");
+      continue;
+    }
+    try {
+      hosts.add(new URL(source.url).hostname.toLowerCase());
+    } catch {
+      // Non-URL source.url (should not happen for non-npm kinds after schema
+      // validation) — skip rather than emit a broken allowlist entry.
+    }
+  }
+  return [...hosts].sort();
+}
+
+/**
+ * Render the `environment.network_access` YAML block for a routine template.
+ *
+ * Claude Routines network modes are **Trusted / Custom / Full** (NOT the
+ * `trusted / none / open` an earlier template comment claimed). The Default
+ * **Trusted** mode allowlists only a curated set of hosts and returns `403`
+ * (`x-deny-reason: host_not_allowed`) for anything else, so it CANNOT reach
+ * arbitrary subscribed feeds. We therefore emit **Custom** scoped to the
+ * subscribed-feed hosts (ADR-0020 D3c / ADR-0009 D5b) and never `Full`, which
+ * would defeat the limited-egress intent.
+ *
+ * `network_access` mirrors the Web UI "Network access" field; the routine
+ * YAML is pasted into that form by hand (Routines has no declarative apply
+ * API), so the host allowlist itself is registered in the Web UI's Custom
+ * editor. The emitted block records `custom` plus, as a comment, the exact
+ * host list to paste (or, when none can be enumerated, an explicit
+ * instruction to add the subscribed-feed hosts there).
+ */
+export function renderNetworkAccessBlock(hosts: string[]): string {
+  const lines = [
+    "  # Network access mode: Trusted / Custom / Full (Web UI: Environment > Network access).",
+    "  #   Trusted (Default): only a curated host allowlist; ANY other host gets",
+    "  #     403 (x-deny-reason: host_not_allowed) — so it CANNOT fetch arbitrary feeds.",
+    "  #   Custom: you supply the allowlist — use this, scoped to your subscribed feeds.",
+    "  #   Full: unrestricted egress — NOT used (ADR-0020 D3c / ADR-0009 D5b limit",
+    "  #     outbound to sources/*.yaml hosts; never open the routine to any host).",
+  ];
+  if (hosts.length > 0) {
+    lines.push(
+      "  # Register these subscribed-feed hosts (from sources/*.yaml) in the Web UI",
+      "  # Custom network access allowlist:",
+    );
+    for (const host of hosts) {
+      lines.push(`  #   - ${host}`);
+    }
+  } else {
+    lines.push(
+      "  # No sources/*.yaml hosts could be enumerated at generate time. In the Web UI",
+      "  # Custom network access allowlist, add each subscribed-feed host this routine",
+      "  # must fetch (the hostnames from your sources/*.yaml `url:` fields).",
+    );
+  }
+  lines.push("  network_access: custom");
+  return lines.join("\n");
+}
 
 /**
  * Resolve the directory holding the bundled routine templates.
@@ -154,6 +242,7 @@ export function renderWatchRoutineTemplate(
     cron: string;
     timezone: string;
     model: string;
+    networkAccessBlock: string;
   },
 ): string {
   return template
@@ -161,7 +250,8 @@ export function renderWatchRoutineTemplate(
     .replace(/\{\{repository\}\}/g, values.repository)
     .replace(/\{\{cron\}\}/g, values.cron)
     .replace(/\{\{timezone\}\}/g, values.timezone)
-    .replace(/\{\{model\}\}/g, values.model);
+    .replace(/\{\{model\}\}/g, values.model)
+    .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock);
 }
 
 export interface GenerateWatchRoutineOptions {
@@ -227,12 +317,14 @@ export async function generateWatchRoutine(
     throw new Error(`bundled template not found: ${templatePath}`);
   }
   const template = await readFile(templatePath, "utf8");
+  const hosts = await collectSourceHosts(cwd, (m) => warn(`routine generate watch: ${m}`));
   const rendered = renderWatchRoutineTemplate(template, {
     name,
     repository,
     cron,
     timezone,
     model,
+    networkAccessBlock: renderNetworkAccessBlock(hosts),
   });
 
   const destAbs = isAbsolute(output) ? output : join(cwd, output);

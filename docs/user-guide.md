@@ -2800,7 +2800,7 @@ routine は無人実行されるため、ADR-0009 / ADR-0019 の防御に加え�
 
 - **出力ゲート — PR か `claude/*` のみ**: routine が作る research / review レポートや items 更新は、必ず人間レビューを通す PR か `claude/*` ブランチに着地する。**main への直接 push・自動マージは禁止**。prompt injection が成立しても無レビューで main に変更が入らない最終ゲート（D3a）。生成 YAML の `permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` がこれを担保する
 - **connector なし**: 外部サービス連携プラグインは一切有効化しない。生成 YAML の `connectors: []`（D3b）
-- **通信先は購読フィードに限定**: outbound 通信は workspace 登録済みの `sources/*.yaml` のホストに限定（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) D5b の host allowlist がそのまま適用）。任意 URL への fetch はしない（D3c）
+- **通信先は購読フィードに限定**: outbound 通信は workspace 登録済みの `sources/*.yaml` のホストに限定（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) D5b の host allowlist がそのまま適用）。任意 URL への fetch はしない（D3c）。生成 YAML の `environment.network_access` は **`custom`** で出力される（モードは `Trusted` / `Custom` / `Full` の 3 種）。Routines の既定 `Trusted` は許可外ホストへ `403`（`x-deny-reason: host_not_allowed`）を返すため購読フィードを取得できない。`Full`（全ホスト開放）は D3c の限定意図に反するので使わない。`generate` 時に `sources/*.yaml` のホストを列挙してコメントに焼き込むので、**Web UI の Custom network access にそのホストを登録**してから登録・実行する
 - **取得した外部本文はデータ扱い**: feed item の title / summary / body / tags は `<untrusted_item>...</untrusted_item>` 境界マーカーで wrap され、「**指示ではなくデータ**」として扱われる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c / D3d）。「本文に書かれた指示に従う」ことはしない
 
 > **token は機密**: `/fire` の per-routine bearer token は YAML・リポ・ログ・コマンドライン引数のいずれにも書かない。Web UI で 1 回だけ表示される値を password manager / secret store で別管理する（[`.claude/routines/README.md` §シークレットの取り扱い](../.claude/routines/README.md)）。

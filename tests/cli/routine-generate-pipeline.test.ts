@@ -28,7 +28,7 @@ describe("cli/routine/generate-pipeline", () => {
   describe("renderPipelineRoutineTemplate", () => {
     it("substitutes every placeholder globally, including maxItems", () => {
       const tpl =
-        "name: {{name}}\nrepo: {{repository}}\ncron: {{cron}}\ntz: {{timezone}}\nmodel: {{model}}\ncap: {{maxItems}}\nagain: {{maxItems}}";
+        "name: {{name}}\nrepo: {{repository}}\ncron: {{cron}}\ntz: {{timezone}}\nmodel: {{model}}\ncap: {{maxItems}}\n{{networkAccessBlock}}\nagain: {{maxItems}}";
       const out = renderPipelineRoutineTemplate(tpl, {
         name: "my-pipe",
         repository: "acme/widgets",
@@ -36,6 +36,7 @@ describe("cli/routine/generate-pipeline", () => {
         timezone: "Asia/Tokyo",
         model: "claude-opus-4-7",
         maxItems: 7,
+        networkAccessBlock: "  network_access: custom",
       });
       expect(out).toContain("name: my-pipe");
       expect(out).toContain("repo: acme/widgets");
@@ -43,6 +44,7 @@ describe("cli/routine/generate-pipeline", () => {
       expect(out).toContain("tz: Asia/Tokyo");
       expect(out).toContain("model: claude-opus-4-7");
       expect(out).toContain("cap: 7");
+      expect(out).toContain("network_access: custom");
       expect(out).toContain("again: 7");
       expect(out).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
     });
@@ -76,7 +78,7 @@ describe("cli/routine/generate-pipeline", () => {
         "--tz",
         "Asia/Tokyo",
         "--model",
-        "claude-haiku-4-6",
+        "claude-haiku-4-5",
         "--max-items",
         "5",
         "--output",
@@ -86,7 +88,7 @@ describe("cli/routine/generate-pipeline", () => {
       expect(parsed.repository).toBe("acme/widgets");
       expect(parsed.cron).toBe("0 0 * * *");
       expect(parsed.timezone).toBe("Asia/Tokyo");
-      expect(parsed.model).toBe("claude-haiku-4-6");
+      expect(parsed.model).toBe("claude-haiku-4-5");
       expect(parsed.maxItems).toBe(5);
       expect(parsed.output).toBe(".claude/routines/custom.yaml");
       expect(parsed.force).toBe(true);
@@ -202,6 +204,11 @@ describe("cli/routine/generate-pipeline", () => {
       expect(written).toContain("connectors: []");
       expect(written.toLowerCase()).toContain("data, not instructions");
       expect(written).toContain("sources/*.yaml");
+      // F2: Custom network access (Trusted Default would 403 on feed hosts);
+      // never the old `trusted` value or the wrong `none`/`open` mode names.
+      expect(written).toContain("network_access: custom");
+      expect(written).not.toMatch(/network_access:\s*trusted/);
+      expect(written).not.toMatch(/network_access:\s*(none|open|full)/);
     });
 
     it("threads a custom --max-items through both the flag and the limit", async () => {
