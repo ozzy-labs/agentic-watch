@@ -1806,6 +1806,8 @@ phase markers は命名規約に従い、動詞・形が統一されている。
 
 phase markers は **副作用を伴わない**（exit code / control flow に影響しない）。debug 用の追加情報は phase markers の後ろに括弧書きで添えられる。
 
+> **locale 追従:** phase markers の文言は解決された locale に追従する。`--lang ja`（または `RADAR_LANG=ja` / `radar.config.yaml: locale: ja`）で実行すると、上表のラベルも日本語で出力される。一方、`<id>` / `<agent>` / `<source-id>` などの埋め込み値・`page i/N` のような機能的フィールドは locale 非依存で不変（ADR-0021 D9）。詳細は「[言語設定 (i18n)](#言語設定-i18n)」を参照。
+
 ### メトリクスの読み方
 
 spinner 行に表示される副次メトリクス:
@@ -1873,8 +1875,9 @@ defaultReviewAgent: claude-code
 |---|---|---|
 | `defaultResearchAgent` | `radar research` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot` |
 | `defaultReviewAgent` | `radar review` | 同上 |
+| `locale` | 全コマンド（ロケール解決の最下層） | `en` / `ja`（既定 `en`。`--lang` / `RADAR_LANG` が上書きする。詳細は「[言語設定 (i18n)](#言語設定-i18n)」） |
 
-両フィールドとも optional。未指定のフィールドはハードコード default にフォールバックする。
+全フィールド optional。未指定のフィールドはハードコード default にフォールバックする（agent 系は `claude-code`、`locale` は `en`）。
 
 ### Agent 解決の優先順位
 
@@ -1899,6 +1902,66 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 - `update` コマンド専用の default agent: 現状 `update` は `defaultResearchAgent` を借用する（前版を書いた agent と同じ系統で v+1 を生成するため）。dedicated `defaultUpdateAgent` フィールドは将来別 issue で追加
 - agent 固有の設定（timeout / API key / モデル指定など）: 必要が出てから別 issue で追加
+
+## 言語設定 (i18n)
+
+`radar` は英語 (`en`) / 日本語 (`ja`) の 2 言語に対応する。既定は **`en`**。i18n の対象は *ユーザーが CLI 出力 / 生成ファイルとして読む* 部分に限定される。設計判断の詳細は [ADR-0021: i18n 方針](./adr/0021-i18n-strategy.md) を参照。
+
+### ロケール解決の優先順位
+
+実際に使う言語は、コマンドごとに次の優先順位で解決される（[ADR-0021 D3](./adr/0021-i18n-strategy.md)）:
+
+```text
+--lang フラグ  >  RADAR_LANG 環境変数  >  radar.config.yaml: locale  >  en（既定）
+```
+
+- 各層は独立に検証される。上位層に不正な値（例: `--lang frnch`）が来た場合は **下位層へフォールスルーせず**、warning を出して `en` に落ちる（typo を下位層で黙って隠さないため）。
+- 空 / 未設定の層（`""` / 未定義）はスキップして次の層を見る。
+- グローバルな単一解決は持たず、各コマンドが `radar.config.yaml` を読む経路に合わせて解決する。例外として global help / version（`radar --help` など workspace config を読まない surface）は `--lang` / `RADAR_LANG` のみで解決する。
+
+### 言語の指定方法
+
+```bash
+# 日本語ワークスペースを初期化する（レポート雛形・運用ドキュメントが ja で生成される）
+radar init --lang ja
+
+# 単発のコマンドだけ環境変数で上書きする
+RADAR_LANG=ja radar research <item-id>
+
+# その場のフラグで上書きする（最優先）
+radar research <item-id> --lang ja
+```
+
+`radar init --lang ja` は選んだ言語を `radar.config.yaml` に永続化する。以降のコマンドはフラグ不要で `ja` を使う:
+
+```yaml
+# radar.config.yaml
+locale: ja        # en | ja — ロケール解決の最下層。--lang / RADAR_LANG が上書きする
+```
+
+`init` は workspace を *確立する* コマンドなので、既存の `config.locale` を読まず `--lang` / `RADAR_LANG` / 既定 `en` のみで解決する。それ以外のコマンド（`research` / `review` / `update` / `workflow generate` / `routine generate` 等）は既存 workspace 内で動くため、`config.locale` を最下層として参照する。
+
+### locale に追従するもの
+
+- **生成ファイル** — レポート雛形（`templates/default.md` / `digest.md`）・運用ドキュメント（`FEEDRADAR.md` / `AGENTS.md` / `CLAUDE.md`）・生成される workflow / routine YAML（step 名・コメント・注記）は、対応する per-locale テンプレ（`en/` または `ja/`）から生成される（[ADR-0021 D6/D7](./adr/0021-i18n-strategy.md)）。`init` / `workflow generate` / `routine generate` が解決した locale に対応するサブツリーを使う。
+- **レポート本文の出力言語** — `research` / `review` / `update` がエージェントに書かせる本文（要約・詳細）は locale に追従する。adapter 契約に locale を渡し、プロンプトに出力言語ディレクティブ（「出力言語は X」）を付与して実現する（[ADR-0021 D5](./adr/0021-i18n-strategy.md)）。
+- **CLI の文言** — コマンドの help / usage・エラーメッセージ・結果通知・進捗フェーズマーカーが locale 化される。schema バリデーションエラーは zod v4 ネイティブの locale 機構で切り替わる（[ADR-0021 D8](./adr/0021-i18n-strategy.md)）。
+
+> 現時点の i18n は全メッセージを網羅的に翻訳したものではなく、上記の user-facing surface（help / エラー・結果通知・進捗マーカー、生成ファイル、レポート出力言語）が対象。コード内コメント・ADR・schema description・debug 寄りの内部ログは i18n 対象外で日本語のまま（[ADR-0021 D2](./adr/0021-i18n-strategy.md)）。
+
+### locale を切り替えても変わらないもの
+
+- **エンジン `SKILL.md`（`.agents/skills/**`）と triage / research プロンプトは英語正本のまま** — これらは AI が消費する内部プロンプトで、JSON parse 安定性と保守性のため英語 1 本に保つ。locale に追従するのは *レポートの出力言語のみ* であって、プロンプト本体ではない（[ADR-0021 D5](./adr/0021-i18n-strategy.md)）。ユーザーが読み git 管理する運用ドキュメント（`FEEDRADAR.md` / `AGENTS.md` / `CLAUDE.md`）が per-locale 対象なのとは区別する（D6）。
+- **locale 非依存フィールド** — ソース言語由来のレポート `# <Title>`・digest slug（`matchedKeywords` 由来）・`run:` のコマンド文字列・cron / model ID / `network_access` などの機能的フィールドは、locale を切り替えても不変（[ADR-0021 D9](./adr/0021-i18n-strategy.md)）。
+
+### 既存ワークスペースの切り替え
+
+i18n 導入前に `radar init` 済みのワークスペースは、テンプレ等が既にディスク上にあるため言語が固定されている。デフォルト en 化は **新規 init のみ** に影響し、既存のオンディスク資産は自動では書き換えない（[ADR-0021 D10](./adr/0021-i18n-strategy.md)）。切り替えるには:
+
+- `radar init --force --lang ja` で再 init する（編集を加えている場合は事前に `git diff` で差分確認）、または
+- `radar.config.yaml` の `locale` を手編集する（CLI 出力やレポート出力言語には即時反映されるが、既に生成済みのテンプレ / 運用ドキュメントのファイル本体は再 init するまで変わらない）。
+
+専用の `radar config` コマンドは現状なく、本 epic の範囲外。
 
 ## スケジュール実行
 

@@ -86,6 +86,44 @@ radar --help                  # help
 
 All 10 subcommands are implemented (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow` / `routine`). See [docs/user-guide.md](./docs/user-guide.md) for the full spec.
 
+## Language (i18n)
+
+`radar` ships English (`en`) and Japanese (`ja`). The default is **`en`**. The i18n scope is *user-facing* surfaces only — see [ADR-0021](./docs/adr/0021-i18n-strategy.md) for the full design.
+
+The effective locale is resolved per command in this priority order:
+
+```text
+--lang flag  >  RADAR_LANG env var  >  radar.config.yaml: locale  >  en (default)
+```
+
+```bash
+# Initialize a Japanese workspace (report templates + workspace docs land in ja)
+radar init --lang ja
+
+# One-off override via env var for a single command
+RADAR_LANG=ja radar research <item-id>
+```
+
+`radar init --lang ja` persists the choice to `radar.config.yaml` so later commands need no flag:
+
+```yaml
+# radar.config.yaml
+locale: ja        # en | ja — lowest-priority layer; --lang / RADAR_LANG override it
+```
+
+What follows the locale:
+
+- **Generated files** — report templates (`templates/default.md` / `digest.md`), workspace docs (`FEEDRADAR.md` / `AGENTS.md` / `CLAUDE.md`), and generated `workflow` / `routine` YAML (step names / comments) are emitted from the matching per-locale template subtree (`en/` or `ja/`).
+- **Report body output** — the prose (summary / details) produced by `research` / `review` / `update` follows the locale: the adapter is given the locale and an output-language directive.
+- **CLI copy** — command help / usage, error messages, result notifications, and progress phase markers are localized.
+
+What does **not** change with the locale:
+
+- **Engine `SKILL.md` and the triage / research prompts stay English** — they are the canonical source of truth and are kept as a single English copy; only the *output language* of the report follows the locale (ADR-0021 D5).
+- Locale-independent fields (report `# <Title>` derived from the source, digest slugs, `run:` command strings, cron / model ID / `network_access`) stay identical across locales (ADR-0021 D9).
+
+A workspace initialized before i18n landed keeps its on-disk language; switch by re-running `radar init --force --lang ja` or hand-editing `radar.config.yaml: locale` (ADR-0021 D10).
+
 ## Development
 
 ```bash
