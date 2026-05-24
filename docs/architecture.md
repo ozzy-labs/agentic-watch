@@ -23,7 +23,7 @@
 │                          (薄い wrapper、--no-claude-skills でスキップ) │
 │  .gemini/commands/... ← Gemini CLI slash command (TOML)    │
 │                          (薄い wrapper、--no-gemini-commands でスキップ) │
-│  claude/routines/...  ← Claude Routines 雛形 (init --with-routines) │
+│  .claude/routines/... ← Claude Routines 雛形 (init --with-routines) │
 │  .github/workflows/...← GitHub Actions ワークフロー (init --with-actions) │
 └───────────────────────────────────────────────────────────┘
                     ▲
@@ -187,7 +187,7 @@ agent 選択ロジックは CLI が強制しない（ユーザー判断）。`in
 
 | コマンド | 生成先 | 想定 scheduler |
 |---|---|---|
-| `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `radar init --with-routines` | `.claude/routines/watch-daily.yaml` | Claude Routines (Anthropic 管理クラウド VM) |
 | `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (初回 bootstrap) |
 | `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch を **後追い生成** (ADR-0014 D1 / D6) |
 | `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | GitHub Actions watch + 自動 research の連鎖 (ハードキャップ + rebase リトライ内蔵、ADR-0014 D2 / D3 / D4) |

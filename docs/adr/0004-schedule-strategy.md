@@ -18,7 +18,7 @@ FeedRadar は手動実行（`radar watch run`）が必須要件だが、**定期
 |---|---|---|
 | 手動実行 | `radar watch run` | （CLI 自体） |
 | クラウド定期実行 | **GitHub Actions** + `ANTHROPIC_API_KEY` 等の API キー認証 | `.github/workflows/watch.yaml` |
-| ローカル PC 定期 | Claude Routines（クラウド側）or Desktop scheduled tasks | `claude/routines/watch-daily.md`（`--with-routines` 指定時） |
+| ローカル PC 定期 | Claude Routines（クラウド側）or Desktop scheduled tasks | `.claude/routines/watch-daily.yaml`（`--with-routines` 指定時） |
 
 ### 認証ポリシー（重要）
 
@@ -26,7 +26,18 @@ CI 自動化では **`ANTHROPIC_API_KEY` 等の API キー**を使う。OAuth �
 
 ### `init --with-routines` の挙動
 
-Claude Routines 用 routine 定義 `claude/routines/watch-daily.md` を生成。Routines はクラウド VM で fresh clone するため、user data はリポにコミット済みである必要がある。生成テンプレートに「sources/ items/ state/ を commit すること」の注記を含める。
+Claude Routines 用 routine 定義 `.claude/routines/watch-daily.yaml` を生成。Routines はクラウド VM で fresh clone するため、user data はリポにコミット済みである必要がある。生成テンプレートに「sources/ items/ state/ を commit すること」の注記を含める。
+
+> **2026-05-24 追補（#281, ADR-0020 連動・破壊的変更）**: 出力先・形式を変更した。
+>
+> | | 旧（〜#280） | 新（#281〜） |
+> |---|---|---|
+> | 出力先 | `claude/routines/watch-daily.md`（ドット無し） | `.claude/routines/watch-daily.yaml`（ドット有り） |
+> | 形式 | Markdown frontmatter | YAML（Web UI フォームと 1:1） |
+>
+> 変更理由は 2 点。(1) ドット有り `.claude/` は org 規約のディレクトリ（`.claude/skills/` 等と整合）。(2) `radar routine generate watch`（#280, ADR-0020）が出力する `.claude/routines/*.yaml` と形式・出力先を統一し、`init` の静的雛形とジェネレーターの出力を 1 つの正本形式に揃える。バンドル元テンプレートは `src/templates/routines/watch-daily.yaml`。
+>
+> **移行**: 旧 `claude/routines/watch-daily.md` を手動利用していた場合、`radar init --with-routines` を再実行して新 `.claude/routines/watch-daily.yaml` を取得し、旧ファイルは削除する。`radar routine generate watch` でパラメータ化した variant を生成してもよい。
 
 ### `init --with-actions` の挙動
 
