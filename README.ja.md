@@ -85,6 +85,44 @@ radar --help                  # ヘルプ
 
 全 10 サブコマンド (`init` / `source` / `watch` / `research` / `dismiss` / `review` / `update` / `doctor` / `workflow` / `routine`) が実装済み。詳細は [docs/user-guide.md](./docs/user-guide.md) を参照。
 
+## 言語設定 (i18n)
+
+`radar` は英語 (`en`) / 日本語 (`ja`) の 2 言語に対応する。既定は **`en`**。i18n の対象は *ユーザーが目にする* 部分のみ（設計の詳細は [ADR-0021](./docs/adr/0021-i18n-strategy.md) を参照）。
+
+実際に使う言語は、コマンドごとに次の優先順位で解決される:
+
+```text
+--lang フラグ  >  RADAR_LANG 環境変数  >  radar.config.yaml: locale  >  en（既定）
+```
+
+```bash
+# 日本語ワークスペースを初期化する（レポート雛形・運用ドキュメントが ja で生成される）
+radar init --lang ja
+
+# 単発のコマンドだけ環境変数で上書きする
+RADAR_LANG=ja radar research <item-id>
+```
+
+`radar init --lang ja` は選んだ言語を `radar.config.yaml` に永続化するため、以降のコマンドはフラグ不要になる:
+
+```yaml
+# radar.config.yaml
+locale: ja        # en | ja — 最も優先度の低い層。--lang / RADAR_LANG が上書きする
+```
+
+locale に追従するもの:
+
+- **生成ファイル** — レポート雛形（`templates/default.md` / `digest.md`）・運用ドキュメント（`FEEDRADAR.md` / `AGENTS.md` / `CLAUDE.md`）・生成される `workflow` / `routine` YAML（step 名・コメント）は、対応する per-locale テンプレ（`en/` または `ja/`）から生成される。
+- **レポート本文の出力** — `research` / `review` / `update` が書く本文（要約・詳細）は locale に追従する。adapter に locale と出力言語ディレクティブが渡される。
+- **CLI の文言** — コマンドの help / usage・エラーメッセージ・結果通知・進捗フェーズマーカーが locale 化される。
+
+locale を切り替えても **変わらない** もの:
+
+- **エンジン `SKILL.md` と triage / research プロンプトは英語正本のまま** — これらは正本（single source of truth）として英語 1 本で保持し、locale に追従するのは *レポートの出力言語のみ*（ADR-0021 D5）。
+- locale 非依存フィールド（ソース由来のレポート `# <Title>`・digest slug・`run:` のコマンド文字列・cron / model ID / `network_access`）は locale を切り替えても不変（ADR-0021 D9）。
+
+i18n 導入前に初期化したワークスペースはオンディスクの言語が固定されている。切り替えるには `radar init --force --lang ja` で再 init するか、`radar.config.yaml: locale` を手編集する（ADR-0021 D10）。
+
 ## 開発
 
 ```bash
