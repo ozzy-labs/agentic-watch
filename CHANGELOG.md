@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0](https://github.com/ozzy-labs/feedradar/compare/v0.1.9...v0.2.0) (2026-05-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **init:** unify routine scaffold to YAML under .claude/routines/ ([#289](https://github.com/ozzy-labs/feedradar/issues/289))
+
+### refactor
+
+* **init:** unify routine scaffold to YAML under .claude/routines/ ([#289](https://github.com/ozzy-labs/feedradar/issues/289)) ([b298f2d](https://github.com/ozzy-labs/feedradar/commit/b298f2d83fa968e0c73e79c179a63f6abff1be5d))
+
+
+### Features
+
+* **routine:** /fire 外部からの起動連携（routine fire + api トリガー雛形） ([#291](https://github.com/ozzy-labs/feedradar/issues/291)) ([34b5b07](https://github.com/ozzy-labs/feedradar/commit/34b5b07b42c03a79b13cd78f42f070a7ae51680d))
+* **routine:** add `radar routine generate pipeline` full self-session pipeline ([#290](https://github.com/ozzy-labs/feedradar/issues/290)) ([9b56f02](https://github.com/ozzy-labs/feedradar/commit/9b56f02eed7328d758b7d639f43f5becaf85d27d))
+* **routine:** add `radar routine generate watch` with 1h cron validation ([#287](https://github.com/ozzy-labs/feedradar/issues/287)) ([86a284b](https://github.com/ozzy-labs/feedradar/commit/86a284bdcd4ea48db1687f43277a3655c7e213e9))
+* **triage:** add host-agent entry points (--emit-payload / --commit) ([#286](https://github.com/ozzy-labs/feedradar/issues/286)) ([3a2de36](https://github.com/ozzy-labs/feedradar/commit/3a2de36236b2f9e70616be24b2b7c86a73bdfe7c))
+
+
+### Bug Fixes
+
+* **routine:** correct model ID and network_access for generated routines ([#298](https://github.com/ozzy-labs/feedradar/issues/298)) ([af9484b](https://github.com/ozzy-labs/feedradar/commit/af9484b34c895ac13ecf645f12d7bcd7cbc8b1e0))
+* **test:** provide networkAccessBlock in routine template contract test ([#299](https://github.com/ozzy-labs/feedradar/issues/299)) ([4e99591](https://github.com/ozzy-labs/feedradar/commit/4e99591241374234dd266a71c67dbe8769a575d9))
+
 ## [0.1.9](https://github.com/ozzy-labs/feedradar/compare/v0.1.8...v0.1.9) (2026-05-23)
 
 
