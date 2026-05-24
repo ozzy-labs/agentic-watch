@@ -1923,6 +1923,8 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 radar workflow generate <type> [options]
 ```
 
+> **言語 (`--lang <en|ja>`)**: 生成される YAML 内の **コメント・step 名などの自然言語** を切り替える (既定 `en`、`RADAR_LANG` 環境変数と `radar.config.yaml` の `locale` も尊重する)。`cron` / secret 名 / `run:` コマンドなどの**機能的フィールドは言語に依存せず常に同一**。`routine generate` でも同じ `--lang` が使える。
+
 #### サポートされる workflow タイプ
 
 | `<type>` | 用途 | 主要 step | 実装状況 |

@@ -1,0 +1,123 @@
+# `radar workflow generate combined-with-triage` が生成。
+# watch run -> LLM triage -> キャップ付き research --batch -> グループ別
+# research --digest -> review --batch を 1 つの GitHub Actions ジョブで連結する。
+# triage 層が検出量をリサーチ価値のあるアイテムだけに絞り込むため、LoC を多く消費する
+# research/review ステップは生の検出件数の約 5〜15% だけを見ることになり、全量を浴びずに済む。
+# テンプレートのプレースホルダ / ハードキャップの根拠は
+# `src/cli/workflow/generate-combined-with-triage.ts` に記載。
+#
+# 最終ステップは `--output-mode`（デフォルト `pr`）からレンダリングされる:
+#   pr            — peter-evans/create-pull-request@v6（research/ がデフォルトブランチに
+#                   入る前に人間が PR をレビューする）。
+#   direct-commit — デフォルトブランチへ直接 commit & push（PR ゲートなし。
+#                   `permissions:` から `pull-requests: write` を外す）。このモードを
+#                   使うときはデフォルトブランチに PR 必須の branch protection を
+#                   設定しないこと — bot が直接 push する。
+
+name: feedradar-daily
+
+on:
+  schedule:
+    - cron: "{{watchCron}}"
+  workflow_dispatch: {}
+
+{{permissionsBlock}}
+
+concurrency:
+  # feedradar-watch / feedradar-combined とは別にすることで、同じブランチ上で
+  # 直列化せずによりシンプルなワークフローと共存できる。
+  group: feedradar-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+{{envBlock}}
+    steps:
+      - name: ワークスペースをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.21"
+
+      - name: FeedRadar をインストール
+        run: npm install -g @ozzylabs/feedradar
+
+      - name: watch を実行（新規アイテムを検出）
+        run: radar watch run
+
+      - name: 検出アイテムを triage（agent={{triageAgent}}）
+        # source ごとの `triagePolicy:` が安価なモデルでの分類を駆動する。
+        # ポリシーのないアイテムはスキップされ `detected` のまま残るので、既存の
+        # 未 triage フィード向けワークフローが引き続き拾う。
+        run: radar triage --apply --triage-agent {{triageAgent}}
+
+      - name: triaged_research のアイテムを research（最大 {{maxItems}} 件, agent={{researchAgent}}）
+        # `--batch --status triaged_research` は triage ステップが昇格させたアイテムだけを
+        # 消費し、`triaged_digest` は digest ステップに、`triaged_unsure` は人間レビューの
+        # キューに残す。ハードキャップは全件昇格してしまう triage の誤射から守る。
+        run: radar research --batch --status triaged_research --max-items {{maxItems}} --agent {{researchAgent}}
+
+      - name: digest グループを research（triage.group ごとに 1 レポート）
+        # `radar items list --triage-group <g>` は triage アダプタが同じグループヒントを
+        # 付けた全アイテムを返し、それを `radar research --digest` が単一の統合レポートに
+        # まとめる。各 digest が自己完結するよう、ユニークなグループを 1 つずつ走査する。
+        # `items list --field` は一致アイテムごとに 1 行を出すため、`sort -u` で重複排除する。
+        run: |
+          set -euo pipefail
+          # `mapfile` はグループ一覧を配列に読み込み、各要素が単一かつ適切にクォートされた
+          # トークンになるようにする。以前のコマンド置換によるスカラ代入は、下のループが
+          # 配列のように扱った時点で actionlint/shellcheck の SC2128（添字なしで配列を展開）/
+          # SC2178（同じ名前をスカラと配列の両方で再利用）に引っかかっていた。パイプラインは
+          # 引き続き重複排除し、ungrouped アイテムに `--field` が出す `-` センチネルを落とす。
+          #
+          # 注意: この配列は `GROUPS` という名前にしない — それは bash の特殊配列
+          # （呼び出し側のグループ ID）であり、その予約名にグループ一覧を読み込むと
+          # `set -e` 下で即座に失敗する。予約されていない名前を使う。
+          mapfile -t DIGEST_GROUPS < <(radar items list --status triaged_digest --field triage.group | sort -u | grep -v '^-$' || true)
+          if [ "${#DIGEST_GROUPS[@]}" -eq 0 ]; then
+            echo "no triaged_digest groups to process"
+            exit 0
+          fi
+          for GROUP in "${DIGEST_GROUPS[@]}"; do
+            [ -z "$GROUP" ] && continue
+            echo "::group::digest for triage.group=$GROUP"
+            IDS=$(radar items list --triage-group "$GROUP" --status triaged_digest --field id | tr '\n' ' ')
+            # `--triage-group "$GROUP"` は digest ファイルをグループ名にちなんで命名するため、
+            # 単一キーワード source の同日 2 グループが `<date>_digest_<slug>_v1.md` で衝突
+            # しなくなる（#255）。
+            # shellcheck disable=SC2086
+            radar research --digest $IDS --triage-group "$GROUP" --agent {{researchAgent}}
+            echo "::endgroup::"
+          done
+
+      - name: research 済みアイテムを review（agent={{reviewAgent}}）
+        # クロスエージェントレビュー: review ステップは意図的に research ステップとは
+        # 異なるエージェントを使い、レビュアーが同じモデルの盲点を引き継がないようにする。
+        run: radar review --batch --status researched --agent {{reviewAgent}}
+
+      - name: unsure キューを通知
+        # `if: always()` により、下流の research ステップが失敗しても triage スパイクは
+        # 通知される。Slack 通知は `--slack-webhook secrets.<NAME>` でオプトイン。空の
+        # webhook では curl 分岐が no-op に縮むため、アラートを漏らさずステップは成功する。
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: {{slackWebhookExpr}}
+        run: |
+          set -euo pipefail
+          UNSURE=$(radar items list --status triaged_unsure --json | jq length)
+          echo "triaged_unsure queue depth: $UNSURE"
+          if [ "$UNSURE" -gt 0 ] && [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -X POST "$SLACK_WEBHOOK_URL" \
+              -H 'Content-Type: application/json' \
+              -d "{\"text\":\"feedradar: $UNSURE items need human triage review\"}"
+          fi
+
+{{finalStep}}

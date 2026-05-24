@@ -105,8 +105,11 @@ interface InitOptions {
    * FEEDRADAR.md) are copied from, and which is persisted to
    * `radar.config.yaml`'s `locale`. Defaults to `en` (ADR-0021 D1/D7/D10).
    *
-   * Schedule scaffolds (routines/ workflows/) are locale-independent in this
-   * iteration (#314 scope) and stay at the templates-root level.
+   * As of #315 the schedule scaffolds (routines/ workflows/) are also
+   * per-locale: `--with-routines` / `--with-actions` copy from the same
+   * `<templatesRoot>/<locale>/` subtree, so the generated YAML's comments /
+   * notes / instructions match the workspace language. Only the functional
+   * fields (cron / model / network_access) stay identical across locales.
    */
   locale?: Locale;
   /** Override the source location of bundled engine skills (used by tests). */
@@ -639,6 +642,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: SCHEDULE_SCAFFOLDS.routines,
       copiedFiles,
       skippedFiles,
@@ -651,6 +655,7 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       cwd,
       force,
       templatesRoot: options.templatesRoot,
+      locale,
       scaffold: SCHEDULE_SCAFFOLDS.actions,
       copiedFiles,
       skippedFiles,
@@ -689,9 +694,9 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
  *
  * When `locale` is provided, the bundled source is resolved from the
  * per-locale subtree `<templatesRoot>/<locale>/<src>` (ADR-0021 D7:
- * `src/templates/{en,ja}/**`). Schedule scaffolds (routines / workflows) omit
- * `locale` and resolve from the templates root directly — they are
- * locale-independent in this iteration (#314 scope).
+ * `src/templates/{en,ja}/**`). As of #315 the schedule scaffolds (routines /
+ * workflows) are also per-locale, so all callers pass `locale`; the only
+ * `locale`-less callers are tests that target the templates root directly.
  */
 async function emitScaffold(args: {
   cwd: string;

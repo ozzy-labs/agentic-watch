@@ -1,0 +1,100 @@
+# `radar workflow generate watch` が生成する GitHub Actions の雛形。
+# cron スケジュール・sources・コミットメッセージは自分のワークフローに合わせて編集する。
+# 認証ポリシー: API キーのみ。Claude Code の OAuth トークンは
+# Anthropic の利用規約により無人ワークフローでは禁止。
+#
+# このテンプレートはプレースホルダ駆動で、init 後に再生成するための変種。
+# `src/templates/en/workflows/watch.yaml`（init --with-actions が初回ブートストラップで
+# 出力するもの）は後方互換のため別に保持している。違いは次のとおり:
+#
+#   - cron スケジュール・出力先・エージェントの secret 名は、書き込み前に
+#     `generate-watch.ts` が CLI フラグから差し込む。
+#   - `concurrency.group` を `feedradar-watch-` にスコープし、複数のワークフロー種別
+#     （watch / combined）が互いをキャンセルせず並走できるようにしている。下記の
+#     rebase リトライと組み合わせて push 衝突を緩和する。
+#   - `Commit and push with retry` ステップは、並行 cron による push を吸収するため
+#     最大 3 回まで `git pull --rebase` をリトライする。
+
+name: feedradar-watch
+
+on:
+  schedule:
+    - cron: "{{cron}}"
+  workflow_dispatch: {}
+
+permissions:
+  # 検出したアイテム / state をワークスペースのブランチへコミットするのに必要。
+  contents: write
+
+concurrency:
+  # 種別ごとのグループ。`watch` と `combined` のワークフローが互いをキャンセルしない。
+  # 同一種別の並行実行はこのグループで直列化される。
+  group: feedradar-watch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: ワークスペースをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          # 並行 push の上に rebase できるよう履歴が必要。
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Node.js をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          # radar が HTTPS_PROXY / HTTP_PROXY を自動検出して --use-env-proxy で
+          # 再起動するには Node 22.21+（または 24.5+）が必要。
+          node-version: "22.21"
+
+      - name: FeedRadar をインストール
+        # バージョンを決めたらリリースに固定する。この雛形では
+        # 最新の公開ビルドをインストールする。
+        run: npm install -g @ozzylabs/feedradar
+
+      - name: watch を実行
+        env:
+          # エージェント API に対して認証する（API キーのみ、OAuth は使わない）。
+          # 下記の secret 名はエージェント別の規約に従う。追加すべき正確な
+          # secret 名は生成後の標準出力を参照。
+          {{agentEnvKey}}: ${{ secrets.{{agentEnvKey}} }}
+          # github-releases アダプタの GitHub REST API レート上限を
+          # 60 → 5000 req/h に引き上げる。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: radar watch run
+
+      - name: リトライ付きでコミットして push
+        # items/ と state/ の更新を永続化し、次回の定期実行が前回の
+        # lastSeenIds と差分を取れるようにする。Routines / Actions はどちらも
+        # 毎回クリーンに clone するため、state は git に置く必要がある。
+        #
+        # push 衝突の緩和: 別のワークフロー（例: combined.yaml）が並行して
+        # push すると `git push` が non-fast-forward で失敗する。各試行で
+        # rebase しながら最大 3 回リトライする。autostash により index 外の
+        # bot 側変更も rebase をまたいで保全される。4 回以上は構造的な問題
+        # （branch protection・トークン障害・本当のマージ衝突）を示すため、
+        # それ以上リトライせず即座に失敗させる。
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet items/ state/; then
+            echo "no changes detected; skipping commit"
+            exit 0
+          fi
+          git add items/ state/
+          git commit -m "chore(watch): detected items $(date -u +%Y-%m-%d)"
+          for attempt in 1 2 3; do
+            if git push origin "${GITHUB_REF_NAME}"; then
+              echo "push succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            echo "push failed (attempt ${attempt}/3), rebasing..."
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          done
+          echo "push failed after 3 attempts" >&2
+          exit 1

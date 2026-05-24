@@ -1,6 +1,8 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Locale } from "../../core/locale.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import { RESEARCH_BATCH_DEFAULT_MAX_ITEMS } from "../research.js";
 import type { SupportedAgent, WorkflowIO } from "./generate-watch.js";
 import { SUPPORTED_AGENTS } from "./generate-watch.js";
@@ -200,6 +202,11 @@ export interface GenerateCombinedOptions {
   /** Pre-parsed filter-tags allow-list (already lower-cased + deduped). */
   filterTags: string[];
   force: boolean;
+  /**
+   * UI locale selecting the per-locale template subtree
+   * (`<templatesRoot>/<locale>/workflows/`). Defaults to `en` (#315).
+   */
+  locale?: Locale;
   /** Test seam: override the templates root location. */
   templatesRoot?: string;
   io?: WorkflowIO;
@@ -224,6 +231,7 @@ export async function generateCombined(
   options: GenerateCombinedOptions,
 ): Promise<GenerateCombinedResult> {
   const { cwd, watchCron, output, agent, maxItems, filterTags, force } = options;
+  const locale: Locale = options.locale ?? "en";
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
@@ -242,7 +250,7 @@ export async function generateCombined(
   }
 
   const templatesRoot = options.templatesRoot ?? (await resolveTemplatesRoot());
-  const templatePath = join(templatesRoot, "workflows", "combined.template.yaml.tmpl");
+  const templatePath = join(templatesRoot, locale, "workflows", "combined.template.yaml.tmpl");
   if (!(await pathExists(templatePath))) {
     throw new Error(`bundled template not found: ${templatePath}`);
   }
@@ -404,6 +412,8 @@ export function printGenerateCombinedHelp(log: (m: string) => void): void {
   log("  --filter-tags <list>       Comma-separated allow-list of matchedKeywords");
   log("                             (default: unset, matches every detected item)");
   log("  --force, -f                Overwrite existing output file");
+  log("  --lang <en|ja>             Language for the generated YAML's comments / step names");
+  log("                             (default: en; also honors RADAR_LANG and config.locale)");
   log("");
   log("Required secrets (Settings → Secrets and variables → Actions):");
   log("  ANTHROPIC_API_KEY    when --agent claude-code (default)");
@@ -426,9 +436,24 @@ export async function runGenerateCombined(
   const log = io.log ?? ((m: string) => console.log(m));
   const error = io.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the type parser sees argv (mirrors `init`).
+  let langFlag: string | undefined;
+  let rest: string[];
+  try {
+    const langState = parseLangFlag(args);
+    langFlag = langState.flag;
+    rest = langState.rest;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`workflow generate combined: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: ParsedFlags;
   try {
-    parsed = parseGenerateCombinedArgs(args);
+    parsed = parseGenerateCombinedArgs(rest);
   } catch (e) {
     error(`workflow generate combined: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -437,6 +462,8 @@ export async function runGenerateCombined(
     printGenerateCombinedHelp(log);
     return 0;
   }
+
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
 
   try {
     await generateCombined({
@@ -447,6 +474,7 @@ export async function runGenerateCombined(
       maxItems: parsed.maxItems,
       filterTags: parsed.filterTags,
       force: parsed.force,
+      locale,
       io,
     });
     return 0;

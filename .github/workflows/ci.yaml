@@ -115,6 +115,23 @@ jobs:
               'dist/templates/ja/agents/AGENTS.md',
               'dist/templates/ja/default.md',
               'dist/templates/ja/digest.md',
+              // Per-locale workflow / routine scaffolds (#315): the
+              // `workflow generate` / `routine generate` / `init --with-*`
+              // commands read these from dist/templates/{en,ja}/.
+              'dist/templates/en/workflows/watch.template.yaml.tmpl',
+              'dist/templates/en/workflows/combined.template.yaml.tmpl',
+              'dist/templates/en/workflows/combined-with-triage.template.yaml.tmpl',
+              'dist/templates/en/workflows/watch.yaml',
+              'dist/templates/en/routines/watch-daily.yaml',
+              'dist/templates/en/routines/watch.yaml.tmpl',
+              'dist/templates/en/routines/pipeline.yaml.tmpl',
+              'dist/templates/ja/workflows/watch.template.yaml.tmpl',
+              'dist/templates/ja/workflows/combined.template.yaml.tmpl',
+              'dist/templates/ja/workflows/combined-with-triage.template.yaml.tmpl',
+              'dist/templates/ja/workflows/watch.yaml',
+              'dist/templates/ja/routines/watch-daily.yaml',
+              'dist/templates/ja/routines/watch.yaml.tmpl',
+              'dist/templates/ja/routines/pipeline.yaml.tmpl',
             ];
             const missing = required.filter(p => !files.includes(p));
             if (missing.length > 0) {

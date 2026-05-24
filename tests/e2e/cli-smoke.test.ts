@@ -589,8 +589,8 @@ describe("e2e/cli (binary smoke)", () => {
 
   describe("scenario H: workflow generate watch", () => {
     // Validates that the built binary can render the bundled
-    // `dist/templates/workflows/watch.template.yaml.tmpl` (the `.tmpl`
-    // extension is what keeps yamlfmt from rewriting placeholders into
+    // `dist/templates/en/workflows/watch.template.yaml.tmpl` (per-locale since
+    // #315; the `.tmpl` extension is what keeps yamlfmt from rewriting placeholders into
     // syntactically-valid-but-broken YAML — see `generate-watch.ts`). A
     // packaging regression that dropped the templates directory would fail
     // here with "bundled template not found".
@@ -701,8 +701,8 @@ describe("e2e/cli (binary smoke)", () => {
 
   describe("scenario R: routine generate watch (ADR-0020 D5 / #280)", () => {
     // Validates that the built binary renders the bundled
-    // `dist/templates/routines/watch.yaml.tmpl` into a valid Claude Routine
-    // YAML under `.claude/routines/`. Mirrors scenario H (workflow side): a
+    // `dist/templates/en/routines/watch.yaml.tmpl` (per-locale since #315) into a
+    // valid Claude Routine YAML under `.claude/routines/`. Mirrors scenario H (workflow side): a
     // packaging regression that dropped the routines template directory would
     // fail here with "bundled template not found".
     it("renders the watch routine with placeholders replaced and a parseable shape", async () => {
@@ -752,8 +752,8 @@ describe("e2e/cli (binary smoke)", () => {
 
   describe("scenario S: routine generate pipeline (ADR-0020 D5 `pipeline` / #284)", () => {
     // Sibling of scenario R for the full-pipeline routine type. Validates that
-    // the built binary renders the bundled `dist/templates/routines/
-    // pipeline.yaml.tmpl` into a contract-clean Claude Routine YAML under
+    // the built binary renders the bundled `dist/templates/en/routines/
+    // pipeline.yaml.tmpl` (per-locale since #315) into a contract-clean Claude Routine YAML under
     // `.claude/routines/`. We assert the *stable* shape of the generated file
     // (file landed, parses, draft status, repositories, the >= 1-hour cron, the
     // `--max-items` cap threaded into the body) and deliberately avoid pinning

@@ -256,6 +256,34 @@ describe("cli/routine/generate-pipeline", () => {
       expect(written).not.toMatch(/network_access:\s*(none|open|full)/);
     });
 
+    // #315: locale "ja" selects the Japanese template subtree AND the Japanese
+    // code-rendered landing / output-gate blocks, while every functional field
+    // (cron / model / network_access / run commands / caps) stays identical.
+    it("emits Japanese prose for locale 'ja' but keeps functional fields", async () => {
+      await run({ output: ".claude/routines/en.yaml", locale: "en" });
+      await run({ output: ".claude/routines/ja.yaml", locale: "ja" });
+      const en = await readFile(join(workdir, ".claude", "routines", "en.yaml"), "utf8");
+      const ja = await readFile(join(workdir, ".claude", "routines", "ja.yaml"), "utf8");
+
+      // Natural-language copy differs (template prose + code-rendered output gate).
+      expect(ja).toContain("これは完全に自律的な実行であり");
+      expect(ja).toContain("`main` へ直接 push しない");
+      expect(en).toContain("This is a fully autonomous run");
+      expect(en).toContain("Do NOT push to `main` directly");
+      expect(ja).not.toContain("This is a fully autonomous run");
+
+      // Functional fields are locale-independent.
+      for (const yaml of [en, ja]) {
+        expect(yaml).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+        expect(yaml).toContain('cron: "0 * * * *"');
+        expect(yaml).toContain("model: claude-sonnet-4-6");
+        expect(yaml).toContain("network_access: custom");
+        expect(yaml).toContain("radar triage --apply --max-items 10");
+        expect(yaml).toContain("allow_unrestricted_git_push: false");
+        expect(yaml).not.toMatch(/radar\s+\w+[^\n]*--batch/);
+      }
+    });
+
     it("threads a custom --max-items through both the flag and the limit", async () => {
       await run({ maxItems: 3 });
       const written = await readFile(
