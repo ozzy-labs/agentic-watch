@@ -1,6 +1,8 @@
 import type { installChromium, ProbeOptions } from "../core/playwright-check.js";
 import { createProgressReporter, type ProgressLevel } from "../core/progress.js";
 import { type WatchRunResult, watchRun } from "../core/watcher.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 export interface WatchIO {
@@ -125,25 +127,8 @@ function parseRunArgs(args: string[]): WatchRunArgs {
   return out;
 }
 
-function printWatchHelp(log: (m: string) => void): void {
-  log("Usage: radar watch <run> [options]");
-  log("");
-  log("Subcommands:");
-  log("  run [--source <id>] [--bootstrap | --backfill [--max-pages N]]");
-  log("                  Fetch sources and produce items");
-  log("");
-  log("Options for run:");
-  log("  --source <id>     Limit the run to a single source id");
-  log("  --bootstrap       Seed lastSeenIds without emitting items (suppress initial noise)");
-  log("  --backfill        Fetch all available history pages and emit items for each.");
-  log("                    Supported fully by kind: json-api / github-releases / npm-registry.");
-  log("                    Other kinds (rss / html / html-js) only return their current page.");
-  log("  --max-pages N     Override pagination.maxPages cap (requires --backfill).");
-  log("                    Applies to INNER pagination only — facet sweep");
-  log("                    always walks every facet value regardless of this flag.");
-  log("  -v, --verbose     Enable progress-reporter raw() pass-through (adapter stdout).");
-  log("  -q, --quiet       Suppress the per-source progress reporter (legacy 1-line log");
-  log("                    remains). RADAR_NO_PROGRESS=1 has the same effect.");
+function printWatchHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.watch.help"));
 }
 
 /**
@@ -159,15 +144,30 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before `parseRunArgs` (which rejects unknown
+  // flags), then resolve the UI locale for the help text.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`watch run: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: WatchRunArgs;
   try {
-    parsed = parseRunArgs(args);
+    parsed = parseRunArgs(langState.rest);
   } catch (e) {
     error(`watch run: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printWatchHelp(log);
+    printWatchHelp(t, log);
     return 0;
   }
 
@@ -220,17 +220,34 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
 export const watchCommand: Command = {
   name: "watch",
   summary: "Fetch sources and produce filtered items (run)",
+  summaryKey: "cli.summary.watch",
   run: async (args) => {
+    // Resolve the dispatcher help locale from any leading `--lang` (read-only;
+    // the `run` subcommand strips and resolves its own).
+    const dispatcherLangFlag = ((): string | undefined => {
+      try {
+        return parseLangFlag(args).flag;
+      } catch {
+        return undefined;
+      }
+    })();
+    const dispatcherLocale = await resolveWorkspaceLocale({
+      flag: dispatcherLangFlag,
+      cwd: process.cwd(),
+      warn: (m) => console.error(m),
+    });
+    const t = createTranslator(dispatcherLocale);
+
     const [sub, ...rest] = args;
     if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
-      printWatchHelp((m) => console.log(m));
+      printWatchHelp(t, (m) => console.log(m));
       return sub ? 0 : 2;
     }
     if (sub === "run") {
       return runWatch(rest);
     }
     console.error(`watch: unknown subcommand '${sub}'`);
-    printWatchHelp((m) => console.error(m));
+    printWatchHelp(t, (m) => console.error(m));
     return 2;
   },
 };

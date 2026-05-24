@@ -190,65 +190,8 @@ function parseArgs(args: string[]): ResearchArgs {
   return out;
 }
 
-function printHelp(log: (m: string) => void): void {
-  log("Usage:");
-  log("  radar research <item-id> [--agent <agent-id>] [--template <template-id>]");
-  log(
-    "  radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agent <agent-id>] [--template <id>]",
-  );
-  log(
-    `  radar research --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
-  );
-  log("  radar research <item-id> --emit-payload [--digest <ids...>] [--template <id>]");
-  log("  radar research --commit <path>");
-  log("");
-  log("Arguments:");
-  log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
-  log("                        Pass 2 or more ids together with --digest to bundle them.");
-  log("                        Omit positional ids with --batch — items are discovered.");
-  log("");
-  log("Options:");
-  log(
-    "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log("  --template <id>       Template id under templates/ (default: default; digest: digest)");
-  log("  --digest              Bundle multiple items into a single digest report");
-  log("  --triage-group <group> Digest-mode slug source: name the digest");
-  log("                        file after this triage.group instead of the matchedKeywords");
-  log("                        frequency. Required to keep per-group digests unique on the");
-  log("                        same day when a single-keyword source emits multiple groups");
-  log("                        (#255). Falls back to the matchedKeywords slug when omitted.");
-  log("  --batch               Research every item matching --status (and --filter-tags)");
-  log("                        respecting the --max-items hard-cap.");
-  log("  --status <status>     Batch-mode filter: detected | triaged_research");
-  log("                        (default: detected). `triaged_research` consumes items");
-  log("                        the triage adapter promoted and");
-  log("                        transitions them to `researched` on success.");
-  log(
-    `  --max-items N         Batch-mode hard-cap on processed items (default: ${RESEARCH_BATCH_DEFAULT_MAX_ITEMS}).`,
-  );
-  log("                        Excess items are dropped and announced via warn() so a runaway");
-  log("                        detection cannot blow the cap from inside a workflow.");
-  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
-  log("                        each item's matchedKeywords (case-insensitive). Default: all.");
-  log("  --emit-payload        Host-agent mode: print the research payload to");
-  log("                        stdout and DO NOT spawn an agent. The interactive host");
-  log("                        session runs the SKILL procedure itself, then finalizes");
-  log("                        with `radar research --commit <path>`. Interactive/opt-in");
-  log("                        only — CI/headless must use the default spawn path.");
-  log("  --commit <path>       Host-agent mode: validate an externally-written");
-  log("                        report (under <cwd>/research/) against ResearchFrontmatter-");
-  log("                        Schema and apply the detected → researched transition.");
-  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
-  log(
-    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
-  );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
-  log("");
-  log("Output:");
-  log("  single-item:  research/<YYYYMMDD>_<slug>_v1.md");
-  log("  digest:       research/<YYYYMMDD>_digest_<slug>_v1.md");
-  log("  batch:        one single-item report per matched item (no digest aggregation).");
+function printHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.research.help", { maxItems: RESEARCH_BATCH_DEFAULT_MAX_ITEMS }));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -1051,7 +994,7 @@ export async function runResearch(
     return 2;
   }
   if (parsed.help) {
-    printHelp(log);
+    printHelp(t, log);
     return 0;
   }
   // Host-agent commit (#254 / ADR-0019). Independent of agent / template /
@@ -1116,7 +1059,7 @@ export async function runResearch(
   }
   if (parsed.itemIds.length === 0) {
     error("research: missing <item-id>");
-    printHelp(error);
+    printHelp(t, error);
     return 2;
   }
   if (!parsed.digest && parsed.itemIds.length > 1) {
@@ -1212,5 +1155,6 @@ export async function runResearch(
 export const researchCommand: Command = {
   name: "research",
   summary: "Generate Markdown research reports from items via an AI agent",
+  summaryKey: "cli.summary.research",
   run: (args) => runResearch(args),
 };

@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { loadItems, saveItems } from "../core/items.js";
 import { allowedTransitions, isValidTransition } from "../core/transitions.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { Item, ItemStatus } from "../schemas/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /** Sinks for the dismiss command's user-facing output. Tests inject capturing sinks. */
@@ -97,37 +99,8 @@ function parseArgs(args: string[]): DismissArgs {
   return out;
 }
 
-function printHelp(log: (m: string) => void): void {
-  log("Usage:");
-  log("  radar dismiss <item-id> [<item-id> ...]");
-  log("  radar dismiss --batch [--status <status>] [--max-items N] [--filter-tags <list>]");
-  log("");
-  log("Arguments:");
-  log("  <item-id>             Item id (matches items/<sourceId>/<item-id>.yaml)");
-  log("                        Pass 2 or more ids to dismiss them in one call.");
-  log("                        Omit positional ids with --batch — items are discovered.");
-  log("");
-  log("Options:");
-  log("  --batch               Dismiss every item matching --status (and --filter-tags)");
-  log(
-    `                        respecting the --max-items hard-cap (default: ${DISMISS_BATCH_DEFAULT_MAX_ITEMS}).`,
-  );
-  log("  --status <status>     Batch-mode filter: detected | triaged_unsure (default: detected).");
-  log("                        Only these two statuses can transition to `dismissed`");
-  log("                        per the state machine; other values are rejected.");
-  log(
-    `  --max-items N         Batch-mode hard-cap on processed items (default: ${DISMISS_BATCH_DEFAULT_MAX_ITEMS}).`,
-  );
-  log("                        Excess items are dropped and announced via warn() so a runaway");
-  log("                        --backfill cannot blow the cap from inside a workflow.");
-  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
-  log("                        each item's matchedKeywords (case-insensitive). Default: all.");
-  log("");
-  log("Transitions the item's status to `dismissed`. Valid from `detected`");
-  log("or `triaged_unsure`; items in `researched` / `reviewed` / `dismissed` /");
-  log("`triaged_research` / `triaged_digest` cannot be dismissed.");
-  log("");
-  log("Inverse: `radar undismiss <item-id> [--force]`.");
+function printHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.dismiss.help", { maxItems: DISMISS_BATCH_DEFAULT_MAX_ITEMS }));
 }
 
 /**
@@ -333,15 +306,31 @@ export async function runDismiss(
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before the command's own parser sees argv (its
+  // `parseArgs` rejects unknown `--` flags), then resolve the effective UI
+  // locale via --lang > RADAR_LANG > config.locale > default (en) for help text.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`dismiss: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: DismissArgs;
   try {
-    parsed = parseArgs(args);
+    parsed = parseArgs(langState.rest);
   } catch (e) {
     error(`dismiss: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printHelp(log);
+    printHelp(t, log);
     return 0;
   }
   if (parsed.batch) {
@@ -364,7 +353,7 @@ export async function runDismiss(
   }
   if (parsed.itemIds.length === 0) {
     error("dismiss: missing <item-id>");
-    printHelp(error);
+    printHelp(t, error);
     return 2;
   }
 
@@ -381,5 +370,6 @@ export async function runDismiss(
 export const dismissCommand: Command = {
   name: "dismiss",
   summary: "Mark detected items as dismissed (single id, multiple ids, or --batch)",
+  summaryKey: "cli.summary.dismiss",
   run: (args) => runDismiss(args),
 };

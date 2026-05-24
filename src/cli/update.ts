@@ -116,39 +116,8 @@ function parseArgs(args: string[]): UpdateArgs {
   return out;
 }
 
-function printHelp(log: (m: string) => void): void {
-  log("Usage:");
-  log("  radar update <research-id> [--agent <agent-id>] [--template <template-id>]");
-  log("  radar update <research-id> --emit-payload [--template <id>]");
-  log("  radar update --commit <path>");
-  log("");
-  log("Arguments:");
-  log("  <research-id>         Research id (basename of research/<id>.md without .md)");
-  log("");
-  log("Options:");
-  log(
-    "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log("  --template <id>       Template id under templates/ (default: default)");
-  log("  --emit-payload        Host-agent mode: print the update payload to");
-  log("                        stdout and DO NOT spawn an agent. The interactive host");
-  log("                        session runs the SKILL procedure itself, then finalizes");
-  log("                        with `radar update --commit <path>`. Interactive/opt-in");
-  log("                        only — CI/headless must use the default spawn path.");
-  log("  --commit <path>       Host-agent mode: validate an externally-written");
-  log("                        v+1 report (under <cwd>/research/) against ResearchFrontmatter-");
-  log("                        Schema, assert the v+1 invariants against the `supersedes`");
-  log("                        predecessor, and leave items.yaml untouched.");
-  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
-  log(
-    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
-  );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
-  log("");
-  log("Generates research/<base>_v<n+1>.md from the supplied predecessor id,");
-  log("writing `supersedes: <prev id>` into the new file's frontmatter. The");
-  log("predecessor file is never modified (immutable history), and");
-  log("the linked items/<id>.yaml `status` is left untouched.");
+function printHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.update.help"));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -830,7 +799,7 @@ export async function runUpdate(
     return 2;
   }
   if (parsed.help) {
-    printHelp(log);
+    printHelp(t, log);
     return 0;
   }
 
@@ -852,7 +821,7 @@ export async function runUpdate(
 
   if (!parsed.researchId) {
     error("update: missing <research-id>");
-    printHelp(error);
+    printHelp(t, error);
     return 2;
   }
 
@@ -970,5 +939,6 @@ export async function runUpdate(
 export const updateCommand: Command = {
   name: "update",
   summary: "Refresh existing research reports against the latest items",
+  summaryKey: "cli.summary.update",
   run: (args) => runUpdate(args),
 };

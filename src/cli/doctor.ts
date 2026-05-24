@@ -9,6 +9,8 @@ import {
 } from "../core/playwright-check.js";
 import { detectProxyUrl, maskProxyUrl } from "../core/proxy.js";
 import { loadSources } from "../core/watcher.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
+import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 
 /**
@@ -592,27 +594,8 @@ function parseDoctorArgs(args: string[]): DoctorArgs {
   return out;
 }
 
-function printDoctorHelp(log: (m: string) => void): void {
-  log("Usage: radar doctor [--no-proxy-check]");
-  log("");
-  log("Diagnose the workspace and report dependency / configuration health.");
-  log("");
-  log("Checks performed:");
-  log("  - Workspace directories (sources/, items/, state/, research/, templates/)");
-  log("  - radar.config.yaml schema validity");
-  log("  - Agent CLI availability (claude / codex / gemini / copilot)");
-  log("  - Playwright + Chromium install (only if html-js sources configured)");
-  log("  - Proxy env vars (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY) with credential masking");
-  log("  - NODE_USE_ENV_PROXY status (engaged when radar self-respawned for proxy)");
-  log("  - NODE_EXTRA_CA_CERTS status (required for TLS-intercepting proxies)");
-  log("  - Live proxy healthcheck (HTTPS request to api.github.com)");
-  log("");
-  log("Options:");
-  log("  --no-proxy-check  Skip the live proxy healthcheck (offline-friendly)");
-  log("");
-  log("Exit codes:");
-  log("  0  all ok (warnings may appear, but no errors)");
-  log("  1  one or more error-level checks failed");
+function printDoctorHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.doctor.help"));
 }
 
 /**
@@ -626,18 +609,34 @@ export async function runDoctor(
   args: string[],
   options: DoctorCommandOptions = {},
 ): Promise<number> {
+  const cwd = options.cwd ?? process.cwd();
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Strip `--lang <en|ja>` before `parseDoctorArgs` (which rejects unknown
+  // flags), then resolve the UI locale for the help text.
+  let langState: ReturnType<typeof parseLangFlag>;
+  try {
+    langState = parseLangFlag(args);
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`doctor: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+  const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   let parsed: DoctorArgs;
   try {
-    parsed = parseDoctorArgs(args);
+    parsed = parseDoctorArgs(langState.rest);
   } catch (e) {
     error(`doctor: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
   if (parsed.help) {
-    printDoctorHelp(log);
+    printDoctorHelp(t, log);
     return 0;
   }
 
@@ -663,5 +662,6 @@ export async function runDoctor(
 export const doctorCommand: Command = {
   name: "doctor",
   summary: "Diagnose workspace, agent CLIs, and html-js Playwright install",
+  summaryKey: "cli.summary.doctor",
   run: (args) => runDoctor(args),
 };

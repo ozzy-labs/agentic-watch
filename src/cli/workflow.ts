@@ -1,3 +1,5 @@
+import { createTranslator, type Translator } from "../i18n/index.js";
+import { parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 import { runGenerateCombined } from "./workflow/generate-combined.js";
 import { runGenerateCombinedWithTriage } from "./workflow/generate-combined-with-triage.js";
@@ -20,29 +22,12 @@ export interface WorkflowCommandOptions {
   io?: WorkflowIO;
 }
 
-function printWorkflowHelp(log: (m: string) => void): void {
-  log("Usage: radar workflow <subcommand> [...]");
-  log("");
-  log("Subcommands:");
-  log("  generate <type>  Generate a GitHub Actions workflow YAML");
-  log("                   Types: watch | combined | combined-with-triage");
-  log("");
-  log("Run `radar workflow generate <type> --help` for type-specific options.");
+function printWorkflowHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.workflow.help"));
 }
 
-function printGenerateHelp(log: (m: string) => void): void {
-  log("Usage: radar workflow generate <type> [options]");
-  log("");
-  log("Types:");
-  log(
-    "  watch                  Periodic `radar watch run` (cron + state commit with rebase retry)",
-  );
-  log("  combined               Periodic `radar watch run` -> auto research --batch with hard cap");
-  log(
-    "  combined-with-triage   `watch run` -> `triage --apply` -> `research --batch` -> per-group `research --digest` -> `review --batch` in one job",
-  );
-  log("");
-  log("Run `radar workflow generate <type> --help` for type-specific options.");
+function printGenerateHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.workflow.generateHelp"));
 }
 
 /**
@@ -64,21 +49,36 @@ export async function runWorkflow(
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Resolve the dispatcher's own help locale from any `--lang` in argv (+ env +
+  // config). `parseLangFlag` only *reads* the flag here; the full `args` are
+  // still forwarded verbatim to the per-type generate subcommands, which run
+  // their own `--lang` resolution (#315). A dangling `--lang` is tolerated —
+  // the subcommand surfaces the usage error.
+  const { flag: langFlag } = ((): { flag: string | undefined } => {
+    try {
+      return { flag: parseLangFlag(args).flag };
+    } catch {
+      return { flag: undefined };
+    }
+  })();
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   const [sub, ...rest] = args;
   if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
-    printWorkflowHelp(log);
+    printWorkflowHelp(t, log);
     return sub ? 0 : 2;
   }
 
   if (sub !== "generate") {
     error(`workflow: unknown subcommand '${sub}'`);
-    printWorkflowHelp(error);
+    printWorkflowHelp(t, error);
     return 2;
   }
 
   const [type, ...typeArgs] = rest;
   if (!type || type === "-h" || type === "--help" || type === "help") {
-    printGenerateHelp(log);
+    printGenerateHelp(t, log);
     return type ? 0 : 2;
   }
 
@@ -91,7 +91,7 @@ export async function runWorkflow(
       return runGenerateCombinedWithTriage(typeArgs, options.io ?? {}, cwd);
     default:
       error(`workflow generate: unknown type '${type}'`);
-      printGenerateHelp(error);
+      printGenerateHelp(t, error);
       return 2;
   }
 }
@@ -99,5 +99,6 @@ export async function runWorkflow(
 export const workflowCommand: Command = {
   name: "workflow",
   summary: "Generate GitHub Actions workflows (generate <type>)",
+  summaryKey: "cli.summary.workflow",
   run: (args) => runWorkflow(args),
 };

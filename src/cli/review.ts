@@ -169,56 +169,8 @@ export const REVIEW_BATCH_DEFAULT_MAX_ITEMS = 10;
 export const REVIEW_BATCH_ALLOWED_STATUSES = ["researched"] as const;
 type ReviewBatchStatus = (typeof REVIEW_BATCH_ALLOWED_STATUSES)[number];
 
-function printHelp(log: (m: string) => void): void {
-  log("Usage:");
-  log("  radar review <research-id> [--agent <agent-id>] [--template <template-id>]");
-  log(
-    `  radar review --batch [--status <status>] [--max-items N] [--filter-tags <list>] [--agent <id>]`,
-  );
-  log("  radar review <research-id> --emit-payload [--agent <id>] [--template <id>]");
-  log("  radar review --commit <path>");
-  log("");
-  log("Arguments:");
-  log("  <research-id>         Research id (basename of research/<id>.md without .md)");
-  log("                        Omit with --batch — research files are discovered.");
-  log("");
-  log("Options:");
-  log(
-    "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
-  );
-  log("  --template <id>       Template id under templates/ (default: default)");
-  log("  --batch               Review every un-reviewed research file whose linked");
-  log("                        items match --status (and --filter-tags), respecting");
-  log("                        --max-items (default: REVIEW_BATCH_DEFAULT_MAX_ITEMS).");
-  log("  --status <status>     Batch-mode filter: researched (default).");
-  log("                        `researched → reviewed` is the only legal transition;");
-  log("                        other values are rejected.");
-  log(
-    `  --max-items N         Batch-mode hard-cap on processed reports (default: ${REVIEW_BATCH_DEFAULT_MAX_ITEMS}).`,
-  );
-  log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
-  log("                        each linked item's matchedKeywords (case-insensitive).");
-  log("  --emit-payload        Host-agent mode: print the review payload to");
-  log("                        stdout and DO NOT spawn an agent. The interactive host");
-  log("                        session reviews the research file in place itself, then");
-  log("                        finalizes with `radar review --commit <path>`.");
-  log("                        Interactive/opt-in only — CI/headless must use the");
-  log("                        default spawn path.");
-  log("  --commit <path>       Host-agent mode: validate an externally-");
-  log("                        reviewed report (under <cwd>/research/) against");
-  log("                        ResearchFrontmatterSchema, assert the host stamped");
-  log("                        reviewedAt / reviewedBy, and apply the researched →");
-  log("                        reviewed transition for the linked items.");
-  log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
-  log(
-    "  --quiet               Suppress phase markers and spinner; print only the completion line.",
-  );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
-  log("");
-  log("Appends a review block to research/<research-id>.md, stamps the");
-  log("frontmatter `reviewedAt` / `reviewedBy`, and transitions the linked");
-  log("items/<id>.yaml `status` from `researched` to `reviewed`. Both updates");
-  log("happen atomically — a partial failure rolls back the research file.");
+function printHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.review.help", { maxItems: REVIEW_BATCH_DEFAULT_MAX_ITEMS }));
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -756,7 +708,7 @@ export async function runReview(
     return 2;
   }
   if (parsed.help) {
-    printHelp(log);
+    printHelp(t, log);
     return 0;
   }
   // Host-agent commit (#254 / ADR-0019). Independent of agent / template
@@ -803,7 +755,7 @@ export async function runReview(
   }
   if (!parsed.researchId) {
     error("review: missing <research-id>");
-    printHelp(error);
+    printHelp(t, error);
     return 2;
   }
 
@@ -1130,5 +1082,6 @@ export async function runReview(
 export const reviewCommand: Command = {
   name: "review",
   summary: "Cross-review existing research reports using a different AI agent",
+  summaryKey: "cli.summary.review",
   run: (args) => runReview(args),
 };

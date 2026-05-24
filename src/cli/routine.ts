@@ -1,3 +1,5 @@
+import { createTranslator, type Translator } from "../i18n/index.js";
+import { parseLangFlag, resolveWorkspaceLocale } from "./_locale.js";
 import type { Command } from "./index.js";
 import { runFireRoutine } from "./routine/fire.js";
 import { runGeneratePipelineRoutine } from "./routine/generate-pipeline.js";
@@ -20,29 +22,12 @@ export interface RoutineCommandOptions {
   io?: RoutineIO;
 }
 
-function printRoutineHelp(log: (m: string) => void): void {
-  log("Usage: radar routine <subcommand> [...]");
-  log("");
-  log("Subcommands:");
-  log("  generate <type>  Generate a Claude Code Routine YAML (.claude/routines/)");
-  log("                   Types: watch | pipeline");
-  log("  fire <trig_id>   Trigger a registered routine from the outside (/fire API)");
-  log("");
-  log("Run `radar routine <subcommand> --help` for subcommand-specific options.");
+function printRoutineHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.routine.help"));
 }
 
-function printGenerateHelp(log: (m: string) => void): void {
-  log("Usage: radar routine generate <type> [options]");
-  log("");
-  log("Types:");
-  log(
-    "  watch     Periodic `radar watch run` self-session routine; commits items/state to a claude/* branch",
-  );
-  log(
-    "  pipeline  Full watch -> triage -> research -> review self-session routine, one item at a time",
-  );
-  log("");
-  log("Run `radar routine generate <type> --help` for type-specific options.");
+function printGenerateHelp(t: Translator, log: (m: string) => void): void {
+  log(t("cli.routine.generateHelp"));
 }
 
 /**
@@ -66,9 +51,23 @@ export async function runRoutine(
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const error = options.io?.error ?? ((m: string) => console.error(m));
 
+  // Resolve the dispatcher's own help locale from any `--lang` in argv (+ env +
+  // config). `parseLangFlag` only *reads* the flag; the full `args` are still
+  // forwarded verbatim to the per-type generate subcommands, which run their
+  // own `--lang` resolution (#315).
+  const langFlag = ((): string | undefined => {
+    try {
+      return parseLangFlag(args).flag;
+    } catch {
+      return undefined;
+    }
+  })();
+  const locale = await resolveWorkspaceLocale({ flag: langFlag, cwd, warn: error });
+  const t = createTranslator(locale);
+
   const [sub, ...rest] = args;
   if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
-    printRoutineHelp(log);
+    printRoutineHelp(t, log);
     return sub ? 0 : 2;
   }
 
@@ -78,13 +77,13 @@ export async function runRoutine(
 
   if (sub !== "generate") {
     error(`routine: unknown subcommand '${sub}'`);
-    printRoutineHelp(error);
+    printRoutineHelp(t, error);
     return 2;
   }
 
   const [type, ...typeArgs] = rest;
   if (!type || type === "-h" || type === "--help" || type === "help") {
-    printGenerateHelp(log);
+    printGenerateHelp(t, log);
     return type ? 0 : 2;
   }
 
@@ -95,7 +94,7 @@ export async function runRoutine(
       return runGeneratePipelineRoutine(typeArgs, options.io ?? {}, cwd);
     default:
       error(`routine generate: unknown type '${type}'`);
-      printGenerateHelp(error);
+      printGenerateHelp(t, error);
       return 2;
   }
 }
@@ -103,5 +102,6 @@ export async function runRoutine(
 export const routineCommand: Command = {
   name: "routine",
   summary: "Manage Claude Code Routines (generate <type> / fire <trig_id>)",
+  summaryKey: "cli.summary.routine",
   run: (args) => runRoutine(args),
 };
