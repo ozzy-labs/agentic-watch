@@ -40,6 +40,7 @@ FeedRadar プロジェクト**内部の**設計判断を記録する。OzzyLabs 
 | [0018](./0018-triage-extension.md) | LLM-based Triage Extension for Scheduled Workflows | Accepted |
 | [0019](./0019-host-agent-execution-mode.md) | Host-agent (in-session) Research Execution Mode | Accepted |
 | [0020](./0020-claude-routines-generation.md) | Claude Routines Generation (自セッション完結・spawn しない原則) | Accepted |
+| [0021](./0021-i18n-strategy.md) | i18n Strategy (en/ja・locale 解決・英語正本プロンプト・user-facing 限定) | Accepted |
 
 ## 新規 ADR の追加
 
