@@ -290,5 +290,6 @@ CLI 側で `--agent` 指定時に必要な secrets 名を `radar workflow genera
   - [ADR-0004 Schedule Strategy](./0004-schedule-strategy.md) (本 ADR の起点。`init --with-actions` の責務を保ったまま `workflow generate` で拡張)
   - [ADR-0001 Agent Adapter Interface](./0001-agent-adapter-interface.md) (`--agent` 切替で agent CLI 経路に乗る)
   - [ADR-0012 JSON API Adapter and Recipe Bundling Strategy](./0012-json-api-adapter-and-recipe-strategy.md) (D7 で `--backfill` 連動を範囲外とする理由 / Future F1 の recipe 統合)
+  - [ADR-0020 Claude Routines Generation](./0020-claude-routines-generation.md) (本 ADR の GHA = spawn + API キー方式に対し、routine = 自セッション完結を carve-out。件数上限を literal 化で担保する思想を継承)
 - knowledge:
   - [`ai/practice/scheduled-tasks`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/scheduled-tasks.md) (scheduler 比較、ADR-0004 から継承)

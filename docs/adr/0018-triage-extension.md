@@ -245,6 +245,8 @@ epic 起票時の仮置き案。`triaged_research` / `triaged_digest` / `triaged
   - PR-4 ([#241](https://github.com/ozzy-labs/feedradar/issues/241)): `workflow generate combined-with-triage` + bundled recipe `triagePolicy:` + docs
   - PR-5 ([#242](https://github.com/ozzy-labs/feedradar/issues/242), optional): `radar triage stats` + eval loop guide
   - PR-6 ([#243](https://github.com/ozzy-labs/feedradar/issues/243), optional): `triage-smoke` weekly integration test
+- 関連 ADR:
+  - [ADR-0020 Claude Routines Generation](./0020-claude-routines-generation.md) — `radar triage --max-items` を routine の件数上限担保に利用。triage 自セッション入口（`--emit-payload` / `--commit`）の payload は per-item `TriageDecision` を書く別形で、`<policy>` boundary を含む
 - 関連 docs:
   - [`docs/user-guide.md`](../user-guide.md) — PR-4 で triage workflow セクション追加予定
   - [`docs/architecture.md`](../architecture.md) — PR-1 で state machine 図更新予定

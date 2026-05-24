@@ -149,6 +149,7 @@ prepare と commit を 1 call にまとめ、radar が payload を出した後�
   - [ADR-0008 Item Status State Machine](./0008-status-state-machine.md) — `detected → researched` 遷移を host commit でも CLI が一元担保、`researching` ロック status は追加しない
   - [ADR-0009 Untrusted External Content Handling](./0009-untrusted-external-content-handling.md) — M1c boundary marker を `--emit-payload` payload に含め、M2a / M2b / M3b guidance を host 実行時にも適用。host / spawn の blast radius 差が本 ADR §Consequences の根拠
   - [ADR-0018 LLM-based Triage Extension](./0018-triage-extension.md) — triage は per-item `TriageDecision` を書く別形のため payload/commit 契約が別物 (host 化は優先度低)
+  - [ADR-0020 Claude Routines Generation](./0020-claude-routines-generation.md) — 本 ADR の「対話専用・headless 無効」制約を routine 向けに carve-out。routine は使い捨て VM・fresh clone・standing approval 無し・connector/network 最小化で blast radius を抑え、自セッション処理を解禁する
 - 関連 docs:
   - [`docs/user-guide.md`](../user-guide.md) — §クロスエージェント運用 近傍に host-agent モードのサブセクション
   - [`docs/design/skill-design.md`](../design/skill-design.md) — Invocation modes 2 → 3 モード化、§9 open questions に review/update/triage 展開方針
