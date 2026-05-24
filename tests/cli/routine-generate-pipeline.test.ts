@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildOutputGateConstraint,
+  buildPipelineLandingStep,
   generatePipelineRoutine,
   PIPELINE_DEFAULT_MAX_ITEMS,
   parseGeneratePipelineRoutineArgs,
@@ -37,6 +39,10 @@ describe("cli/routine/generate-pipeline", () => {
         model: "claude-opus-4-7",
         maxItems: 7,
         networkAccessBlock: "  network_access: custom",
+        landingStep: "  6. land",
+        outputGateConstraint: "  - gate",
+        outputGateNote: "  note",
+        allowUnrestrictedGitPush: false,
       });
       expect(out).toContain("name: my-pipe");
       expect(out).toContain("repo: acme/widgets");
@@ -58,6 +64,7 @@ describe("cli/routine/generate-pipeline", () => {
       expect(parsed.timezone).toBe("UTC");
       expect(parsed.model).toBe("claude-sonnet-4-6");
       expect(parsed.maxItems).toBe(PIPELINE_DEFAULT_MAX_ITEMS);
+      expect(parsed.outputMode).toBe("pr");
       expect(parsed.output).toBe(join(".claude", "routines", "feedradar-pipeline.yaml"));
       expect(parsed.force).toBe(false);
     });
@@ -118,6 +125,43 @@ describe("cli/routine/generate-pipeline", () => {
         expect(parseGeneratePipelineRoutineArgs(["--model", m]).model).toBe(m as SupportedModel);
       }
     });
+
+    it("accepts --output-mode auto-merge and rejects an unknown mode", () => {
+      expect(parseGeneratePipelineRoutineArgs(["--output-mode", "auto-merge"]).outputMode).toBe(
+        "auto-merge",
+      );
+      expect(parseGeneratePipelineRoutineArgs(["--output-mode", "pr"]).outputMode).toBe("pr");
+      expect(() => parseGeneratePipelineRoutineArgs(["--output-mode", "direct-commit"])).toThrow(
+        /--output-mode expects one of: pr \| auto-merge/,
+      );
+      expect(() => parseGeneratePipelineRoutineArgs(["--output-mode"])).toThrow(/requires a value/);
+    });
+  });
+
+  describe("buildPipelineLandingStep / buildOutputGateConstraint", () => {
+    it("pr mode opens a PR and does NOT auto-merge", () => {
+      const step = buildPipelineLandingStep("pr");
+      expect(step).toContain("gh pr create --fill --base main");
+      expect(step).not.toContain("gh pr merge");
+      expect(step).not.toContain("git switch main");
+      const constraint = buildOutputGateConstraint("pr");
+      expect(constraint).toContain("Do NOT push to `main` directly");
+      expect(constraint).toContain("no auto-merge");
+    });
+
+    it("auto-merge mode squash-merges the routine's own PR", () => {
+      const step = buildPipelineLandingStep("auto-merge");
+      expect(step).toContain("gh pr create --fill --base main");
+      expect(step).toContain("git switch main");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell var in the asserted YAML string
+      expect(step).toContain('gh pr merge "${BRANCH}" --squash --delete-branch');
+      // Immediate --squash, never `gh pr merge --auto` (which never merges on a
+      // check-less repo). Assert the merge command itself carries no --auto flag.
+      expect(step).not.toMatch(/gh pr merge[^\n]*--auto/);
+      const constraint = buildOutputGateConstraint("auto-merge");
+      expect(constraint).toContain("Auto-merge is intentional here");
+      expect(constraint).toContain("review-complete");
+    });
   });
 
   describe("generatePipelineRoutine (file emission)", () => {
@@ -148,6 +192,7 @@ describe("cli/routine/generate-pipeline", () => {
         timezone: "UTC",
         model: "claude-sonnet-4-6",
         maxItems: 10,
+        outputMode: "pr",
         output: ".claude/routines/feedradar-pipeline.yaml",
         force: false,
         templatesRoot: BUNDLED_TEMPLATES_ROOT,
@@ -222,6 +267,51 @@ describe("cli/routine/generate-pipeline", () => {
       // The review loop cap mirrors the research cap via `head -n {{maxItems}}`.
       expect(written).toContain("head -n 3");
       expect(written).not.toContain("--max-items 10");
+    });
+
+    it("pr mode (default) emits the no-auto-merge output gate and does NOT auto-merge", async () => {
+      await run();
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("allow_unrestricted_git_push: false");
+      expect(written).toContain("Do NOT push to `main` directly");
+      expect(written).not.toContain("gh pr merge");
+      expect(written).not.toContain("git switch main");
+      // No auto-merge warning in pr mode.
+      expect(warnings.some((w) => /auto-merge/.test(w))).toBe(false);
+    });
+
+    it("auto-merge mode bakes in the squash-merge, flips the gate, and sets the push permission", async () => {
+      await run({ outputMode: "auto-merge" });
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("allow_unrestricted_git_push: true");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell var in the asserted YAML string
+      expect(written).toContain('gh pr merge "${BRANCH}" --squash --delete-branch');
+      expect(written).toContain("git switch main");
+      // The inverted hard constraint replaces the no-auto-merge bullet.
+      expect(written).toContain("Auto-merge is intentional here");
+      expect(written).not.toContain("Do NOT push to `main` directly");
+      // Still opens a PR first (auto-merge is not direct-commit).
+      expect(written).toContain("gh pr create --fill --base main");
+      expect(written).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+    });
+
+    it("warns on stderr in auto-merge mode about the Web UI toggle requirement", async () => {
+      await run({ outputMode: "auto-merge" });
+      const joined = warnings.join("\n");
+      expect(joined).toContain("Allow unrestricted branch pushes");
+      expect(joined).toMatch(/NECESSARY/i);
+    });
+
+    it("rejects an unknown --output-mode at the core level", async () => {
+      await expect(run({ outputMode: "direct-commit" as unknown as "pr" })).rejects.toThrow(
+        /invalid --output-mode/,
+      );
     });
 
     it("rejects sub-hourly cron with a 1-hour-minimum message", async () => {
@@ -348,6 +438,30 @@ describe("cli/routine/generate-pipeline", () => {
       expect(written).toContain("--limit 4");
     });
 
+    it("dispatches `generate pipeline --output-mode auto-merge` end-to-end", async () => {
+      const code = await runRoutine(
+        ["generate", "pipeline", "--repo", "acme/widgets", "--output-mode", "auto-merge"],
+        { cwd: workdir, io: io() },
+      );
+      expect(code, `stderr: ${errors.join("\n")}`).toBe(0);
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("allow_unrestricted_git_push: true");
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell var in the asserted YAML string
+      expect(written).toContain('gh pr merge "${BRANCH}" --squash --delete-branch');
+    });
+
+    it("surfaces an unknown --output-mode through the dispatcher (exit 2)", async () => {
+      const code = await runRoutine(["generate", "pipeline", "--output-mode", "direct-commit"], {
+        cwd: workdir,
+        io: io(),
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("--output-mode expects one of: pr | auto-merge");
+    });
+
     it("surfaces sub-hourly cron rejection through the dispatcher (exit 1)", async () => {
       const code = await runRoutine(["generate", "pipeline", "--cron", "*/10 * * * *"], {
         cwd: workdir,
@@ -369,7 +483,10 @@ describe("cli/routine/generate-pipeline", () => {
     it("supports `generate pipeline --help` (exit 0)", async () => {
       const code = await runRoutine(["generate", "pipeline", "--help"], { cwd: workdir, io: io() });
       expect(code).toBe(0);
-      expect(logs.join("\n")).toContain("routine generate pipeline");
+      const joined = logs.join("\n");
+      expect(joined).toContain("routine generate pipeline");
+      expect(joined).toContain("--output-mode <mode>");
+      expect(joined).toContain("pr | auto-merge");
     });
   });
 });

@@ -16,8 +16,10 @@
 # `radar items --limit {{maxItems}}` bound how much one run can process, so a
 # prompt-injection cannot lift the cap.
 #
-# Placeholders below are substituted by `generate-pipeline.ts` from CLI flags:
-#   {{name}}  {{repository}}  {{cron}}  {{timezone}}  {{model}}  {{maxItems}}
+# Placeholders below are substituted by `generate-pipeline.ts` from CLI flags
+# (name / repository / cron / timezone / model / maxItems). The --output-mode
+# flag (pr default vs auto-merge) additionally drives the step-6 landing block,
+# the output-gate constraint / note, and allow_unrestricted_git_push.
 # The network_access block is also computed by the generator from the
 # workspace's sources/*.yaml hosts (Custom allowlist — ADR-0020 D3c /
 # ADR-0009 D5b).
@@ -27,9 +29,7 @@ notes: |
   Full self-session pipeline for {{repository}} — watch -> triage -> research
   -> review, processing at most {{maxItems}} item(s) per run, one at a time.
 
-  Output is committed to a `claude/*` branch / PR only (never main directly;
-  ADR-0020 D3a). Single Claude session, no spawn (D2): the cross-agent review
-  of the GHA pipeline is NOT present here.
+{{outputGateNote}}
 
   Do NOT point this routine and a GitHub Actions pipeline workflow at the same
   branch / workspace — routines have no `concurrency:` group (ADR-0020 D7).
@@ -134,19 +134,7 @@ instructions: |
      done
      ```
 
-  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`
-     branch and open a pull request (do NOT push to `main`):
-
-     ```bash
-     if ! git diff --quiet items/ state/ research/; then
-       BRANCH="claude/pipeline/$(date -u +%Y%m%d-%H%M)"
-       git switch -c "${BRANCH}"
-       git add items/ state/ research/
-       git commit -m "chore(pipeline): triage/research/review $(date -u +%Y-%m-%d)"
-       git push -u origin "${BRANCH}"
-       gh pr create --fill --base main --head "${BRANCH}" || true
-     fi
-     ```
+{{landingStep}}
 
   7. Report how many items were detected, triaged, researched, and reviewed,
      and whether a PR was opened.
@@ -156,8 +144,7 @@ instructions: |
   - Do NOT use `AskUserQuestion` — the run is autonomous.
   - Do NOT call MCP servers (`knowledge`, `context7`); they are not configured
     in the cloud environment.
-  - Do NOT push to `main` directly. Always use a `claude/pipeline/...` branch
-    and a PR (ADR-0020 D3a output gate; no auto-merge).
+{{outputGateConstraint}}
   - Do NOT amend or force-push.
   - Do NOT spawn other AI agents — complete every step (triage / research /
     review) in this one Claude session (ADR-0020 D2). Use the self-session
@@ -227,5 +214,9 @@ behavior:
 
 # Web UI: Permissions
 permissions:
-  # Keep false: routine output is gated to `claude/*` / PR only (ADR-0020 D3a).
-  allow_unrestricted_git_push: false
+  # false: routine output is gated to `claude/*` / PR only (ADR-0020 D3a).
+  # `--output-mode auto-merge` flips this to true so the routine can squash-merge
+  # its own PR to main. NOTE: this field is NECESSARY but NOT SUFFICIENT — the
+  # Web UI 'Allow unrestricted branch pushes' toggle must ALSO be ON (the
+  # RemoteTrigger API does not accept this field).
+  allow_unrestricted_git_push: {{allowUnrestrictedGitPush}}

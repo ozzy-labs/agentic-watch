@@ -2853,7 +2853,10 @@ radar routine generate <type> [options]
 | `--output <path>` | `.claude/routines/<name>.yaml` | 出力先 |
 | `--force` / `-f` | — | 既存ファイルを上書き |
 
-`pipeline` のみ追加で `--max-items N`（既定 `10`）を持つ。これが triage の `--max-items` と items の `--limit` を一括で駆動する（前述「[件数上限](#件数上限暴走防止)」）。
+`pipeline` のみ追加で次の 2 つを持つ:
+
+- `--max-items N`（既定 `10`）: triage の `--max-items` と items の `--limit` を一括で駆動する（前述「[件数上限](#件数上限暴走防止)」）。
+- `--output-mode pr | auto-merge`（既定 `pr`）: 着地モード。既定の `pr` は `claude/pipeline/...` ブランチ＋PR を開いて止まる（人間が review・merge する。ADR-0020 D3a の安全既定）。**`auto-merge`** は同じ PR を開いた後に `gh pr merge --squash` で **自分の PR を main に squash-merge** する opt-in モード（GHA の [`--output-mode direct-commit`](#--output-mode-pr--direct-commit) と対称だが、`direct-commit` が PR を介さず main へ直 push するのに対し、こちらは必ず PR を経由するため名前を分ける）。pipeline は step 5 で `radar review` 済みなので review-complete な PR の前提を満たす。`auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは**必要だが不十分**で、Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けない）。無人 AI 出力が無レビューで default ブランチに着地する点に留意（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a-1 / [#301](https://github.com/ozzy-labs/feedradar/issues/301)）。
 
 ```bash
 # watch routine を毎時で生成
@@ -2864,6 +2867,12 @@ radar routine generate pipeline \
   --repo myorg/feeds \
   --cron "0 */6 * * *" \
   --max-items 5
+
+# 同上を auto-merge で（自 PR を main に squash-merge。Web UI トグルも要 ON）
+radar routine generate pipeline \
+  --repo myorg/feeds \
+  --cron "0 */6 * * *" \
+  --output-mode auto-merge
 ```
 
 ### 適用手順（生成 → Web UI 反映 → 起動）
@@ -2893,7 +2902,8 @@ routine には設定を宣言的に流し込む公開 API が無い（GET も無
 |---|---|
 | `Error: cron expression invalid` / sub-hourly が拒否される | routine の最小実行間隔は 1 時間。`*/5 * * * *` のような分単位 cron は生成時に拒否される。`"0 * * * *"`（毎時）以上の粒度で指定する |
 | 生成 YAML を Web UI に貼ったが反映されない | `.claude/routines/*.yaml` は **自動同期されない**（正本はリポ、適用は手作業）。Web UI の各欄に手で貼り直す。複数行は `yq -r '.<field>'` で抽出する |
-| routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。出力ゲートで `claude/*` ブランチか PR に限定されている（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a）。main 反映は人間が PR をレビュー・マージする |
+| routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。既定の出力ゲートで `claude/*` ブランチか PR に限定されている（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a）。main 反映は人間が PR をレビュー・マージする。無人で main に着地させたい場合は `radar routine generate pipeline --output-mode auto-merge` で opt-in する（自 PR を squash-merge。前述「[共通オプション](#共通オプション)」の `--output-mode`） |
+| `--output-mode auto-merge` の routine が main に着地しない / push が拒否される | `permissions.allow_unrestricted_git_push: true` だけでは不十分。Web UI の「Allow unrestricted branch pushes」トグルも ON にする（RemoteTrigger API は当該フィールドを受け付けないため、YAML だけでは有効化できない）。生成時の stderr 警告も参照 |
 | 2 つの routine（または routine ＋ GHA）が同じ branch で commit を競合 | 同一 workspace への二重起動。前述「[並行実行の運用注意](#並行実行の運用注意)」のとおり 1 workspace = 1 系統に絞るか、cron 時刻をずらす |
 | `pipeline` で件数が多くて 1 回で処理しきれない | 仕様（自セッション処理は 1 件ずつ・`--max-items` で総量を絞る）。超過分は次回 cron に持ち越す。早く捌きたいなら cadence を上げる（ただし最小 1 時間） |
 | クラウド側で `knowledge` / `context7` が見つからない | ローカル MCP はクラウド VM に存在しない。routine の instructions は MCP 非依存で self-contained に書く（生成テンプレは既にそうなっている） |
