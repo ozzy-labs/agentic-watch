@@ -7,8 +7,8 @@ argument-hint: <item-id> [<item-id> ...] | --batch [--status <status>] [--filter
 # dismiss
 
 Transition workspace items' `status` to `dismissed`, indicating the user has
-decided not to research them. Valid only from `detected` or `triaged_unsure`
-(ADR-0008 / ADR-0018): items already in `researched` / `reviewed` /
+decided not to research them. Valid only from `detected` or `triaged_unsure`:
+items already in `researched` / `reviewed` /
 `dismissed` / `triaged_research` / `triaged_digest` cannot be dismissed.
 
 Supports one id, multiple ids (`radar dismiss a b c`), or `--batch` selection
@@ -40,8 +40,8 @@ No agent invocation is involved — the CLI just rewrites the
 
 ## Notes
 
-- A dismissed item can be re-opened with `radar undismiss <item-id> [--force]`
-  (ADR-0018 §W6): triage-origin dismisses revert silently, human-origin ones
+- A dismissed item can be re-opened with `radar undismiss <item-id> [--force]`:
+  triage-origin dismisses revert silently, human-origin ones
   require `--force`.
 - For multiple ids the call is all-or-nothing: if any id is missing or in a
   non-dismissible status, nothing is written.

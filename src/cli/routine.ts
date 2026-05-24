@@ -36,10 +36,10 @@ function printGenerateHelp(log: (m: string) => void): void {
   log("");
   log("Types:");
   log(
-    "  watch     Periodic `radar watch run` self-session routine; commits items/state to a claude/* branch (ADR-0020 D5)",
+    "  watch     Periodic `radar watch run` self-session routine; commits items/state to a claude/* branch",
   );
   log(
-    "  pipeline  Full watch -> triage -> research -> review self-session routine, one item at a time (ADR-0020 D5)",
+    "  pipeline  Full watch -> triage -> research -> review self-session routine, one item at a time",
   );
   log("");
   log("Run `radar routine generate <type> --help` for type-specific options.");

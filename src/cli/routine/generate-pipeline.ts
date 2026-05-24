@@ -138,12 +138,12 @@ export function buildOutputGateConstraint(mode: OutputMode): string {
     return [
       "  - Auto-merge is intentional here: this routine opens a `claude/pipeline/...`",
       "    PR then squash-merges it to `main`. The step-5 review makes the PR",
-      "    review-complete (ADR-0020 D3a opt-in auto-merge).",
+      "    review-complete.",
     ].join("\n");
   }
   return [
     "  - Do NOT push to `main` directly. Always use a `claude/pipeline/...` branch",
-    "    and a PR (ADR-0020 D3a output gate; no auto-merge).",
+    "    and a PR (output gate; no auto-merge).",
   ].join("\n");
 }
 
@@ -155,14 +155,14 @@ export function buildOutputGateNote(mode: OutputMode): string {
   if (mode === "auto-merge") {
     return [
       "  Output is committed to a `claude/*` branch / PR, then squash-merged to main",
-      "  (auto-merge is opt-in; the step-5 review makes the PR review-complete —",
-      "  ADR-0020 D3a). Single Claude session, no spawn (D2): the cross-agent review",
+      "  (auto-merge is opt-in; the step-5 review makes the PR review-complete).",
+      "  Single Claude session, no spawn: the cross-agent review",
       "  of the GHA pipeline is NOT present here.",
     ].join("\n");
   }
   return [
-    "  Output is committed to a `claude/*` branch / PR only (never main directly;",
-    "  ADR-0020 D3a). Single Claude session, no spawn (D2): the cross-agent review",
+    "  Output is committed to a `claude/*` branch / PR only (never main directly).",
+    "  Single Claude session, no spawn: the cross-agent review",
     "  of the GHA pipeline is NOT present here.",
   ].join("\n");
 }
@@ -367,19 +367,15 @@ export async function generatePipelineRoutine(
   log("auto-merge routine needs is set only via the Web UI 'Allow unrestricted branch");
   log("pushes' toggle — /schedule cannot configure it.");
   log("");
-  log("Single Claude session, no spawn (ADR-0020 D2): unlike the GHA combined-with-triage");
+  log("Single Claude session, no spawn: unlike the GHA combined-with-triage");
   log("workflow, there is NO cross-agent review here — one Claude does every step.");
-  log(
-    `Item caps are CLI-enforced (ADR-0020 D3e): triage --max-items ${maxItems} / items --limit ${maxItems}.`,
-  );
+  log(`Item caps are CLI-enforced: triage --max-items ${maxItems} / items --limit ${maxItems}.`);
   if (outputMode === "auto-merge") {
     log(
-      "Output gate (ADR-0020 D3a): this routine opens a claude/* PR then squash-merges it to main (review-complete via step 5).",
+      "Output gate: this routine opens a claude/* PR then squash-merges it to main (review-complete via step 5).",
     );
   } else {
-    log(
-      "Output gate (ADR-0020 D3a): this routine writes to a claude/* branch / PR only — never main directly.",
-    );
+    log("Output gate: this routine writes to a claude/* branch / PR only — never main directly.");
   }
 
   return { outputPath: destRel };
@@ -513,9 +509,9 @@ export function printGeneratePipelineRoutineHelp(log: (m: string) => void): void
   log("");
   log("Generates a Claude Code Routine YAML whose single session runs the FULL");
   log("pipeline — `radar watch run` -> triage -> research -> review — IN SEQUENCE,");
-  log("processing items ONE AT A TIME (ADR-0020 D5 `pipeline`). It does NOT spawn");
-  log("other agents (D2), so the cross-agent review of the GHA combined-with-triage");
-  log("workflow is NOT present. Per-run item count is bounded by CLI flags (D3e).");
+  log("processing items ONE AT A TIME. It does NOT spawn");
+  log("other agents, so the cross-agent review of the GHA combined-with-triage");
+  log("workflow is NOT present. Per-run item count is bounded by CLI flags.");
   log("");
   log("Options:");
   log('  --name <name>         Routine name (default: "feedradar-pipeline")');

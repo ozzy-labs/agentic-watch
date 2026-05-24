@@ -127,25 +127,25 @@ function printHelp(log: (m: string) => void): void {
     "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
   );
   log("  --template <id>       Template id under templates/ (default: default)");
-  log("  --emit-payload        Host-agent mode (ADR-0019): print the update payload to");
+  log("  --emit-payload        Host-agent mode: print the update payload to");
   log("                        stdout and DO NOT spawn an agent. The interactive host");
   log("                        session runs the SKILL procedure itself, then finalizes");
   log("                        with `radar update --commit <path>`. Interactive/opt-in");
   log("                        only — CI/headless must use the default spawn path.");
-  log("  --commit <path>       Host-agent mode (ADR-0019): validate an externally-written");
+  log("  --commit <path>       Host-agent mode: validate an externally-written");
   log("                        v+1 report (under <cwd>/research/) against ResearchFrontmatter-");
   log("                        Schema, assert the v+1 invariants against the `supersedes`");
-  log("                        predecessor, and leave items.yaml untouched (ADR-0008).");
+  log("                        predecessor, and leave items.yaml untouched.");
   log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
   );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
   log("");
   log("Generates research/<base>_v<n+1>.md from the supplied predecessor id,");
   log("writing `supersedes: <prev id>` into the new file's frontmatter. The");
-  log("predecessor file is never modified (immutable history, ADR-0003), and");
-  log("the linked items/<id>.yaml `status` is left untouched (ADR-0008).");
+  log("predecessor file is never modified (immutable history), and");
+  log("the linked items/<id>.yaml `status` is left untouched.");
 }
 
 async function pathExists(p: string): Promise<boolean> {
@@ -184,7 +184,7 @@ function resolveResearchPath(cwd: string, researchId: string): { id: string; pat
 function parseResearchId(id: string): { base: string; version: number } {
   const match = id.match(/^(.+)_v(\d+)$/);
   if (!match) {
-    throw new Error(`invalid research id '${id}': expected <base>_v<N> (ADR-0003 filename format)`);
+    throw new Error(`invalid research id '${id}': expected <base>_v<N> filename format`);
   }
   const version = Number.parseInt(match[2], 10);
   if (!Number.isFinite(version) || version < 1) {
@@ -521,12 +521,12 @@ async function finalizeUpdate(params: {
   if (linkedItems !== undefined && linkedItems.length > 0) {
     progress.phase(
       `Status: ${linkedItems[0].status} → ${linkedItems[0].status}`,
-      "items.yaml unchanged per ADR-0008",
+      "items.yaml unchanged",
     );
   }
 
   log(`update: wrote ${outputPath}`);
-  log(`update: supersedes ${prevFm.id} (items.yaml status unchanged per ADR-0008)`);
+  log(`update: supersedes ${prevFm.id} (items.yaml status unchanged)`);
   return 0;
 }
 

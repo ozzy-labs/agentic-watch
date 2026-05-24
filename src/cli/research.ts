@@ -209,17 +209,17 @@ function printHelp(log: (m: string) => void): void {
     "  --agent <agent-id>    claude-code | codex-cli | gemini-cli | copilot (default: claude-code)",
   );
   log("  --template <id>       Template id under templates/ (default: default; digest: digest)");
-  log("  --digest              Bundle multiple items into a single digest report (ADR-0011)");
-  log("  --triage-group <group> Digest-mode slug source (ADR-0018 §W-H): name the digest");
+  log("  --digest              Bundle multiple items into a single digest report");
+  log("  --triage-group <group> Digest-mode slug source: name the digest");
   log("                        file after this triage.group instead of the matchedKeywords");
   log("                        frequency. Required to keep per-group digests unique on the");
   log("                        same day when a single-keyword source emits multiple groups");
   log("                        (#255). Falls back to the matchedKeywords slug when omitted.");
   log("  --batch               Research every item matching --status (and --filter-tags)");
-  log("                        respecting the --max-items hard-cap (ADR-0014 D3a).");
+  log("                        respecting the --max-items hard-cap.");
   log("  --status <status>     Batch-mode filter: detected | triaged_research");
   log("                        (default: detected). `triaged_research` consumes items");
-  log("                        the triage adapter promoted (ADR-0018 §W-B) and");
+  log("                        the triage adapter promoted and");
   log("                        transitions them to `researched` on success.");
   log(
     `  --max-items N         Batch-mode hard-cap on processed items (default: ${RESEARCH_BATCH_DEFAULT_MAX_ITEMS}).`,
@@ -228,23 +228,23 @@ function printHelp(log: (m: string) => void): void {
   log("                        detection cannot blow the cap from inside a workflow.");
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each item's matchedKeywords (case-insensitive). Default: all.");
-  log("  --emit-payload        Host-agent mode (ADR-0019): print the research payload to");
+  log("  --emit-payload        Host-agent mode: print the research payload to");
   log("                        stdout and DO NOT spawn an agent. The interactive host");
   log("                        session runs the SKILL procedure itself, then finalizes");
   log("                        with `radar research --commit <path>`. Interactive/opt-in");
   log("                        only — CI/headless must use the default spawn path.");
-  log("  --commit <path>       Host-agent mode (ADR-0019): validate an externally-written");
+  log("  --commit <path>       Host-agent mode: validate an externally-written");
   log("                        report (under <cwd>/research/) against ResearchFrontmatter-");
   log("                        Schema and apply the detected → researched transition.");
   log("  --verbose             Stream the agent CLI's stdout/stderr in addition to phase markers.");
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
   );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
   log("");
   log("Output:");
-  log("  single-item:  research/<YYYYMMDD>_<slug>_v1.md (ADR-0003)");
-  log("  digest:       research/<YYYYMMDD>_digest_<slug>_v1.md (ADR-0011)");
+  log("  single-item:  research/<YYYYMMDD>_<slug>_v1.md");
+  log("  digest:       research/<YYYYMMDD>_digest_<slug>_v1.md");
   log("  batch:        one single-item report per matched item (no digest aggregation).");
 }
 

@@ -24,7 +24,7 @@ radar watch run
 # (c) あとは AI エージェントに頼む (次セクション)
 ```
 
-`source add` と `watch run` は scheduler 連携を想定して CLI のままです。`--with-actions` / `--with-routines` を付けて init すれば、GitHub Actions / Claude Routines で定期実行する雛形が出ます。後から workflow を追加 / cadence 切替 / watch + 自動 research の連鎖が必要になったら `radar workflow generate watch | combined` で後追い生成できます ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md))。
+`source add` と `watch run` は scheduler 連携を想定して CLI のままです。`--with-actions` / `--with-routines` を付けて init すれば、GitHub Actions / Claude Routines で定期実行する雛形が出ます。後から workflow を追加 / cadence 切替 / watch + 自動 research の連鎖が必要になったら `radar workflow generate watch | combined` で後追い生成できます。
 
 ## 主要操作: エージェントに頼む
 
@@ -112,25 +112,25 @@ slash で直接呼ぶなら:
 
 ```bash
 radar source add <id> --kind <rss|html|html-js|github-releases|npm-registry|json-feed|json-api> --url <url> [options]
-radar source add <id> --recipe <name> [--keywords ... --tags ... --name ...]  # バンドル recipe で 1 行追加 (ADR-0012)
+radar source add <id> --recipe <name> [--keywords ... --tags ... --name ...]  # バンドル recipe で 1 行追加
 radar source list
 radar source recipes                                  # バンドル recipe を一覧表示
 radar source test <id> [--limit N] [--show-content]
 radar source remove <id>
 radar watch run [--source <id>] [--bootstrap | --backfill [--max-pages N]] [-v|--verbose | -q|--quiet]
-radar research <item-id> --agent <agent> [--verbose | --quiet]    # 進捗表示・stdout pass-through は --verbose で有効化 (ADR-0015)
-radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 item を 1 digest にまとめる (ADR-0011)
+radar research <item-id> --agent <agent> [--verbose | --quiet]    # 進捗表示・stdout pass-through は --verbose で有効化
+radar research --digest <item-id> <item-id> ... [--agent <agent>]   # 複数 item を 1 digest にまとめる
 radar review <research-id> --agent <agent> [--verbose | --quiet]
 radar update <research-id> --agent <agent> [--verbose | --quiet]
 radar dismiss <item-id>
-radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>] [--verbose | --quiet]  # detected を一括 research (ADR-0014)
-radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]            # GitHub Actions watch 雛形を後追い生成 (ADR-0014)
-radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]   # watch + 自動 research を --max-items ハードキャップ付きで生成 (ADR-0014)
+radar research --batch [--max-items N] [--filter-tags <list>] [--agent <agent>] [--verbose | --quiet]  # detected を一括 research
+radar workflow generate watch [--cron "<expr>"] [--agent <agent>] [--output <path>]            # GitHub Actions watch 雛形を後追い生成
+radar workflow generate combined [--watch-cron "<expr>"] [--max-items N] [--filter-tags <list>] [--agent <agent>] [--output <path>]   # watch + 自動 research を --max-items ハードキャップ付きで生成
 ```
 
-JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` を YAML に書く（[ADR-0012](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0012-json-api-adapter-and-recipe-strategy.md)）。JSON Feed 1.0 / 1.1 標準に準拠したサイトは URL だけで動く zero-config kind (`kind: json-feed`)。過去の全件取り込みは `radar watch run --backfill` を使う (kind: json-api / github-releases / npm-registry 対応)。
+JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` を YAML に書く。JSON Feed 1.0 / 1.1 標準に準拠したサイトは URL だけで動く zero-config kind (`kind: json-feed`)。過去の全件取り込みは `radar watch run --backfill` を使う (kind: json-api / github-releases / npm-registry 対応)。
 
-長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を表示します（[ADR-0015](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0015-progress-reporting-ux.md)）。挙動切替は env > flag > TTY auto-detect の優先順:
+長時間実行コマンド (`research` / `review` / `update` / `watch run --backfill` / html-js fetch / `source test`) は stderr に phase markers + spinner + 副次メトリクス (`stdout` / `output` / `page x/N`) を表示します。挙動切替は env > flag > TTY auto-detect の優先順:
 
 - `--verbose`（または `-v`）: agent CLI / Playwright の stdout/stderr を pass-through。デバッグや「フリーズに見える」ときの第一手
 - `--quiet`（または `-q`）: reporter を完全に黙らせ、CLI の従来 1 行ログだけ残す
@@ -138,7 +138,7 @@ JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` �
 
 詳細・トラブルシュート（`Agent running [mm:ss]` で動いていないように見える時の対処等）は [docs/user-guide.md → 進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet) を参照。
 
-定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` ([ADR-0014](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0014-workflow-generate-and-auto-research-safety.md)) を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
+定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
 
 ## このディレクトリのレイアウト
 
@@ -162,14 +162,14 @@ JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` �
 `sources/` `items/` `state/` `research/` `templates/` は git にコミットすることを推奨します。理由:
 
 - 定期実行 scheduler (Claude Routines / GitHub Actions) は実行ごとに fresh clone するため、`state/*.yaml` の `lastSeenIds` が引き継がれないと毎回全件再検出してしまう
-- `research/` を git で管理すると過去レポートの履歴・差分が追える ([ADR-0003](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0003-output-format-and-versioning.md))
+- `research/` を git で管理すると過去レポートの履歴・差分が追える
 - `items/` の status 遷移 (`detected → researched → reviewed`) も git 履歴に残る
 
 `init` は `sources/` `items/` `state/` `research/` に `.gitkeep` を配置するため、`git add .` でディレクトリ構造を保てます。
 
 ## セキュリティ警告
 
-FeedRadar が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) は **untrusted** として扱われます ([ADR-0009](https://github.com/ozzy-labs/feedradar/blob/main/docs/adr/0009-untrusted-external-content-handling.md))。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
+FeedRadar が fetch する外部 feed (RSS / HTML / HTML (JS rendered, `kind: html-js`) / GitHub Releases / npm registry / JSON Feed / JSON API) は **untrusted** として扱われます。攻撃者が feed 内容に prompt injection を仕込む可能性があるため:
 
 - 信頼できる公式 source のみ登録するのが第一の防御線
 - `sources/<id>.yaml` の `trustLevel: trusted` で個別 opt-in 可 (既定 `untrusted`)

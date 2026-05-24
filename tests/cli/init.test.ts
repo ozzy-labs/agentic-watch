@@ -250,12 +250,14 @@ describe("cli/init", () => {
       expect(await pathExists(dest)).toBe(true);
       const body = await readFile(dest, "utf8");
       // Sanity: scaffold is the bundled YAML template (Web-UI 1:1 fields,
-      // ADR-0004 link, no MD frontmatter). #281 migrated this from the old
+      // no MD frontmatter). #281 migrated this from the old
       // `claude/routines/watch-daily.md` MD scaffold.
       expect(body).not.toMatch(/^---/);
       expect(body).toMatch(/^name: watch-daily$/m);
       expect(body).toMatch(/cron: "0 0 \* \* \*"/);
-      expect(body).toContain("ADR-0004");
+      expect(body).toContain(
+        "Claude Code Routine scaffold emitted by `radar init --with-routines`",
+      );
       expect(result.copiedFiles).toContain(".claude/routines/watch-daily.yaml");
     });
 
@@ -1063,10 +1065,10 @@ describe("cli/init", () => {
       expect(body).toContain("## 差分");
       expect(body).toContain("## 推奨アクション");
       expect(body).toContain("## 出典");
-      // ADR-0009 boundary marker (M1c) editorial guidance must be present
+      // Untrusted-content boundary editorial guidance must be present
       // so users editing this template understand the untrusted-content
       // contract enforced by the prompt builder at runtime.
-      expect(body).toContain("ADR-0009");
+      expect(body).toContain("Untrusted content boundary");
       expect(body).toContain("untrusted_item");
     });
   });

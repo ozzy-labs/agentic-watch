@@ -139,7 +139,7 @@ function printWatchHelp(log: (m: string) => void): void {
   log("                    Supported fully by kind: json-api / github-releases / npm-registry.");
   log("                    Other kinds (rss / html / html-js) only return their current page.");
   log("  --max-pages N     Override pagination.maxPages cap (requires --backfill).");
-  log("                    Applies to INNER pagination only — facet sweep (ADR-0017)");
+  log("                    Applies to INNER pagination only — facet sweep");
   log("                    always walks every facet value regardless of this flag.");
   log("  -v, --verbose     Enable progress-reporter raw() pass-through (adapter stdout).");
   log("  -q, --quiet       Suppress the per-source progress reporter (legacy 1-line log");

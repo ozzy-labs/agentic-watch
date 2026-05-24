@@ -93,8 +93,8 @@ export function renderNetworkAccessBlock(hosts: string[]): string {
     "  #   Trusted (Default): only a curated host allowlist; ANY other host gets",
     "  #     403 (x-deny-reason: host_not_allowed) — so it CANNOT fetch arbitrary feeds.",
     "  #   Custom: you supply the allowlist — use this, scoped to your subscribed feeds.",
-    "  #   Full: unrestricted egress — NOT used (ADR-0020 D3c / ADR-0009 D5b limit",
-    "  #     outbound to sources/*.yaml hosts; never open the routine to any host).",
+    "  #   Full: unrestricted egress — NOT used (outbound is limited to",
+    "  #     sources/*.yaml hosts; never open the routine to any host).",
   ];
   if (hosts.length > 0) {
     lines.push(
@@ -365,9 +365,7 @@ export async function generateWatchRoutine(
   log("auto-merge routine needs is set only via the Web UI 'Allow unrestricted branch");
   log("pushes' toggle — /schedule cannot configure it.");
   log("");
-  log(
-    "Output gate (ADR-0020 D3a): this routine writes to a claude/* branch / PR only — never main directly.",
-  );
+  log("Output gate: this routine writes to a claude/* branch / PR only — never main directly.");
 
   return { outputPath: destRel };
 }
@@ -472,7 +470,7 @@ export function printGenerateWatchRoutineHelp(log: (m: string) => void): void {
   log("Usage: radar routine generate watch [options]");
   log("");
   log("Generates a Claude Code Routine YAML that runs `radar watch run` on a schedule");
-  log("and commits detected items/state to a claude/* branch (ADR-0020 D5 `watch`).");
+  log("and commits detected items/state to a claude/* branch.");
   log("The routine completes in one Claude session — it does NOT spawn other agents.");
   log("");
   log("Options:");

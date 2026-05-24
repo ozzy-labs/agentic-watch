@@ -389,7 +389,7 @@ export function printGenerateCombinedHelp(log: (m: string) => void): void {
   log("");
   log("Generates a GitHub Actions workflow that chains `radar watch run` ->");
   log("a no-new-items guard -> `radar research --batch` with hard-capped cost");
-  log("controls (ADR-0014 D2 / D3 / D4 / D5).");
+  log("controls.");
   log("");
   log("Options:");
   log('  --watch-cron <expression>  5-field cron expression (default: "0 0 * * *")');

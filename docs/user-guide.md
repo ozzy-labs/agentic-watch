@@ -80,14 +80,14 @@ radar research <item-id> --agent claude-code
 - **Gemini CLI slash-command 雛形** (`.gemini/commands/{research,review,update,dismiss}.toml`) を bundled からコピー。Gemini CLI interactive で `/research` 等として発火する TOML 形式の薄い wrapper (`.claude/skills/` と並列の discovery 層)。`--no-gemini-commands` で skip 可
 - **`AGENTS.md`** (workspace root) を bundled からコピー。Codex CLI / Gemini CLI / GitHub Copilot CLI が auto-read する agent-agnostic な instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer)。`--no-agents-md` で skip 可
 - **`CLAUDE.md`** (workspace root) を bundled からコピー。Claude Code は `AGENTS.md` を auto-read しないため、最小の `CLAUDE.md` (`@AGENTS.md` を import するだけ) を default で出力し、業界標準の "SSoT は AGENTS.md、CLAUDE.md は再エクスポート" パターンを成立させる。`--no-claude-md` で skip 可 (`--no-agents-md` 指定時は `@AGENTS.md` がリンク切れになるため自動 skip + 警告)
-- **`templates/default.md`** と **`templates/digest.md`** を bundled からコピー。`default.md` は単体 research の fallback 構造 (要約 / 詳細 / 出典) を、`digest.md` は digest research の構造 (各 item の要点 / 共通テーマ / 差分・対立点 / 推奨アクション / 出典、[ADR-0011](./adr/0011-digest-research-output.md)) を持つ Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
+- **`templates/default.md`** と **`templates/digest.md`** を bundled からコピー。`default.md` は単体 research の fallback 構造 (要約 / 詳細 / 出典) を、`digest.md` は digest research の構造 (各 item の要点 / 共通テーマ / 差分・対立点 / 推奨アクション / 出典) を持つ Markdown 雛形 (body のみ、frontmatter は engine SKILL 側で生成)。ユーザーが「テンプレを編集して使う」第一歩となる編集可能なファイル。`--no-templates` で skip 可
 - **`FEEDRADAR.md`** (workspace root) を bundled からコピー。**人間向け** の workspace ガイドで、AI エージェントへの自然言語指示や slash command による使い方を主、CLI 直叩きを副として説明する。`AGENTS.md` / `CLAUDE.md` (AI エージェント向け instructions) とは別レイヤー。`--no-feedradar-md` で skip 可
 - 既存ファイルは warning + skip で保護。`--force` で上書き
 - **アップグレード時の注意:** engine SKILL (`.agents/skills/{research,review,update}/SKILL.md`) は adapter との間で **stdin payload 契約**を共有する。feedradar 本体を更新して契約が変わった場合（例: [#272](https://github.com/ozzy-labs/feedradar/issues/272) で agent への入力を argv → stdin payload block に移行）、workspace の SKILL は `init` の既存ファイル保護で**自動更新されない**。更新後は `radar init --force` で `.agents/skills/` を再同期すること（編集を加えている場合は事前に `git diff` で差分確認）
 
 #### AGENTS.md について
 
-`init` は workspace の root に **`AGENTS.md`** (agent-agnostic instructions) を default で生成する。Codex CLI / Gemini CLI / GitHub Copilot CLI はこのファイルを auto-read するため、interactive session を開いた agent に workspace の文脈 (主要コマンド、典型ワークフロー、docs pointer) を即座に伝えられる ([ADR-0007 Revision 2026-05-17 b](./adr/0007-skill-bundling-and-init-distribution.md))。
+`init` は workspace の root に **`AGENTS.md`** (agent-agnostic instructions) を default で生成する。Codex CLI / Gemini CLI / GitHub Copilot CLI はこのファイルを auto-read するため、interactive session を開いた agent に workspace の文脈 (主要コマンド、典型ワークフロー、docs pointer) を即座に伝えられる。
 
 | Agent | AGENTS.md auto-read |
 |---|---|
@@ -174,19 +174,19 @@ workspace に既に独自の人間向けドキュメント (`README.md` 等) が
 | `--keywords` | カンマ区切り、ヒット対象キーワード |
 | `--exclude-keywords` | カンマ区切り、除外キーワード |
 
-なお `sources/<id>.yaml` は **`trustLevel: "trusted" | "untrusted"`** フィールドも持つ（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M4）。default は `"untrusted"` で、`source add` で生成される YAML には `trustLevel: untrusted` が書き出される。`"trusted"` への opt-in は YAML を手で編集する（CLI flag は提供しない。後述「[trustLevel: 信頼境界の opt-in](#trustlevel-信頼境界の-opt-in)」を参照）。
+なお `sources/<id>.yaml` は **`trustLevel: "trusted" | "untrusted"`** フィールドも持つ。default は `"untrusted"` で、`source add` で生成される YAML には `trustLevel: untrusted` が書き出される。`"trusted"` への opt-in は YAML を手で編集する（CLI flag は提供しない。後述「[trustLevel: 信頼境界の opt-in](#trustlevel-信頼境界の-opt-in)」を参照）。
 
 #### 対応 kind 一覧
 
-| `--kind` | 用途 | recipe / selector | conditional GET | `--backfill` 対応 | ADR |
-|---|---|---|---|---|---|
-| `rss` | 標準 RSS / Atom feed | 不要（URL のみ） | ETag + Last-Modified | ― | ADR-0002 |
-| `html` | 任意 HTML ページの CSS スクレイピング | `selectors.*` 必須 | ETag + content-hash fallback | ― | ADR-0002 / `design/source-html.md` |
-| `html-js` | JS 実行後 DOM が必要な SPA / CSR ページ | `selectors.*` 必須 + `js.*` 任意 | content-hash のみ | ― | [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) |
-| `github-releases` | GitHub Releases API | 不要（`<owner>/<repo>` を URL から抽出） | ETag | partial | ADR-0002 |
-| `npm-registry` | npm registry packument | 不要（パッケージ名のみ） | ETag | partial | ADR-0002 |
-| `json-feed` | JSON Feed 1.0 / 1.1 標準 | 不要（URL のみ） | ETag + Last-Modified | partial（`next_url` を辿る範囲） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) |
-| `json-api` | 任意 JSON API（recipe ベース） | `pagination.*` 必須、`jsonSelectors.*` 任意（default chain あり）、`facets.*` 任意（[ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)） | ETag + content-hash fallback（facet sweep mode では無効） | **full**（recipe の `pagination.maxPages` まで辿る、facet sweep mode では `(facet 数) × (per-facet pagination)`） | [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) / [ADR-0017](./adr/0017-facet-sweep-recipe-extension.md) |
+| `--kind` | 用途 | recipe / selector | conditional GET | `--backfill` 対応 |
+|---|---|---|---|---|
+| `rss` | 標準 RSS / Atom feed | 不要（URL のみ） | ETag + Last-Modified | ― |
+| `html` | 任意 HTML ページの CSS スクレイピング | `selectors.*` 必須 | ETag + content-hash fallback | ― |
+| `html-js` | JS 実行後 DOM が必要な SPA / CSR ページ | `selectors.*` 必須 + `js.*` 任意 | content-hash のみ | ― |
+| `github-releases` | GitHub Releases API | 不要（`<owner>/<repo>` を URL から抽出） | ETag | partial |
+| `npm-registry` | npm registry packument | 不要（パッケージ名のみ） | ETag | partial |
+| `json-feed` | JSON Feed 1.0 / 1.1 標準 | 不要（URL のみ） | ETag + Last-Modified | partial（`next_url` を辿る範囲） |
+| `json-api` | 任意 JSON API（recipe ベース） | `pagination.*` 必須、`jsonSelectors.*` 任意（default chain あり）、`facets.*` 任意 | ETag + content-hash fallback（facet sweep mode では無効） | **full**（recipe の `pagination.maxPages` まで辿る、facet sweep mode では `(facet 数) × (per-facet pagination)`） |
 
 L0 / L1 tier の整理（recipe 不要かどうか）:
 
@@ -221,7 +221,7 @@ radar source add anthropic-sdk \
 | `url` | `html_url` |
 | `summary` | `body` |
 | `publishedAt` | `published_at`（なければ `created_at`） |
-| `id` | `<title-slug>-<8 hex of sha256(<tag_name>#<release.id>)>`（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)） |
+| `id` | `<title-slug>-<8 hex of sha256(<tag_name>#<release.id>)>` |
 | `raw` | API レスポンス全体 |
 
 `tag_name` と GitHub 側 `release.id` を組み合わせて stable id を作るため、再タグ付け（`tag_name` 変化・`release.id` 不変）と削除→再作成（`tag_name` 不変・`release.id` 変化）のどちらでも別 item として検出される。
@@ -294,7 +294,7 @@ radar source add anthropic-changelog \
 挙動の要点:
 
 - 相対リンク (`href="/path"`) は source の `--url` を base として解決される
-- `Item.id` は `<title-slug>-<8 hex>`（ADR-0002 の id 派生コントラクト、stableKey は url）
+- `Item.id` は `<title-slug>-<8 hex>`（id 派生コントラクト、stableKey は url）
 - ETag を返すサーバには `If-None-Match` で条件付き GET。返さないサーバには body の sha256 を `state.lastEtag` slot に `sha256:` プレフィックス付きで保存し、次回の dedup に使う
 - title / link が解決できない item は silent drop（RSS adapter 同様の fail-soft）
 
@@ -302,7 +302,7 @@ radar source add anthropic-changelog \
 
 #### `--kind html-js`
 
-JavaScript で DOM が組み立てられる SPA / CSR 系のページ（Next.js / Notion 埋め込み / Algolia DocSearch など、初期 HTML に item 要素が含まれないページ）から item を抽出する。fetcher のみ headless Chromium (Playwright) に差し替え、selector の評価ロジックは `kind: html` と共有する（[ADR-0010](./adr/0010-html-js-adapter-and-distribution.md)）。
+JavaScript で DOM が組み立てられる SPA / CSR 系のページ（Next.js / Notion 埋め込み / Algolia DocSearch など、初期 HTML に item 要素が含まれないページ）から item を抽出する。fetcher のみ headless Chromium (Playwright) に差し替え、selector の評価ロジックは `kind: html` と共有する。
 
 ##### いつ使うか
 
@@ -327,7 +327,7 @@ JavaScript で DOM が組み立てられる SPA / CSR 系のページ（Next.js 
 
 ##### セットアップ手順
 
-`html-js` adapter は Playwright を **optional peer dep** として参照する。`kind: html-js` を使うユーザーのみ Playwright と Chromium バイナリを別途 install する。`kind: rss` / `kind: html` のみ使うユーザーには影響しない（ADR-0010 §D3）。
+`html-js` adapter は Playwright を **optional peer dep** として参照する。`kind: html-js` を使うユーザーのみ Playwright と Chromium バイナリを別途 install する。`kind: rss` / `kind: html` のみ使うユーザーには影響しない。
 
 ```bash
 # 1. Playwright npm package を install (user project または global)
@@ -339,7 +339,7 @@ npm i -g playwright
 npx playwright install chromium
 ```
 
-`radar` 自体は Chromium バイナリの自動 install を行わない。`postinstall` hook 経由の暗黙 download は CI cache 戦略 / オフライン install と衝突するため、ユーザー側で明示的に実行する設計（ADR-0010 §D4）。
+`radar` 自体は Chromium バイナリの自動 install を行わない。`postinstall` hook 経由の暗黙 download は CI cache 戦略 / オフライン install と衝突するため、ユーザー側で明示的に実行する設計。
 
 不在検出は 2 箇所で行う:
 
@@ -383,14 +383,14 @@ trustLevel: untrusted
 
 ##### 挙動の要点
 
-- selector の評価は `kind: html` と同一実装を共有する (`parseHtmlDocument`)。`Item.id` は `<title-slug>-<8 hex>`、`stableKey` は URL（ADR-0002）
+- selector の評価は `kind: html` と同一実装を共有する (`parseHtmlDocument`)。`Item.id` は `<title-slug>-<8 hex>`、`stableKey` は URL
 - dedup は **content hash のみ**。`page.content()` を sha256 し、`state.lastEtag` slot に `sha256:` プレフィックス付きで保存する（`kind: html` で ETag を返さないサーバ向けと同じ slot を流用）
 - 1 fetch ごとに fresh `browser context` を起動し、Service Worker / IndexedDB / localStorage 経由の状態混入を防ぐ
 - title / link が解決できない item は silent drop（`kind: html` 同様の fail-soft）
 
 ##### Chromium hardening（オーバーライド不可）
 
-`html-js` adapter は以下の policy を **ハードコード** で強制する（ADR-0010 §D5）。ユーザー設定 (`source.js.*`) からは触れない:
+`html-js` adapter は以下の policy を **ハードコード** で強制する。ユーザー設定 (`source.js.*`) からは触れない:
 
 | Policy | 値 | 理由 |
 |---|---|---|
@@ -400,12 +400,12 @@ trustLevel: untrusted
 | `page.close()` | `finally` で必ず実行 | page leak によるメモリ蓄積を防ぐ |
 | viewport | Playwright default (1280x720) | 過剰に大きい viewport で巨大 DOM を生成しない |
 
-これらは脅威モデル上の前提（ADR-0009 / `docs/design/threat-model.md`）であり、緩めるオプションは提供しない。
+これらは脅威モデル上の前提（`docs/design/threat-model.md`）であり、緩めるオプションは提供しない。
 
 ##### セキュリティ注意
 
 - **任意 origin の JavaScript を Chromium で実行する**。signature 検証は無く、対象サイトの JS が「`fetch()` 経由で外部に何かを送信する」「巨大 DOM で OOM を引き起こす」等の振る舞いをしても止められない。`trustLevel: untrusted` 前提で運用すること
-- 上記の hardening により drive-by download / SW persistence は遮断されるが、**Chromium バイナリ自体の脆弱性追跡はユーザー責任**。`npm audit` では拾えない（Chromium は npm package ではない）。週次目安で `npx playwright install chromium` を再実行し、最新の Chromium 系列に追随することを推奨（ADR-0010 §"悪い面"）
+- 上記の hardening により drive-by download / SW persistence は遮断されるが、**Chromium バイナリ自体の脆弱性追跡はユーザー責任**。`npm audit` では拾えない（Chromium は npm package ではない）。週次目安で `npx playwright install chromium` を再実行し、最新の Chromium 系列に追随することを推奨
 - `kind: html-js` source の workspace では特に、`.env` / 認証 token / 秘密鍵を CWD 配下に置かないこと（万一 prompt injection が agent 起動経路に到達した場合の被害範囲を限定する）
 
 ##### トラブルシュート
@@ -419,8 +419,6 @@ trustLevel: untrusted
 | `radar watch run` が html-js source を skip し他は完走 | lazy detection が Playwright / Chromium 不在を検知した。`radar doctor` で詳細を確認 |
 | 巨大ページで Chromium が hang する | `js.timeout` を短く設定する（既定 30 秒）。それでも改善しないなら `kind: html` 対象外サイトとして dismiss を検討 |
 | プロキシ越しで `html-js` source が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` を設定する。Playwright は Node の `--use-env-proxy` を読まないが、`html-js` adapter が env を probe して `launch({ proxy: { server, bypass } })` に自動注入する。`NO_PROXY` は Node 形式（`,` 区切り・`.suffix`）から Playwright 形式（`;` 区切り・`*.suffix`）に自動変換 |
-
-詳細な設計判断は [ADR-0010](./adr/0010-html-js-adapter-and-distribution.md) を参照。
 
 ##### CI で使う
 
@@ -468,7 +466,7 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 
 挙動の要点:
 
-- 1 バージョン = 1 Item。`Item.id` は `<package-slug>-<version-slug>-<8 hex>`（ADR-0002 の id 派生コントラクト）
+- 1 バージョン = 1 Item。`Item.id` は `<package-slug>-<version-slug>-<8 hex>`（id 派生コントラクト）
 - `Item.title` = `<package>@<version>`、`Item.url` = `https://www.npmjs.com/package/<package>/v/<version>`
 - `Item.publishedAt` = packument の `time[<version>]`
 - ETag-based 条件付き GET をサポート。サーバが `304` を返すと items 処理をスキップ
@@ -476,7 +474,7 @@ radar source add anthropic-sdk-js --kind npm-registry --url @anthropic-ai/sdk
 
 #### `--kind json-feed`
 
-[JSON Feed 1.0 / 1.1](https://jsonfeed.org/version/1.1) 標準に準拠したサイトを **URL のみ** で監視する zero-config adapter。RSS と同じ L0 tier（recipe 不要）として位置付けられる（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §C / §D3）。
+[JSON Feed 1.0 / 1.1](https://jsonfeed.org/version/1.1) 標準に準拠したサイトを **URL のみ** で監視する zero-config adapter。RSS と同じ L0 tier（recipe 不要）として位置付けられる。
 
 ```bash
 # 例: micro.blog ユーザーフィード
@@ -514,7 +512,7 @@ adapter が読む item フィールドは 1.0 / 1.1 で共通のため、version
 | `url` | `items[].url`（必須。これが無い item は silent drop） |
 | `summary` | `items[].content_html` → なければ `content_text` → なければ `summary` |
 | `publishedAt` | `items[].date_published`（ISO 8601、parse 失敗時は `undefined`） |
-| `id` | `<title-slug>-<8 hex of sha256(<publisherId-or-url>)>`（[ADR-0002](./adr/0002-source-adapter-plugin-pattern.md)、`publisherId` = `items[].id`、なければ `url`） |
+| `id` | `<title-slug>-<8 hex of sha256(<publisherId-or-url>)>`（`publisherId` = `items[].id`、なければ `url`） |
 | `raw` | item 全体 + `tags` 正規化済み |
 
 ##### pagination (`next_url`)
@@ -528,11 +526,11 @@ JSON Feed は仕様で `top.next_url` による pagination を許す。adapter �
 
 - ETag (`If-None-Match`) と Last-Modified (`If-Modified-Since`) の両条件付き GET をサポート。サーバが `304 Not Modified` を返すと items 処理をスキップしつつ `lastFetchedAt` のみ更新
 - malformed item（`url` 欠落、parse 不能な `date_published` 等）は silent drop（1 item の不正で feed 全体を落とさない）
-- 信頼境界は `rss` と同じく **サイト運営者のみ**（recipe 作者の信頼境界は無い — [ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A）
+- 信頼境界は `rss` と同じく **サイト運営者のみ**（recipe 作者の信頼境界は無い）
 
 #### `--kind json-api`
 
-任意 JSON API を **recipe** で記述して監視する汎用 adapter（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2）。AWS What's New / dev.to / Anthropic news 等、固定 schema を持たない JSON エンドポイントが対象。`--backfill` で過去全記事の一括取り込みもサポート。
+任意 JSON API を **recipe** で記述して監視する汎用 adapter。AWS What's New / dev.to / Anthropic news 等、固定 schema を持たない JSON エンドポイントが対象。`--backfill` で過去全記事の一括取り込みもサポート。
 
 ##### いつ json-api を使うか
 
@@ -572,7 +570,7 @@ pagination:
   start: 0
   pageSize: 100
   pageSizeParam: size
-  maxPages: 30       # per-facet inner cap (ADR-0017)。各年 ≤24 ページで完結
+  maxPages: 30       # per-facet inner cap。各年 ≤24 ページで完結
   totalPath: "$.metadata.totalHits"   # backfill 早期停止のヒント（per-facet）
 jsonSelectors:
   items: "$.items[*].item"
@@ -581,7 +579,7 @@ jsonSelectors:
   publishedAt: "$.additionalFields.postDateTime"
   summary: "$.additionalFields.postBody"
   publisherId: "$.id"
-# year facet sweep (ADR-0017)。AWS dirs API の `(page+1) * size <= 10000`
+# year facet sweep。AWS dirs API の `(page+1) * size <= 10000`
 # offset cap を回避し、totalHits 21,834 件すべてを欠落なく取り込む。
 # 上端は `current-year` sentinel (#257) で実行時の現在年に自動追随する
 facets:
@@ -616,7 +614,7 @@ pagination:
 trustLevel: untrusted
 ```
 
-`jsonSelectors` ブロック自体を書かなくても動くのが json-api の zero-config 路線（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D2 default chain / #174）。
+`jsonSelectors` ブロック自体を書かなくても動くのが json-api の zero-config 路線。
 
 ##### CLI で `source add` する場合（flag）
 
@@ -645,7 +643,7 @@ $EDITOR sources/aws-whats-new.yaml
 | フィールド | 型 | 説明 |
 |---|---|---|
 | `method` | `"GET"` | Phase 1 では GET のみ（POST / GraphQL は範囲外） |
-| `headers` | `Record<string, string>` | カスタムヘッダ。`${VAR}` 形式で環境変数を補間（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5c）。未解決の `${VAR}` を含む header は **omit される**（fail-fast を runtime の 401/403 で出すため、recipe 側は env を必須前提で書ける） |
+| `headers` | `Record<string, string>` | カスタムヘッダ。`${VAR}` 形式で環境変数を補間。未解決の `${VAR}` を含む header は **omit される**（fail-fast を runtime の 401/403 で出すため、recipe 側は env を必須前提で書ける） |
 
 env interpolation の例:
 
@@ -656,7 +654,7 @@ http:
     user-agent: "feedradar-corp/1.0"          # 静的値はそのまま
 ```
 
-interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c）。`source test --show-content` でも header dump は出さない。
+interpolated 値は **ログ・frontmatter に出力しない**。`source test --show-content` でも header dump は出さない。
 
 ##### `pagination.*` リファレンス（5 戦略）
 
@@ -709,7 +707,7 @@ interpolated 値は **ログ・frontmatter に出力しない**（ADR-0012 §D5c
 
 ##### `--backfill` フラグ（過去全履歴の取り込み）
 
-通常 `watch run` は新着検出に最適化されており、`lastSeenIds` に当たった時点でページネーションを打ち切る。**`--backfill` モード**を使うと、recipe の `pagination.maxPages` まで全ページを辿って items を一括取り込みする（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。
+通常 `watch run` は新着検出に最適化されており、`lastSeenIds` に当たった時点でページネーションを打ち切る。**`--backfill` モード**を使うと、recipe の `pagination.maxPages` まで全ページを辿って items を一括取り込みする。
 
 ```bash
 # AWS What's New の過去 21,000+ 件を取り込む (recipe の per-facet maxPages=30 で十分)
@@ -737,7 +735,7 @@ radar watch run --source aws-whats-new --backfill --max-pages 20
 
 ##### facet sweep (年・カテゴリ単位の全件取得)
 
-API が offset cap (例: `(page+1) * size <= 10000`) を実装していて inner pagination だけでは過去全件を取りこぼす場合、**facet sweep** で年・カテゴリ等の切り口ごとにリクエストを分割すれば全件カバーできる ([ADR-0017](./adr/0017-facet-sweep-recipe-extension.md))。AWS What's New が代表例:
+API が offset cap (例: `(page+1) * size <= 10000`) を実装していて inner pagination だけでは過去全件を取りこぼす場合、**facet sweep** で年・カテゴリ等の切り口ごとにリクエストを分割すれば全件カバーできる。AWS What's New が代表例:
 
 - 単一軸 (`sort_order=desc` で page 0..99) では offset 10,000 で打ち切られ totalHits 21,834 のうち ~10,000 件しか取れない
 - year facet (`tags.id=whats-new-v2#year#<YYYY>`) で年単位に切ると各年 ≤2,345 件 = 24 ページで完結し、cap に当たらない
@@ -853,14 +851,14 @@ selector に書ける JSONPath は `src/core/feeds/_jsonpath.ts` の **lite 版*
 
 ##### 信頼境界 / 防御層
 
-`kind: json-api` は recipe で任意 URL / 任意 header を許すため、既存 5 adapter より広い attack surface を持つ（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A / [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5）:
+`kind: json-api` は recipe で任意 URL / 任意 header を許すため、既存 5 adapter より広い attack surface を持つ:
 
 | 防御層 | 内容 |
 |---|---|
-| **D5a** 応答サイズキャップ | 1 ページあたり **10 MB** で hard cap。recipe からは override 不可（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D5a） |
-| **D5b** host allowlist / blocklist | `127.0.0.1` / loopback / RFC1918 private IP / `file://` / `169.254.169.254` (cloud metadata) を遮断（共通 fetch wrapper が SSRF 防御を持つ前提、現状は wrapper 側で実装中） |
-| **D5c** env interpolation の固定 policy | `${VAR}` 未解決時は header omit（degraded fetch）、interpolated 値は **ログ・frontmatter に出さない** |
-| **信頼境界の再評価** | サイト運営者 **+ recipe 作者**（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) §A）。公式バンドル recipe（将来）と user 手書き recipe で監査責任が異なる |
+| **応答サイズキャップ** | 1 ページあたり **10 MB** で hard cap。recipe からは override 不可 |
+| **host allowlist / blocklist** | `127.0.0.1` / loopback / RFC1918 private IP / `file://` / `169.254.169.254` (cloud metadata) を遮断（共通 fetch wrapper が SSRF 防御を持つ前提、現状は wrapper 側で実装中） |
+| **env interpolation の固定 policy** | `${VAR}` 未解決時は header omit（degraded fetch）、interpolated 値は **ログ・frontmatter に出さない** |
+| **信頼境界の再評価** | サイト運営者 **+ recipe 作者**。公式バンドル recipe（将来）と user 手書き recipe で監査責任が異なる |
 
 ##### json-api のトラブルシュート
 
@@ -875,11 +873,9 @@ selector に書ける JSONPath は `src/core/feeds/_jsonpath.ts` の **lite 版*
 | `pagination.maxPages` が小さくて backfill が途中で打ち切られる | `--max-pages N` でその場限り上書き（`pagination.maxPages` と min を取る）。恒久的に上げるなら recipe 側の `maxPages` を編集 |
 | `items` の `url` が相対パス（`/about-aws/...` 等）で全件 drop される | API が link を相対パスで返す場合、adapter は自動的に `jsonSelectors.linkBase`（未指定なら `source.url`）を base として絶対化する（#204）。`source test --show-content` の `items` が 0 件で `selector adoption` 表は埋まっている時はこの症状を疑う。明示的に base を指定したいときは `jsonSelectors.linkBase: https://<host>` を追加（fully-qualified http(s) URL のみ受け付ける） |
 
-詳細な設計判断は [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) を参照。
-
 ### `radar source recipes`
 
-バンドルされている recipe（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3 採用案 A — リポ同梱）を一覧表示する。recipe は `recipes/*.yaml` として `radar` npm パッケージに同梱されており、`radar source add <id> --recipe <name>` で 1 行で source 化できる。
+バンドルされている recipe を一覧表示する。recipe は `recipes/*.yaml` として `radar` npm パッケージに同梱されており、`radar source add <id> --recipe <name>` で 1 行で source 化できる。
 
 ```bash
 radar source recipes
@@ -895,20 +891,20 @@ recipe の **NAME** は `recipes/<name>.yaml` のファイル名 stem（拡張�
 
 #### 同梱されている公式 recipe（Phase 1）
 
-現在リポに同梱されている公式 recipe は次の通り（#178 / [ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3 strategy A）。各 recipe の生身の YAML は `recipes/<name>.yaml` を参照する（docs 側に再掲すると site 仕様変更との同期コストが二重に発生するため、`recipes/` を SSoT とする）。
+現在リポに同梱されている公式 recipe は次の通り。各 recipe の生身の YAML は `recipes/<name>.yaml` を参照する（docs 側に再掲すると site 仕様変更との同期コストが二重に発生するため、`recipes/` を SSoT とする）。
 
 | recipe id (`--recipe <name>`) | 対象サイト | kind | pagination 戦略 | jsonSelectors | 主なトラブルシュート |
 |---|---|---|---|---|---|
-| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=30` per-facet, `totalPath=$.metadata.totalHits`) + `facets.year` (range 2004-2026, [ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の **totalHits 21,834 件すべて**を完全カバー（gap なし）。AWS dirs API の `(page+1)*size <= 10000` offset cap は year-by-year facet sweep で回避（[ADR-0017](./adr/0017-facet-sweep-recipe-extension.md)）。`maxPages: 30` は per-facet inner cap（最大の年 ~2,345 件 = 24 ページに ~25% ヘッドルーム）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
+| `aws-whats-new` | [AWS What's New](https://aws.amazon.com/new/) (JSON API, `directoryId=whats-new-v2`) | `json-api` | `page` (`size=100`, `maxPages=30` per-facet, `totalPath=$.metadata.totalHits`) + `facets.year` (range 2004-2026,) | 明示（`$.items[*].item` 経由で `headline` / `headlineUrl` / `postDateTime` / `postBody`）。`headlineUrl` は相対パスのため `linkBase: https://aws.amazon.com` で絶対化（#204） | `--backfill` で AWS の **totalHits 21,834 件すべて**を完全カバー（gap なし）。AWS dirs API の `(page+1)*size <= 10000` offset cap は year-by-year facet sweep で回避。`maxPages: 30` は per-facet inner cap（最大の年 ~2,345 件 = 24 ページに ~25% ヘッドルーム）。site 仕様変更で selector drift する場合は [`#--kind-json-api`](#--kind-json-api) の selector adoption 表で原因を切り分け |
 | `dev-to` | [dev.to articles API](https://developers.forem.com/api) | `json-api` | `page` (`per_page=30`, `maxPages=10`) | 省略（default chain で動く） | URL に `&tag=<name>` を足すと特定タグに絞れる（`source add` 後に `sources/<id>.yaml` を編集） |
 
-> **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §F1 「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。
+> **note:** Phase 1 では公式 recipe は 2 個から開始。issue [#178](https://github.com/ozzy-labs/feedradar/issues/178) のスコープには Anthropic news も含まれていたが、`https://www.anthropic.com/api/news` 等の候補 endpoint がいずれも 404（2026-05 時点）で公開 JSON / RSS が確認できなかったため、別 issue で endpoint 再調査することにした（「recipe ライブラリ化」評価のトリガー条件を満たした時に合わせて再検討）。
 
-CI smoke test ([`.github/workflows/recipes-smoke.yaml`](../.github/workflows/recipes-smoke.yaml)) が週次 cron で上記 recipe の page 0 fetch + parse を流し、selector drift / API breakage を早期検知する。失敗は `::warning::` annotation で surface するのみで release を block しない（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3）。
+CI smoke test ([`.github/workflows/recipes-smoke.yaml`](../.github/workflows/recipes-smoke.yaml)) が週次 cron で上記 recipe の page 0 fetch + parse を流し、selector drift / API breakage を早期検知する。失敗は `::warning::` annotation で surface するのみで release を block しない。
 
 #### 自分で recipe を追加するには
 
-現時点では「バンドル recipe（リポ同梱）」のみがサポートされており、user-local の recipe ディレクトリは未対応。新しい公式 recipe を追加したい場合は [ozzy-labs/feedradar](https://github.com/ozzy-labs/feedradar) リポの `recipes/*.yaml` に PR を送る。recipe 1 件あたり ~30 行 YAML で済むため、対応 site を増やすコストは低い（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D1）。
+現時点では「バンドル recipe（リポ同梱）」のみがサポートされており、user-local の recipe ディレクトリは未対応。新しい公式 recipe を追加したい場合は [ozzy-labs/feedradar](https://github.com/ozzy-labs/feedradar) リポの `recipes/*.yaml` に PR を送る。recipe 1 件あたり ~30 行 YAML で済むため、対応 site を増やすコストは低い。
 
 recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とする。主要フィールド:
 
@@ -928,7 +924,7 @@ recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とす
 
 #### CI smoke test との関係
 
-バンドル recipe は site の breaking change で壊れる可能性があるため、`recipes-smoke` ジョブ（#178 で実装予定）で外部 fetch 検証を行う。main CI は flaky な外部 API に依存させず、smoke job 単独で fail させる設計（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D3）。
+バンドル recipe は site の breaking change で壊れる可能性があるため、`recipes-smoke` ジョブ（#178 で実装予定）で外部 fetch 検証を行う。main CI は flaky な外部 API に依存させず、smoke job 単独で fail させる設計。
 
 ### `radar source add <id> --recipe <name> [overrides]`
 
@@ -938,7 +934,7 @@ recipe schema は `src/schemas/recipe.ts` の `RecipeFileSchema` を SSoT とす
 # AWS What's New を `aws-watch` という id で追加し、キーワードだけ上書き
 radar source add aws-watch --recipe aws-whats-new --keywords "Bedrock,Quick"
 
-# 直後に過去全件を取り込む (recipe 同梱の facet sweep で完全カバー、ADR-0017)
+# 直後に過去全件を取り込む (recipe 同梱の facet sweep で完全カバー)
 radar watch run --source aws-watch --backfill
 ```
 
@@ -1037,7 +1033,7 @@ radar watch run --source anthropic-news
 |---|---|
 | `--source <id>` | 単一 source のみ fetch する。未指定なら `sources/*.yaml` 全件 |
 | `--bootstrap` | 既存記事を全て **検出済み (seen)** として state に取り込み、items は作らない。初回導入時のノイズ抑制用 |
-| `--backfill` | recipe の `pagination.maxPages` まで全ページを辿って items を全件生成する（[ADR-0012](./adr/0012-json-api-adapter-and-recipe-strategy.md) §D4）。`kind: json-api` / `github-releases` / `npm-registry` のみ完全対応、他 kind は通常 fetch と同じ |
+| `--backfill` | recipe の `pagination.maxPages` まで全ページを辿って items を全件生成する。`kind: json-api` / `github-releases` / `npm-registry` のみ完全対応、他 kind は通常 fetch と同じ |
 | `--max-pages N` | `--backfill` 時の上限を `min(pagination.maxPages, N)` で絞る。`--backfill` 必須（単独指定は exit code 2） |
 
 `--bootstrap` と `--backfill` は **mutually exclusive**（同時指定は exit code 2）:
@@ -1052,7 +1048,7 @@ radar watch run --source anthropic-news
 
 挙動:
 
-- 各 source の `kind` に応じた feed adapter を呼び出す（7 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` / `json-feed` / `json-api` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する — ADR-0010）
+- 各 source の `kind` に応じた feed adapter を呼び出す（7 種すべて `rss` / `html` / `html-js` / `github-releases` / `npm-registry` / `json-feed` / `json-api` が実装済み。`html-js` は Playwright を optional peer dep として動的 import する）
 - adapter は `If-None-Match` ヘッダ（前回 `lastEtag`）を付けて GET し、サーバが `304 Not Modified` を返した場合は items 処理をスキップしつつ `lastFetchedAt` のみ更新する（adapter 別の対応状況・304 時の詳細な挙動は [`docs/architecture.md` の "Fetch efficiency / conditional GET"](./architecture.md#fetch-efficiency--conditional-get) を参照）
 - fetch した item に [filter](./design/filter-spec.md) を適用し、`lastSeenIds` に無いもののみを `items/<sourceId>/` に書き出す（`status: detected`、`matchedKeywords` 付き）
 - 実行後 `state/<sourceId>.yaml` の `lastFetchedAt` / `lastEtag` / `lastSeenIds` が更新される
@@ -1084,7 +1080,7 @@ radar watch run
 
 #### SSRF host blocklist
 
-[ADR-0009 §D5b](./adr/0009-untrusted-external-content-handling.md#d5b-host-allowlist--blocklist) に従い、共通 fetch wrapper は次のホストへの fetch を **常時遮断** する (`kind: json-api` で recipe 経由の任意 URL を許容する都合上、`fetchWithRetry` を通る全 adapter に効かせている):
+共通 fetch wrapper は次のホストへの fetch を **常時遮断** する (`kind: json-api` で recipe 経由の任意 URL を許容する都合上、`fetchWithRetry` を通る全 adapter に効かせている):
 
 - **loopback / 内部ネットワーク**: `127.0.0.0/8`、`localhost`、`0.0.0.0/8`、RFC1918 private IP (`10.0.0.0/8` / `172.16.0.0/12` / `192.168.0.0/16`)
 - **cloud metadata service**: `169.254.0.0/16` (AWS / GCP / Azure metadata の `169.254.169.254` 等を含む link-local 全体)
@@ -1124,12 +1120,12 @@ radar research <item-id> [--agent <agent-id>] [--template <id>]                 
 radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agent <agent-id>] [--template <id>]  # digest mode
 ```
 
-指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（[ADR-0011](./adr/0011-digest-research-output.md)、詳細は後述「[Digest research](#digest-research)」）。
+指定 item に対して、指定 agent で調査レポートを生成。`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の digest レポートにまとめる（詳細は後述「[Digest research](#digest-research)」）。
 
 | 引数 | 説明 |
 |---|---|
 | `<item-id>` | `items/<sourceId>/*.yaml` の `id` フィールド。形式は `<title-slug>-<8 hex>`（例: `claude-code-releases-agents-438eddad`）。元のフィード GUID は `items/<sourceId>/<item-id>.yaml` の `raw` 内に保持される。`--digest` 時は 2 件以上を空白区切りで指定する |
-| `--digest` | 複数 item を 1 つの digest レポートにまとめる（ADR-0011）。2 件以上の `<item-id>` が必須。出力は `research/<YYYYMMDD>_digest_<slug>_v1.md` |
+| `--digest` | 複数 item を 1 つの digest レポートにまとめる。2 件以上の `<item-id>` が必須。出力は `research/<YYYYMMDD>_digest_<slug>_v1.md` |
 | `--triage-group <group>` | digest mode 専用。digest ファイル名の `<slug>` をこの `triage.group` から導出する（既定の matchedKeywords 頻度ではなく）。単一キーワード source が同日に複数 group を出すと slug が衝突するため、group ごとに一意化する（[#255](https://github.com/ozzy-labs/feedradar/issues/255)）。省略時は従来の matchedKeywords slug にフォールバック |
 | `--agent` | `claude-code` / `codex-cli` / `gemini-cli` / `copilot`（既定: `claude-code`） |
 | `--template` | テンプレ id（既定: 単体 = `default`、digest = `digest`、`templates/<id>.md` を参照） |
@@ -1143,17 +1139,17 @@ radar research --digest <item-id> <item-id> ... [--triage-group <group>] [--agen
 - 検証が通れば `items/<sourceId>/<item-id>.yaml` の `status` を `researched` に遷移
 - 既存ファイルが既にある場合は上書きせずエラー終了する（再実行は `radar update` 経由）
 
-出力: `research/<YYYYMMDD>_<slug>_v1.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`radar review` で書き換わる）。agent が誤って `reviewedAt` / `reviewedBy` / `supersedes` を populate した場合、CLI は warning を出しつつ frontmatter を `null` に自動補正する（drift 防止）。
+出力: `research/<YYYYMMDD>_<slug>_v1.md`。`reviewedAt` / `reviewedBy` は **常に `null`** で書き出される（`radar review` で書き換わる）。agent が誤って `reviewedAt` / `reviewedBy` / `supersedes` を populate した場合、CLI は warning を出しつつ frontmatter を `null` に自動補正する（drift 防止）。
 
 4 agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) 全てが利用可能 (#19, #44, #45, #32, #46)。`templates/default.md` が存在しない場合は SKILL に同梱された既定構造でレポートが生成される。
 
-Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
+Codex CLI は非対話モード `codex exec "<prompt>" --cd <workspace>` で起動する。`--skip-git-repo-check` と `--dangerously-bypass-approvals-and-sandbox` が必須（unattended 実行のため。Claude Code の `--permission-mode bypassPermissions` 相当）。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる。Codex CLI が未認証の場合 `codex login` の実行を案内する user-friendly エラーになる。
 
-Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起動する (`-y` は YOLO mode で承認をスキップ、`--skip-trust` は folder trust チェックを bypass。Claude Code の `--permission-mode bypassPermissions` 相当)。`--skip-trust` は他 3 adapter (`claude-code` / `codex-cli` / `copilot`) と同じ「全権モード起動」の整合性回復であり、新たな権限付与ではない (folder trust は Gemini CLI 側の UI 制約)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる ([ADR-0001](./adr/0001-agent-adapter-interface.md))。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
+Gemini CLI は非対話モード `gemini -p "<prompt>" -y --skip-trust` で起動する (`-y` は YOLO mode で承認をスキップ、`--skip-trust` は folder trust チェックを bypass。Claude Code の `--permission-mode bypassPermissions` 相当)。`--skip-trust` は他 3 adapter (`claude-code` / `codex-cli` / `copilot`) と同じ「全権モード起動」の整合性回復であり、新たな権限付与ではない (folder trust は Gemini CLI 側の UI 制約)。stdin に JSON で構造化入力を渡し、`outputPath` への書き込みは agent に委ねる。Gemini CLI が未認証の場合 `gemini` を対話起動して OAuth するか、`GEMINI_API_KEY` を設定するよう案内する user-friendly エラーになる。
 
 #### Digest research
 
-`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の **digest レポート**にまとめる ([ADR-0011](./adr/0011-digest-research-output.md))。単体 research（1 item につき 1 ファイル）が `research/` に乱立するのを避け、関連 item を横断的に読みたい場面で使う。
+`--digest` を付けて 2 件以上の `<item-id>` を渡すと、複数 item を 1 本の **digest レポート**にまとめる。単体 research（1 item につき 1 ファイル）が `research/` に乱立するのを避け、関連 item を横断的に読みたい場面で使う。
 
 ```bash
 radar research --digest <item-id-1> <item-id-2> <item-id-3>
@@ -1162,7 +1158,7 @@ radar research --digest <item-id-1> <item-id-2> <item-id-3>
 ##### いつ使うか (digest)
 
 - **短期間に類似トピックの item が複数ヒットしたとき**: 例えば 1 日に同じプロダクトのリリース・ブログ・SNS 投稿が連続検出された場合、それぞれ単体 research を回すよりも 1 本の digest にまとめたほうがレビュー負荷が下がる
-- **関連トピックの item を横断的にまとめたいとき**: 別 source（例: 公式 blog + GitHub Releases + npm registry）に跨る同テーマの item を、横断視点で 1 レポートに集約する。FeedRadar の multi-feed 強みを digest にも継承（ADR-0011 §3 で source 横断 digest を許可）
+- **関連トピックの item を横断的にまとめたいとき**: 別 source（例: 公式 blog + GitHub Releases + npm registry）に跨る同テーマの item を、横断視点で 1 レポートに集約する。FeedRadar の multi-feed 強みを digest にも継承（source 横断 digest を許可）
 - **共通テーマ・差分・対立点を可視化したいとき**: digest テンプレート（`templates/digest.md`）は「各 item の要点」「共通テーマ」「差分・対立点」「推奨アクション」の 4 観点で agent に書かせるため、単体 research では拾えない横断的な気づきを得られる
 
 ##### 出力ファイル名
@@ -1175,17 +1171,15 @@ research/<YYYYMMDD>_digest_<slug>_v1.md
 - 固定リテラル `digest`: 単体 research との視覚的識別を容易にする（`ls research/ | grep digest` で digest だけ列挙できる）
 - `<slug>`: 含まれる全 item の `matchedKeywords` を頻度集計し、上位 1〜2 個を kebab-case で連結（例: `claude-code-anthropic`）。`matchedKeywords` が空の場合はフォールバックとして `digest` が入る
 
-命名規約・slug 導出アルゴリズム・supersedes チェーン・複数 item の status 遷移の詳細は [ADR-0011](./adr/0011-digest-research-output.md)（特に §1, §2, §4, §5）を参照。
-
 ##### 制約
 
 - **2 件以上必須**: `--digest` に 1 件しか渡さないと exit code `2` で拒否（1 件 digest は単体 research と区別がつかないため）
-- **`dismissed` item は含められない**: 含まれていると exit code `1` で拒否（ADR-0011 §5）。digest 対象から外すか、対象 item が誤って dismiss されていたなら `items/<sourceId>/<item-id>.yaml` の `status` を手で戻してから再実行する
-- **digest v+1 の itemIds は不変**: `radar update` で v+1 を生成する際、含まれる item 集合は v1 と同じ。後から item を追加したい場合は新規 digest を作る（ADR-0011 §4）
+- **`dismissed` item は含められない**: 含まれていると exit code `1` で拒否。digest 対象から外すか、対象 item が誤って dismiss されていたなら `items/<sourceId>/<item-id>.yaml` の `status` を手で戻してから再実行する
+- **digest v+1 の itemIds は不変**: `radar update` で v+1 を生成する際、含まれる item 集合は v1 と同じ。後から item を追加したい場合は新規 digest を作る
 
 ##### template のカスタマイズ
 
-digest レポートのテンプレートは `templates/digest.md` で、`radar init` が bundled default を workspace に配布する（[ADR-0007](./adr/0007-skill-bundling-and-init-distribution.md) の bundled skills / templates 配布経路の一部）。**このファイルを手で編集すれば、以後の `radar research --digest` 実行に自動で反映される**（再 init 不要、CLI は実行時に `loadTemplate("digest", templates/)` で読み直す）。
+digest レポートのテンプレートは `templates/digest.md` で、`radar init` が bundled default を workspace に配布する（bundled skills / templates 配布経路の一部）。**このファイルを手で編集すれば、以後の `radar research --digest` 実行に自動で反映される**（再 init 不要、CLI は実行時に `loadTemplate("digest", templates/)` で読み直す）。
 
 ```bash
 # digest テンプレートを編集して digest 全体のフォーマットを変える
@@ -1219,7 +1213,7 @@ radar research --digest \
 
 #### `radar research --batch` (バッチモード)
 
-`--batch` を付けると、`items/` 配下から status 条件にマッチする item を自動的に選別し、`--max-items` のハードキャップ内で順次 research を実行する ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a)。GitHub Actions の `combined` workflow から呼ばれる主要モードだが、ローカルでも「未 research の detected を一括処理する」用途で直接呼べる。
+`--batch` を付けると、`items/` 配下から status 条件にマッチする item を自動的に選別し、`--max-items` のハードキャップ内で順次 research を実行する。GitHub Actions の `combined` workflow から呼ばれる主要モードだが、ローカルでも「未 research の detected を一括処理する」用途で直接呼べる。
 
 ```bash
 # detected 全件を一括 research (max 10 件まで)
@@ -1239,14 +1233,14 @@ radar research --batch --agent codex-cli
 
 | フラグ | 既定 | 説明 |
 |---|---|---|
-| `--status <status>` | `detected` | 対象 item の status (`detected` または `triaged_research`)。`detected` は legacy / 手動 path、`triaged_research` は triage adapter が振り分けた item を吸う (ADR-0018 §W-B)。それ以外の値は明示エラーで reject される (#250) |
+| `--status <status>` | `detected` | 対象 item の status (`detected` または `triaged_research`)。`detected` は legacy / 手動 path、`triaged_research` は triage adapter が振り分けた item を吸う。それ以外の値は明示エラーで reject される (#250) |
 | `--max-items N` | `10` | 1 実行で処理する item 数のハードキャップ。N を超える match があると、超過分は **dropped** され warn() に件数が出力される (次回 cron で続きを処理) |
 | `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各 item の `matchedKeywords` と大小無視で照合し、いずれか 1 つでも一致すれば対象。未指定なら全 match item が対象 |
 | `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
 
 ##### 暴走防止 (hard-cap の二重防御)
 
-`--max-items` は CLI と workflow YAML の **2 箇所**で同じ値を強制する設計 (ADR-0014 D3a "二重防御"):
+`--max-items` は CLI と workflow YAML の **2 箇所**で同じ値を強制する設計（"二重防御"）:
 
 - **YAML literal**: `radar workflow generate combined --max-items 20` で生成した workflow は `radar research --batch --max-items 20` を埋め込む (PR diff / audit で上限が一目で分かる)
 - **CLI 側**: workflow YAML を手で書き換えて `--max-items` を消しても、CLI の default (`10`) が二重防御として効く
@@ -1263,7 +1257,7 @@ radar research --batch --agent codex-cli
 
 ### `radar dismiss <item-id> [<item-id> ...]` / `radar dismiss --batch`
 
-`detected`（または `triaged_unsure`）状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う ([ADR-0008](./adr/0008-status-state-machine.md))。単数・複数 id・`--batch` 一括選別の 3 通りで呼べる。
+`detected`（または `triaged_unsure`）状態の item を `dismissed`（terminal）に遷移させる。research しないと決めた item を `items/<sourceId>/<item-id>.yaml` から取り除かずに状態だけで除外する用途で使う。単数・複数 id・`--batch` 一括選別の 3 通りで呼べる。
 
 | 引数 | 説明 |
 |---|---|
@@ -1272,12 +1266,12 @@ radar research --batch --agent codex-cli
 挙動:
 
 - 対象 item を `items/` 配下から探索し、`status` を `dismissed` に更新する
-- dismiss 可能なのは `detected` / `triaged_unsure` のみ（ADR-0008 / ADR-0018 の state machine で `dismissed` への遷移が許可されている status）。`researched` / `reviewed` / `dismissed` / `triaged_research` / `triaged_digest` の item を渡すとエラーで終了する。`triaged_research` / `triaged_digest` は triage が research 行きと判定済みのため dismiss 不可で、戻したい場合は先に `detected` に戻す
+- dismiss 可能なのは `detected` / `triaged_unsure` のみ（state machine で `dismissed` への遷移が許可されている status）。`researched` / `reviewed` / `dismissed` / `triaged_research` / `triaged_digest` の item を渡すとエラーで終了する。`triaged_research` / `triaged_digest` は triage が research 行きと判定済みのため dismiss 不可で、戻したい場合は先に `detected` に戻す
 - 複数 id 指定時は、1 つでも非 dismissible / not-found があると **何も書かずに** エラー終了する（部分適用しない）
 - item が見つからない場合は exit code `1` で user-friendly なエラーを返す
 - agent を起動しないため、tokens は消費しない
 
-復元は [`radar undismiss <item-id>`](#radar-undismiss-item-id---force) で行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。
+復元は [`radar undismiss <item-id>`](#radar-undismiss-item-id---force) で行う。
 
 #### `radar dismiss --batch` (バッチモード)
 
@@ -1317,7 +1311,7 @@ research に回したいものだけ残して dismiss でノイズを落とす�
 
 ### `radar undismiss <item-id> [--force]`
 
-`dismissed → detected` の **逆遷移** を行う（[ADR-0018](./adr/0018-triage-extension.md) §W6）。dismiss の出所に応じて挙動が変わる:
+`dismissed → detected` の **逆遷移** を行う。dismiss の出所に応じて挙動が変わる:
 
 | `dismissedBy` | 挙動 |
 |---|---|
@@ -1340,7 +1334,7 @@ radar undismiss sdk-bump --force         # human 由来 → 警告 + 復帰
 
 ### `radar triage [--dry-run | --apply | --interactive]`
 
-LLM-based triage 機能（[ADR-0018](./adr/0018-triage-extension.md)）。`detected` 状態の item を per-source `triagePolicy` に基づき 4 つの decision (`research` / `digest` / `dismiss` / `unsure`) に自動分類する。cheap-model channel（`gemini-2.5-flash-lite` / `claude-haiku` 等）を triage 専用 agent として使うことを推奨する。
+LLM-based triage 機能。`detected` 状態の item を per-source `triagePolicy` に基づき 4 つの decision (`research` / `digest` / `dismiss` / `unsure`) に自動分類する。cheap-model channel（`gemini-2.5-flash-lite` / `claude-haiku` 等）を triage 専用 agent として使うことを推奨する。
 
 #### モード
 
@@ -1359,8 +1353,8 @@ LLM-based triage 機能（[ADR-0018](./adr/0018-triage-extension.md)）。`detec
 | `--triage-agent <id>` | `policy.agent` を上書き（`claude-code` / `codex-cli` / `gemini-cli` / `copilot`） |
 | `--policy <path>` | per-source policy を file override（1-shot） |
 | `--max-items N` | 1 回の run で triage する item 数の hard cap |
-| `--audit-log <path>` | triage 呼び出しごとに request / response / decisions を JSONL で append（[ADR-0018 §W-E-3](./adr/0018-triage-extension.md)） |
-| `--verbose` / `--quiet` | progress reporter のレベル（[ADR-0015](./adr/0015-progress-reporting-ux.md)） |
+| `--audit-log <path>` | triage 呼び出しごとに request / response / decisions を JSONL で append |
+| `--verbose` / `--quiet` | progress reporter のレベル |
 
 #### 使用例 (triage)
 
@@ -1413,13 +1407,13 @@ triagePolicy:
 |---|---|---|---|
 | `agent` | `AgentId` enum | — | triage 呼び出しに使う agent (`claude-code` / `codex-cli` / `gemini-cli` / `copilot`) |
 | `confidenceThreshold` | `number` (0-1) | `0.7` | 非 `unsure` decision を採用する最低信頼度。下回ると `unsure` に降格 |
-| `rules` | `string` | — | 分類軸の自由記述。`<policy>` boundary marker で wrap される（[ADR-0018 §W-A](./adr/0018-triage-extension.md)） |
+| `rules` | `string` | — | 分類軸の自由記述。`<policy>` boundary marker で wrap される |
 
-source YAML に `triagePolicy:` が存在しない場合、`radar triage` はその source を **silently skip**（warn を表示）する。policy なしの source は triage 対象外。bundled recipe に `triagePolicy:` を含めて配布することも可能（[ADR-0018 §W3](./adr/0018-triage-extension.md)）。
+source YAML に `triagePolicy:` が存在しない場合、`radar triage` はその source を **silently skip**（warn を表示）する。policy なしの source は triage 対象外。bundled recipe に `triagePolicy:` を含めて配布することも可能。
 
 #### 失敗時の挙動
 
-- **rate-limited（429 / 503）**: 指数バックオフで最大 3 回 retry（[ADR-0018 §W-E-2](./adr/0018-triage-extension.md)）。それでも失敗した場合は対象 item を `triaged_unsure` に降格し、`reason: "rate-limited"` を stamp
+- **rate-limited（429 / 503）**: 指数バックオフで最大 3 回 retry。それでも失敗した場合は対象 item を `triaged_unsure` に降格し、`reason: "rate-limited"` を stamp
 - **agent CLI down**: 全 item を `triaged_unsure` (`reason: "agent CLI failure"`) に降格、`fallback: true`
 - **response parse failure**: 全 item を `triaged_unsure` (`reason: "response parse failure"`) に降格、`fallback: true`
 
@@ -1427,7 +1421,7 @@ source YAML に `triagePolicy:` が存在しない場合、`radar triage` はそ
 
 ### `radar triage feedback <item-id> --correct | --wrong [--reason "<text>"]`
 
-事後に triage 判定の正誤を human が記録する（[ADR-0018](./adr/0018-triage-extension.md) §W5）。`items/<id>.yaml > triage.feedback` に書き込まれ、`radar triage stats`（[#242](https://github.com/ozzy-labs/feedradar/issues/242)）で policy tuning の根拠として集計される。
+事後に triage 判定の正誤を human が記録する。`items/<id>.yaml > triage.feedback` に書き込まれ、`radar triage stats`（[#242](https://github.com/ozzy-labs/feedradar/issues/242)）で policy tuning の根拠として集計される。
 
 | Option | 説明 |
 |---|---|
@@ -1445,7 +1439,7 @@ radar triage feedback region-expansion --wrong --reason "actually important"
 
 ### `radar triage stats [--since <duration>] [--source <id>] [--json]`
 
-`items/<sourceId>/*.yaml` を walk して `triage.decision` ごとの件数、人間の override パターン、policy tuning の推奨ヒントを集計する（[ADR-0018](./adr/0018-triage-extension.md) §W5, [#242](https://github.com/ozzy-labs/feedradar/issues/242)）。月 1 ペースで回す **policy tuning workflow** の起点として使う（[後述](#policy-tuning-workflow-月-1-推奨)）。
+`items/<sourceId>/*.yaml` を walk して `triage.decision` ごとの件数、人間の override パターン、policy tuning の推奨ヒントを集計する（[#242](https://github.com/ozzy-labs/feedradar/issues/242)）。月 1 ペースで回す **policy tuning workflow** の起点として使う（[後述](#policy-tuning-workflow-月-1-推奨)）。
 
 | Option | 説明 |
 |---|---|
@@ -1475,7 +1469,7 @@ radar triage stats --since 30d --json | jq '.perSource[] | select(.humanOverride
 
 ### triage-smoke job の運用
 
-`radar` リポジトリ側で **週次の `triage-smoke` GitHub Actions** ([`.github/workflows/triage-smoke.yaml`](https://github.com/ozzy-labs/feedradar/blob/main/.github/workflows/triage-smoke.yaml)) が走り、bundled recipe + 実 agent CLI の組合せが「site / agent CLI / model の breaking change」で壊れていないかを継続検知する（[ADR-0018](./adr/0018-triage-extension.md) §W4 / [#243](https://github.com/ozzy-labs/feedradar/issues/243)）。
+`radar` リポジトリ側で **週次の `triage-smoke` GitHub Actions** ([`.github/workflows/triage-smoke.yaml`](https://github.com/ozzy-labs/feedradar/blob/main/.github/workflows/triage-smoke.yaml)) が走り、bundled recipe + 実 agent CLI の組合せが「site / agent CLI / model の breaking change」で壊れていないかを継続検知する（[#243](https://github.com/ozzy-labs/feedradar/issues/243)）。
 
 ユーザー側で追加設定は不要だが、自分のフォーク / 自前 workspace で同等の smoke を回したい場合は以下を理解しておくと良い:
 
@@ -1560,7 +1554,7 @@ radar items list --status triaged_research --field id
 
 rollback 自体が失敗した場合（同じファイルシステム障害が継続している等）は「workspace may be in an inconsistent state」を出力して exit 1 する。ユーザーは `git status` / `git diff` で復旧する。
 
-詳細は [ADR-0003](./adr/0003-output-format-and-versioning.md) / [ADR-0008](./adr/0008-status-state-machine.md) / [`docs/design/skill-design.md` §7](./design/skill-design.md)。
+詳細は [`docs/design/skill-design.md` §7](./design/skill-design.md)。
 
 #### 再レビュー (re-review)
 
@@ -1576,12 +1570,12 @@ scheduled workflow から呼ばれることを想定したバッチモード。`
 radar review --batch                                           # 既定: status=researched, cap=10
 radar review --batch --status researched --max-items 5
 radar review --batch --filter-tags claude-code,model-context-protocol
-radar review --batch --agent codex-cli                         # cross-agent review (ADR-0001)
+radar review --batch --agent codex-cli                         # cross-agent review
 ```
 
 | フラグ | 既定 | 説明 |
 |---|---|---|
-| `--status <status>` | `researched` | 受け付ける値は `researched` のみ (ADR-0008 `researched → reviewed`)。それ以外は明示エラーで reject |
+| `--status <status>` | `researched` | 受け付ける値は `researched` のみ（`researched → reviewed` の遷移）。それ以外は明示エラーで reject |
 | `--max-items N` | `10` | 1 実行で処理する研究レポート数のハードキャップ。超過分は warn() に件数が出力され、次回 cron で続きを処理 |
 | `--filter-tags <list>` | (なし) | カンマ区切りの allow-list。各リンク item の `matchedKeywords` と大小無視で照合 |
 | `--agent <agent-id>` | `claude-code` (config あれば config 値) | バッチ全体で使う agent |
@@ -1608,9 +1602,9 @@ CLI 側で agent の組合せを強制はしない（ユーザー判断）。`ra
 
 #### host-agent (in-session) モード (opt-in)
 
-interactive な agent セッションから `/research <id>` を呼ぶと、既定では CLI が**別の agent サブプロセスを spawn**して research を実行する（[ADR-0001](./adr/0001-agent-adapter-interface.md)）。つまり「今あなたが対話しているセッション」の中から、さらに nested で `claude -p` 等を起動する形になる。
+interactive な agent セッションから `/research <id>` を呼ぶと、既定では CLI が**別の agent サブプロセスを spawn**して research を実行する。つまり「今あなたが対話しているセッション」の中から、さらに nested で `claude -p` 等を起動する形になる。
 
-host-agent モードは、この nested spawn を避け、**今あなたが対話しているホストセッション自身に手順を実行させる** opt-in モード（[ADR-0019](./adr/0019-host-agent-execution-mode.md)、[#254](https://github.com/ozzy-labs/feedradar/issues/254)）。radar は payload 構築・schema 検証・status 遷移・untrusted 境界の責任を保持したまま、モデル呼び出しのステップだけをホストセッションに委ねる **prepare / commit の 2-call protocol** で動く:
+host-agent モードは、この nested spawn を避け、**今あなたが対話しているホストセッション自身に手順を実行させる** opt-in モード（[#254](https://github.com/ozzy-labs/feedradar/issues/254)）。radar は payload 構築・schema 検証・status 遷移・untrusted 境界の責任を保持したまま、モデル呼び出しのステップだけをホストセッションに委ねる **prepare / commit の 2-call protocol** で動く:
 
 ```bash
 # 1. prepare: payload を stdout に出力（agent は spawn しない、item は detected のまま）
@@ -1625,9 +1619,9 @@ radar research --commit <path>
 | サブコマンド | 説明 |
 |---|---|
 | `--emit-payload` | item ロード + テンプレ解決 + `outputPath` 確定 + `<untrusted_item>` ラップ済みコンテンツを含む payload を **stdout に出力**する。agent は spawn しない。出力は「人間可読プロンプト + 末尾に機械可読 JSON フェンス」のハイブリッド形式 |
-| `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する）。`<path>` は `<cwd>/research/` 配下に制約される（`..` 脱出・兄弟ディレクトリ・symlink 脱出を拒否、ADR-0009 M3b をコードで担保） |
+| `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する）。`<path>` は `<cwd>/research/` 配下に制約される（`..` 脱出・兄弟ディレクトリ・symlink 脱出を拒否、コードで担保） |
 
-`review` / `update` も同じ 2-call で host モードに対応する（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）:
+`review` / `update` も同じ 2-call で host モードに対応する（triage / review / update への展開方針）:
 
 ```bash
 # review: research を in-place で改変（reviewedAt/reviewedBy stamp + レビューブロック追記）→ researched → reviewed
@@ -1647,11 +1641,11 @@ radar update --commit <path>
 radar triage --emit-payload [--source <id>]
 # host セッションが分類結果を { agent, sourceId, decisions: [...] } 形式で triage/<source>_decisions.json に書く
 # commit: decisions JSON を source の policy + detected items で再検証し（spawn パスと同じ parseTriageResponse）、
-#         status 遷移を適用する。<path> は <cwd>/triage/ 配下に制約（ADR-0009 M3b をコードで担保）
+#         status 遷移を適用する。<path> は <cwd>/triage/ 配下に制約（コードで担保）
 radar triage --commit <path>
 ```
 
-triage の `--emit-payload` payload に埋め込まれる triage request は、item 本文を `<untrusted_item>`、policy を `<policy>` で包んだもの（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c / [ADR-0018](./adr/0018-triage-extension.md) §W-A）なので、M1c 境界が host セッションにもそのまま入る。decisions の検証・status 遷移は research/review/update と同じく **CLI が一元担保**する（host は分類結果を書くだけで `items/*.yaml` は触らない）。
+triage の `--emit-payload` payload に埋め込まれる triage request は、item 本文を `<untrusted_item>`、policy を `<policy>` で包んだものなので、untrusted 境界が host セッションにもそのまま入る。decisions の検証・status 遷移は research/review/update と同じく **CLI が一元担保**する（host は分類結果を書くだけで `items/*.yaml` は触らない）。
 
 なぜ host モード:
 
@@ -1661,15 +1655,15 @@ triage の `--emit-payload` payload に埋め込まれる triage request は、i
 
 セキュリティと運用の注意:
 
-- **CI / headless では使わない**: host モードは **interactive 専用**。spawn では untrusted item content が使い捨ての headless サブプロセスに閉じるのに対し、host モードでは untrusted content がユーザーの対話セッション本体（広い tool 権限・standing approval を持つ）に入るため、prompt injection 成立時の blast radius が大きい。CI / headless では adapter spawn を SSoT として使い、CI parity を維持する（[ADR-0019](./adr/0019-host-agent-execution-mode.md) §Consequences）。なお `--emit-payload` の payload には `<untrusted_item>` ラップ（M1c）が含まれ、SKILL の M2a / M2b / M3b guidance も host 実行時に継続適用される
+- **CI / headless では使わない**: host モードは **interactive 専用**。spawn では untrusted item content が使い捨ての headless サブプロセスに閉じるのに対し、host モードでは untrusted content がユーザーの対話セッション本体（広い tool 権限・standing approval を持つ）に入るため、prompt injection 成立時の blast radius が大きい。CI / headless では adapter spawn を SSoT として使い、CI parity を維持する。なお `--emit-payload` の payload には `<untrusted_item>` ラップが含まれ、SKILL の untrusted-content boundary guidance も host 実行時に継続適用される
 - **prepare→commit 間に同一 workspace の cron を重ねない**: host モードは `researching` ロック status を持たない。`outputPath` は決定論的で、既存の「already exists」衝突ガードが backstop になるが、prepare→commit 間に同一 item へ無人 cron（`research --batch` 等）を向けない運用にする
 - **cross-agent review が要る場合は従来の spawn を使う**: research=copilot / review=claude のようなクロス運用は単一ホストセッションでは成立しない（[上記](#クロスエージェント運用推奨)）。host モードは「ホストと同じ agent で十分な場合」の最適化であり、cross-agent が要るケースは従来の `--agent <spawn>` を使う（両立・共存）
 
-展開状況: research / review / update / triage すべて host モード対応済み。research / review / update は同型の prepare/commit（Markdown レポート → finalize）、triage は decisions JSON → finalize の別契約（[#279](https://github.com/ozzy-labs/feedradar/issues/279)、[ADR-0019](./adr/0019-host-agent-execution-mode.md) §triage / review / update への展開方針）。
+展開状況: research / review / update / triage すべて host モード対応済み。research / review / update は同型の prepare/commit（Markdown レポート → finalize）、triage は decisions JSON → finalize の別契約（[#279](https://github.com/ozzy-labs/feedradar/issues/279)）。
 
 ### `radar update <research-id> [--agent <agent-id>] [--template <id>]`
 
-既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history、[ADR-0003](./adr/0003-output-format-and-versioning.md)）。
+既存 research を最新情報で再生成。新バージョン (`_v2.md`, `_v3.md`, …) を作成し、旧バージョンは保持（immutable history）。
 
 | 引数 | 説明 |
 |---|---|
@@ -1688,10 +1682,10 @@ triage の `--emit-payload` payload に埋め込まれる triage request は、i
   - `reviewedAt` / `reviewedBy` が `null`
 - 違反が検出された場合は警告ログを出して frontmatter を自動修正する（agent の drift から保護）
 - 旧版 (`_v<N>.md`) は**書き換えない**（immutable history）
-- `items/<sourceId>/<itemId>.yaml` の `status` は**変更しない**（[ADR-0008](./adr/0008-status-state-machine.md) / [`docs/design/skill-design.md` §8.4](./design/skill-design.md)）。`reviewed` だった item は `reviewed` のまま、`researched` だった item は `researched` のまま
+- `items/<sourceId>/<itemId>.yaml` の `status` は**変更しない**（[`docs/design/skill-design.md` §8.4](./design/skill-design.md)）。`reviewed` だった item は `reviewed` のまま、`researched` だった item は `researched` のまま
 - `detected` / `dismissed` の item に対する update は拒否する（v1 research がないため supersede 対象がない）
 
-出力: `research/<base>_v<N+1>.md`。命名規則とフォーマットは [ADR-0003](./adr/0003-output-format-and-versioning.md)。
+出力: `research/<base>_v<N+1>.md`。
 
 例:
 
@@ -1712,7 +1706,7 @@ v1 に対して `review` を実行した内容は v2 には引き継がない（
 
 #### items.yaml の status が動かないことの含意
 
-「`reviewed` の item の最新 research が v2 で、まだ review されていない」状態が出現することがある。`items.yaml` の `status` 単独では「最新 research が review 済みか」を判定できないので、必要に応じて `research/*.md` 側の `reviewedAt` を確認すること。これは ADR-0003 / ADR-0008 の意図的な設計（item lifecycle と research version を直交させる）であり、自動 promote はしない。
+「`reviewed` の item の最新 research が v2 で、まだ review されていない」状態が出現することがある。`items.yaml` の `status` 単独では「最新 research が review 済みか」を判定できないので、必要に応じて `research/*.md` 側の `reviewedAt` を確認すること。これは意図的な設計（item lifecycle と research version を直交させる）であり、自動 promote はしない。
 
 #### update の対象が無い場合 (no-op suppression)
 
@@ -1747,7 +1741,7 @@ CI で自動 install したい場合は環境変数 `RADAR_AUTO_INSTALL_CHROMIUM
 
 ## 進捗表示 / verbose / quiet
 
-長時間実行コマンド (`radar research` / `review` / `update` / `radar research --batch` / `radar watch run --backfill` / `kind: html-js` の fetch / `radar source test`) は、進捗を **phase markers + spinner + 副次メトリクス** の 3 層で stderr に出力する（[ADR-0015](./adr/0015-progress-reporting-ux.md)）。stdout には CLI の本来の出力（`research:` の完了 1 行、`watch run:` のサマリ等）のみが流れるため、`radar research > out.md` のような pipe は従来どおり機能する。
+長時間実行コマンド (`radar research` / `review` / `update` / `radar research --batch` / `radar watch run --backfill` / `kind: html-js` の fetch / `radar source test`) は、進捗を **phase markers + spinner + 副次メトリクス** の 3 層で stderr に出力する。stdout には CLI の本来の出力（`research:` の完了 1 行、`watch run:` のサマリ等）のみが流れるため、`radar research > out.md` のような pipe は従来どおり機能する。
 
 ### default の挙動
 
@@ -1793,7 +1787,7 @@ radar research <item-id> 2>/dev/null | tee report.md
 
 ### Phase markers の意味
 
-phase markers は ADR-0015 D4 の命名規約に従い、動詞・形が統一されている。代表的なものと典型時間:
+phase markers は命名規約に従い、動詞・形が統一されている。代表的なものと典型時間:
 
 | Phase | 意味 | 典型時間 |
 |---|---|---|
@@ -1805,7 +1799,7 @@ phase markers は ADR-0015 D4 の命名規約に従い、動詞・形が統一�
 | `Status: detected → researched` | items.yaml の status 遷移 | <50ms |
 | `[<source-id>] Fetching… (kind: <kind>)` | watch run の per-source 開始 | ― |
 | `[<source-id>] Page <i>/<n>: <m> items fetched` | json-api pagination 進行（[#198](https://github.com/ozzy-labs/feedradar/pull/198)） | 数百ms / page |
-| `[<source-id>] <facet>=<value> (<k>/<N>) Page <i>/<n>: <m> items fetched` | facet sweep（[ADR-0017](adr/0017-facet-sweep-recipe-extension.md)）の per-page 進行。facet 値ごとに `Page` カウンタが `1/n` から振り直されるため、`<facet>=<value> (<k>/<N>)`（例: `year=2018 (15/23)`）でどの facet 値・sweep 全体の何番目かを前置する（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） | 数百ms / page |
+| `[<source-id>] <facet>=<value> (<k>/<N>) Page <i>/<n>: <m> items fetched` | facet sweepの per-page 進行。facet 値ごとに `Page` カウンタが `1/n` から振り直されるため、`<facet>=<value> (<k>/<N>)`（例: `year=2018 (15/23)`）でどの facet 値・sweep 全体の何番目かを前置する（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） | 数百ms / page |
 | `Launching Chromium…` / `Navigating to <url>…` / `Waiting for selector "<sel>" (timeout: <N>ms)…` / `Capturing page content…` / `Closing browser…` | html-js Playwright lifecycle | 数秒〜数十秒 |
 | `Still waiting for "<sel>"… [mm:ss]` | `waitForSelector` が 10 秒以上かかったときの定期 reminder（既定の `js.timeout` 30 秒の ~33%） | timeout まで継続 |
 | `[<source-id>] Completed: <n> total, <m> new (<duration>)` | watch run の per-source 完了 | ― |
@@ -1822,7 +1816,7 @@ spinner 行に表示される副次メトリクス:
 | `output` | バイト | `research/<id>.md` 等の出力ファイルを `fs.stat` 500ms 間隔で polling した最新サイズ | レポート本体の生成進捗。完了直前にどっと増えるパターンが多い |
 | `page` | `i/N` | json-api pagination の現在ページ | `--backfill` 進捗 |
 | `items` | 整数 | 直近 page で取れた item 数 | filter 通過前の生 fetch カウント |
-| `<facet>`（例 `year`） | `<value> (<k>/<N>)` | facet sweep（[ADR-0017](adr/0017-facet-sweep-recipe-extension.md)）で walk 中の facet 値と sweep 全体での位置 | どの facet 値を処理中か（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） |
+| `<facet>`（例 `year`） | `<value> (<k>/<N>)` | facet sweepで walk 中の facet 値と sweep 全体での位置 | どの facet 値を処理中か（[#269](https://github.com/ozzy-labs/feedradar/issues/269)） |
 
 非 TTY 環境では spinner 行が無いため、これらは phase marker の括弧書き（`Page 3/80: 100 items fetched`）として 1 行ずつ出力される。
 
@@ -1834,7 +1828,7 @@ spinner 行に表示される副次メトリクス:
 2. `kind: html-js` source を 1 件でも含む
 3. `kind: json-api` source を含み、かつ `--backfill` 指定
 
-このヒューリスティックは **user-configurable ではない**（ADR-0015 D5）。「1 RSS source で spinner が flash するだけ」のケースを避けるための設計判断。これでも spinner を消したい場合は `--quiet` / `RADAR_NO_PROGRESS=1`、逆に「常に progress を見たい」なら現状の解は無く、future issue で扱う。
+このヒューリスティックは **user-configurable ではない**。「1 RSS source で spinner が flash するだけ」のケースを避けるための設計判断。これでも spinner を消したい場合は `--quiet` / `RADAR_NO_PROGRESS=1`、逆に「常に progress を見たい」なら現状の解は無く、future issue で扱う。
 
 `radar source test` は 1 source 1 fetch という性質上、ヒューリスティックを介さず常に reporter を有効化する（recipe を tune する場面では phase markers が主目的のため）。
 
@@ -1853,7 +1847,7 @@ spinner 行に表示される副次メトリクス:
 
 #### Phase 3 機能（未実装）
 
-[ADR-0015 D5](./adr/0015-progress-reporting-ux.md) の Phase 3 として下記が予定されているが、現状は未実装（[#199](https://github.com/ozzy-labs/feedradar/issues/199) で追跡）:
+下記が予定されているが、現状は未実装（[#199](https://github.com/ozzy-labs/feedradar/issues/199) で追跡）:
 
 - **hung 検出**: 60 秒以上 agent stdout が無いと warning を出す
 - **SIGINT 段階的終了**: Ctrl+C 時に SIGTERM を送り 3 秒後 SIGKILL する 2 段階 graceful shutdown（現状は Node default の `setTimeout` ベース、子プロセスが即時に死なないことがある）
@@ -1908,14 +1902,14 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 ## スケジュール実行
 
-`radar` 本体は scheduler を内蔵しない（[ADR-0004](./adr/0004-schedule-strategy.md) / [ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md)）。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。後追いで workflow を追加・複数共存させたい場合は `radar workflow generate` を使う（後述「[`radar workflow generate`](#radar-workflow-generate)」）。
+`radar` 本体は scheduler を内蔵しない。`init` の opt-in フラグでクラウド scheduler 向けの**接続用雛形**を生成する。後追いで workflow を追加・複数共存させたい場合は `radar workflow generate` を使う（後述「[`radar workflow generate`](#radar-workflow-generate)」）。
 
 | フラグ / コマンド | 生成先 | 用途 |
 |---|---|---|
 | `radar init --with-routines` | `.claude/routines/watch-daily.yaml` | Claude Routines (Anthropic 管理クラウド VM) |
 | `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch、初回 init 時の bootstrap 用) |
-| `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch 雛形を **後追い生成**（複数 cadence / agent 切替対応、ADR-0014） |
-| `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | watch → 自動 research の連鎖（ハードキャップ + rebase リトライ内蔵、ADR-0014） |
+| `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch 雛形を **後追い生成**（複数 cadence / agent 切替対応） |
+| `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | watch → 自動 research の連鎖（ハードキャップ + rebase リトライ内蔵） |
 
 既存ファイル保護 + `--force` 上書きは bundled skills と同じ挙動。
 
@@ -1923,7 +1917,7 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 ### `radar workflow generate`
 
-`init --with-actions` が生成する workflow は 1 種類 (`watch.yaml`) かつ初期化時にしか作れない。後から `watch` を別 cadence で追加したい / `combined` (watch + 自動 research) を追加したい / agent を切り替えたい場合は **`radar workflow generate <type>`** を使う ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。
+`init --with-actions` が生成する workflow は 1 種類 (`watch.yaml`) かつ初期化時にしか作れない。後から `watch` を別 cadence で追加したい / `combined` (watch + 自動 research) を追加したい / agent を切り替えたい場合は **`radar workflow generate <type>`** を使う。
 
 ```text
 radar workflow generate <type> [options]
@@ -1938,7 +1932,7 @@ radar workflow generate <type> [options]
 | `research` | `detected` item を batch research する単独 workflow | `radar research --batch ...` | Phase 2 (#191) |
 | `review` | researched item を別 agent でレビュー | `radar review <ids...>` | Phase 2 (#191) |
 
-`research` / `review` 単独タイプは現状未実装で、Phase 2 (sub-issue [#191](https://github.com/ozzy-labs/feedradar/issues/191)) で追加される。当面は `combined` で watch + 自動 research を 1 workflow にまとめる構成を推奨する (検出 → research 連鎖の遅延が無い、ADR-0014 §X5)。
+`research` / `review` 単独タイプは現状未実装で、Phase 2 (sub-issue [#191](https://github.com/ozzy-labs/feedradar/issues/191)) で追加される。当面は `combined` で watch + 自動 research を 1 workflow にまとめる構成を推奨する (検出 → research 連鎖の遅延が無い)。
 
 #### タイプ別 設定 YAML 完全例
 
@@ -1998,7 +1992,7 @@ jobs:
 
 ポイント:
 
-- `concurrency.group: feedradar-watch-...` は **watch 専用 group**。`combined` と同じ branch にあっても互いに cancel しない (ADR-0014 D4)
+- `concurrency.group: feedradar-watch-...` は **watch 専用 group**。`combined` と同じ branch にあっても互いに cancel しない
 - `Commit and push with retry` step は `git push` が `non-fast-forward` で失敗したら `git pull --rebase --autostash` を最大 3 回試行する (`combined` と同時刻に発火しても自動回復)
 
 ##### `radar workflow generate combined`
@@ -2077,13 +2071,13 @@ jobs:
 
 ポイント:
 
-- **`--max-items` ハードキャップが YAML literal として焼き込まれる** (ADR-0014 D3a)。`radar research --batch --max-items 20` が直接 step の `run:` に書かれるため、workflow を読めば上限が即わかる
+- **`--max-items` ハードキャップが YAML literal として焼き込まれる**。`radar research --batch --max-items 20` が直接 step の `run:` に書かれるため、workflow を読めば上限が即わかる
 - **二重防御**: YAML を手で書き換えて `--max-items` を消しても、CLI の default (`10`) が効く
 - 「Skip research when no new items」ガード step が `items/` に変更が無いときの research step 全体をスキップする (`watch run` が空だった日に LLM cost を 0 に抑える)
 
 #### `--max-items` / `--filter-tags` の自動 research セーフティ
 
-`combined` workflow の最大の懸念は **自動 research の暴走** (ADR-0014 §Context):
+`combined` workflow の最大の懸念は **自動 research の暴走**:
 
 - ある日 RSS source が **過去履歴を一気に吐く** (publisher 側 bug / `--backfill` の事故起動)
 - 検出 item 数が想定の 10 → 数百〜数千件に膨らむ
@@ -2105,7 +2099,7 @@ jobs:
 
 #### agent 別 secrets 設定例
 
-`--agent` で 4 種類の agent から選べる ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D5)。**OAuth トークンは禁止**: すべて API key 認証 (Anthropic 利用ポリシー上、unattended workflow で OAuth は "ordinary individual use" の範囲外)。
+`--agent` で 4 種類の agent から選べる。**OAuth トークンは禁止**: すべて API key 認証 (Anthropic 利用ポリシー上、unattended workflow で OAuth は "ordinary individual use" の範囲外)。
 
 | `--agent` | 必要な secret (`Settings → Secrets and variables → Actions`) | OAuth |
 |---|---|---|
@@ -2114,7 +2108,7 @@ jobs:
 | `gemini-cli` | `GEMINI_API_KEY` | **禁止** |
 | `copilot` | (`secrets.GITHUB_TOKEN` を自動利用、ユーザー登録不要) | n/a (個人 OAuth ではない) |
 
-すべての agent で `GITHUB_TOKEN` は `secrets.GITHUB_TOKEN` (Actions が自動付与) を forward する。これは `github-releases` adapter の rate limit を 60 → 5000 req/h に引き上げるため (ADR-0002 / Phase 3)。
+すべての agent で `GITHUB_TOKEN` は `secrets.GITHUB_TOKEN` (Actions が自動付与) を forward する。これは `github-releases` adapter の rate limit を 60 → 5000 req/h に引き上げるため。
 
 ##### agent 切替の実例
 
@@ -2144,7 +2138,7 @@ Required GitHub Actions secrets (Settings → Secrets and variables → Actions)
 
 `watch` / `combined` を **同一 branch で複数 workflow 並走** させると、片方が `items/` / `state/` を push した直後にもう一方が push しようとして `non-fast-forward` エラーで失敗するケースが構造的に発生する (例: `0 * * * *` の watch と `0 */6 * * *` の combined は 6 時間ごとに 1 回必ず衝突する)。
 
-ADR-0014 D4 で採用した対策: **生成された workflow の `Commit and push with retry` step に `git pull --rebase --autostash` リトライを最大 3 回内蔵する**。
+採用した対策: **生成された workflow の `Commit and push with retry` step に `git pull --rebase --autostash` リトライを最大 3 回内蔵する**。
 
 ```yaml
 - name: Commit and push with retry
@@ -2211,16 +2205,16 @@ cost が想定外に増えていることに気付いた場合の止め方:
 | `output file already exists: ... (use --force to overwrite)` | 同名 file が既存。意図的な再生成なら `--force` を付ける。複数 cadence を共存させたいなら `--output .github/workflows/<type>-<cadence>.yaml` で別名で生成 |
 | `Process completed with exit code 128.` + `non-fast-forward` (Actions ログ) | 同時刻に複数 workflow が `items/` / `state/` を push し合った。内蔵の 3 回 rebase retry が走るが、4 回以上失敗する場合は branch protection / token 失効 / true merge conflict を確認 |
 | `research: --max-items 10 cap reached; dropping N excess item(s)` warning が毎回出る | 検出件数が `--max-items` 上限を超えている。`--filter-tags` で絞る or `--max-items` を増やす or `--backfill` の事故起動を疑う |
-| `Error: ANTHROPIC_API_KEY is not set` (Actions ログ) | Settings → Secrets → Actions で agent 別 secret を登録していない (`--agent <name>` に応じた secret 名は ADR-0014 D5 / 本セクションの「agent 別 secrets 設定例」を参照) |
+| `Error: ANTHROPIC_API_KEY is not set` (Actions ログ) | Settings → Secrets → Actions で agent 別 secret を登録していない (`--agent <name>` に応じた secret 名は本セクションの「agent 別 secrets 設定例」を参照) |
 | billing dashboard で LLM cost が想定の 10 倍 | `--max-items` を意図せず高く設定した / `--filter-tags` 無しで全件 research している / `combined` workflow を複数 branch で並走させている。「[暴走時の止め方](#暴走時の止め方)」を参照して即座に disable する |
 | `permission denied to push` (Actions ログ) | `permissions: contents: write` が org / repo 設定で抑制されている。リポジトリ Settings → Actions → General → `Workflow permissions` を `Read and write permissions` にする |
 | `Run`radar`not found` (Actions ログ) | `npm install -g @ozzylabs/feedradar` step が失敗している (npm registry 到達性 / 一時的な outage)。re-run か、`npm install -g @ozzylabs/feedradar@<specific-version>` で version pin する |
 | 生成された workflow を手で編集後、`--force` で再生成して編集が消えた | warning + skip の既定挙動で守られていたが `--force` を明示するとその保護が外れる。手編集する場合は `--force` を使わない or 編集内容を git で復元 |
-| `combined` で `--max-items` を YAML から削除しても暴走しない | CLI 側の二重防御 (default `10`) が効く設計 (ADR-0014 D3a)。期待通り |
+| `combined` で `--max-items` を YAML から削除しても暴走しない | CLI 側の二重防御 (default `10`) が効く設計。期待通り |
 
 ### 認証ポリシー
 
-- **`ANTHROPIC_API_KEY` を secret として登録する**。OAuth トークン (`CLAUDE_CODE_OAUTH_TOKEN`) は Anthropic 利用ポリシー上の制約により雛形では使わない（ADR-0004 / ADR-0014 D5）
+- **`ANTHROPIC_API_KEY` を secret として登録する**。OAuth トークン (`CLAUDE_CODE_OAUTH_TOKEN`) は Anthropic 利用ポリシー上の制約により雛形では使わない
 - GitHub Releases adapter の rate limit を 5000 req/h に引き上げるため、`watch.yaml` 雛形は `secrets.GITHUB_TOKEN` を `GITHUB_TOKEN` env として forward する
 - `radar workflow generate <type> --agent <name>` で生成する workflow も同じ方針 (OAuth 禁止)。詳細は「[agent 別 secrets 設定例](#agent-別-secrets-設定例)」を参照
 
@@ -2241,7 +2235,7 @@ cron cadence を変えたい / `combined` (watch + 自動 research) を追加し
 
 ### Claude Routines 雛形の検証手順
 
-> **移行注記（#281・破壊的変更）**: 出力先・形式が変わった。旧 `claude/routines/watch-daily.md`（ドット無し・Markdown frontmatter）→ 新 `.claude/routines/watch-daily.yaml`（ドット有り・YAML、Web UI フォームと 1:1）。これは `radar routine generate watch`（[ADR-0020](./adr/0020-claude-routines-generation.md)）が出力する `.claude/routines/*.yaml` と形式・出力先を統一するため。旧 `.md` 雛形を使っていた場合は再度 `radar init --with-routines` を実行して新 YAML を取得し、旧ファイルを削除する。
+> **移行注記（#281・破壊的変更）**: 出力先・形式が変わった。旧 `claude/routines/watch-daily.md`（ドット無し・Markdown frontmatter）→ 新 `.claude/routines/watch-daily.yaml`（ドット有り・YAML、Web UI フォームと 1:1）。これは `radar routine generate watch`が出力する `.claude/routines/*.yaml` と形式・出力先を統一するため。旧 `.md` 雛形を使っていた場合は再度 `radar init --with-routines` を実行して新 YAML を取得し、旧ファイルを削除する。
 
 1. `radar init --with-routines` で `.claude/routines/watch-daily.yaml` が生成される
 2. Claude Routines に routine を登録する（取り込み方法は Claude Routines 側の手順に従う）
@@ -2250,7 +2244,7 @@ cron cadence を変えたい / `combined` (watch + 自動 research) を追加し
 
 ### routine を外部から起動する（`/fire`）
 
-スケジュール（cron）に加えて、登録済み routine は **`/fire` API で外部から手動起動**できる（[ADR-0020](./adr/0020-claude-routines-generation.md)）。CI ジョブや webhook、手元の CLI から「今すぐ 1 回回したい」ときに使う。
+スケジュール（cron）に加えて、登録済み routine は **`/fire` API で外部から手動起動**できる。CI ジョブや webhook、手元の CLI から「今すぐ 1 回回したい」ときに使う。
 
 #### 仕組み
 
@@ -2298,10 +2292,10 @@ token は環境変数からのみ読み、出力（成功ログ・エラーメ�
 
 ### スコープ外（CLI 側）
 
-- 雛形 file が実 cron で動くかの自動テストは行わない（実機検証はユーザー側責務、ADR-0004）
-- `update` を cron で自動実行する雛形は提供しない（人が triage する設計）。`research` の自動化は `radar workflow generate combined` で `--max-items` ハードキャップ付きで提供 (ADR-0014)、`review` 単独 workflow は Phase 2 (#191) で予定
+- 雛形 file が実 cron で動くかの自動テストは行わない（実機検証はユーザー側責務）
+- `update` を cron で自動実行する雛形は提供しない（人が triage する設計）。`research` の自動化は `radar workflow generate combined` で `--max-items` ハードキャップ付きで提供、`review` 単独 workflow は Phase 2 (#191) で予定
 - desktop scheduled tasks（macOS launchd / Linux systemd timer 等）への対応は将来検討
-- `radar workflow list / update / delete` (生成済み workflow の管理 CLI) は Phase 2 (#191) で必要性を再評価 (ADR-0014 D7)
+- `radar workflow list / update / delete` (生成済み workflow の管理 CLI) は Phase 2 (#191) で必要性を再評価
 
 ## セキュリティ
 
@@ -2320,7 +2314,7 @@ token は環境変数からのみ読み、出力（成功ログ・エラーメ�
 
 ### 信頼できる feed source のみ登録する
 
-現時点では FeedRadar 側に包括的な prompt injection sanitize レイヤーを持たない ([ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a の regex pre-filter は audit-only)。ユーザー側の運用で feed source を選別することが第一の防御線になる。
+現時点では FeedRadar 側に包括的な prompt injection sanitize レイヤーを持たない（regex pre-filter は audit-only）。ユーザー側の運用で feed source を選別することが第一の防御線になる。
 
 **推奨される source**:
 
@@ -2343,7 +2337,7 @@ FeedRadar 全体での prompt injection 緩和レイヤー（item content の sa
 
 ### `trustLevel`: 信頼境界の opt-in
 
-`sources/<id>.yaml` の **`trustLevel`** フィールドで、その source のコンテンツを信頼境界の内側として扱うかを宣言する（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M4）。
+`sources/<id>.yaml` の **`trustLevel`** フィールドで、その source のコンテンツを信頼境界の内側として扱うかを宣言する。
 
 | 値 | 意味 |
 |---|---|
@@ -2369,7 +2363,7 @@ filters:
 
 ### prompt injection の audit ログ (`injectionFlags`)
 
-`radar watch run` 実行時、各 item の `title` / `summary` / `raw` に対し best-effort の regex pre-filter を走らせる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1a / M5a — Adopt）。検出された pattern label の一覧は `items/<sourceId>/<item-id>.yaml` の `injectionFlags` フィールドに記録される。
+`radar watch run` 実行時、各 item の `title` / `summary` / `raw` に対し best-effort の regex pre-filter を走らせる。検出された pattern label の一覧は `items/<sourceId>/<item-id>.yaml` の `injectionFlags` フィールドに記録される。
 
 検出対象 (8 種類):
 
@@ -2382,7 +2376,7 @@ filters:
 - `instruction-fence` — `BEGIN/END INSTRUCTIONS` フェンス
 - `endoftext-token` — `<|endoftext|>` (GPT family special token)
 
-**重要**: あくまで auditability のための観察層であり、検出されたからといって item は変更されない（status は `detected` のまま、本文も sanitize しない）。判断は user に委ねる（ADR-0009 M5b — Reject: auto-dismiss しない）。
+**重要**: あくまで auditability のための観察層であり、検出されたからといって item は変更されない（status は `detected` のまま、本文も sanitize しない）。判断は user に委ねる（auto-dismiss はしない）。
 
 **既知の限界 (false negative)**:
 
@@ -2424,11 +2418,11 @@ filters:
    radar source remove <sourceId>
    ```
 
-   `items/<sourceId>/` 配下は履歴として残る（ADR-0008）。
+   `items/<sourceId>/` 配下は履歴として残る。
 
 ## triage workflow
 
-scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triage → research → review` を**無人実行**するための運用ガイド。CLI コマンド単体のリファレンスは「[`radar triage`](#radar-triage---dry-run----apply----interactive)」「[`radar triage feedback`](#radar-triage-feedback-item-id---correct----wrong---reason-text)」「[`radar items list`](#radar-items-list-filters-output-options)」を参照（[ADR-0018](./adr/0018-triage-extension.md)）。
+scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triage → research → review` を**無人実行**するための運用ガイド。CLI コマンド単体のリファレンスは「[`radar triage`](#radar-triage---dry-run----apply----interactive)」「[`radar triage feedback`](#radar-triage-feedback-item-id---correct----wrong---reason-text)」「[`radar items list`](#radar-items-list-filters-output-options)」を参照。
 
 このセクションでは、**個別 CLI ではなく workflow 全体を 1 cron tick で動かすときの設計判断と運用ノウハウ**を扱う。**`radar workflow generate combined-with-triage`** が生成する `.github/workflows/feedradar-daily.yaml` がこのセクションの主役。
 
@@ -2463,9 +2457,9 @@ scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triag
 ポイント:
 
 - **`triaged_unsure` は terminal 状態ではなく、人間のレビュー待ちキュー**。workflow 末尾の Slack 通知 step がキュー深度をアラートする。`radar items list --status triaged_unsure` で残量を確認 → 個別に `/research` / `/dismiss` / `radar triage feedback` で対処する
-- **`triaged_digest` は `triage.group` フィールドで分類される**。同 group は `radar research --digest` で 1 本のレポートに集約される（ADR-0011 の digest mode を triage 結果に再利用）
-- **`detected` → `triaged_*` 以外への直接遷移は CLI が拒否**する（[ADR-0008](./adr/0008-status-state-machine.md) の status state machine を triage 用 3 status で拡張、ADR-0018 §S2）
-- **このセクションの無人 cron ワークフローと [host-agent (in-session) モード](#host-agent-in-session-モード-opt-in) は別物**である。host モードは interactive 専用（CI / headless では adapter spawn を SSoT として使う）であり、無人 cron では従来どおり spawn される（[ADR-0019](./adr/0019-host-agent-execution-mode.md)）
+- **`triaged_digest` は `triage.group` フィールドで分類される**。同 group は `radar research --digest` で 1 本のレポートに集約される（digest mode を triage 結果に再利用）
+- **`detected` → `triaged_*` 以外への直接遷移は CLI が拒否**する（status state machine を triage 用 3 status で拡張）
+- **このセクションの無人 cron ワークフローと [host-agent (in-session) モード](#host-agent-in-session-モード-opt-in) は別物**である。host モードは interactive 専用（CI / headless では adapter spawn を SSoT として使う）であり、無人 cron では従来どおり spawn される
 
 ### policy 書き方ガイド
 
@@ -2503,7 +2497,7 @@ scheduled (GitHub Actions cron / Claude Routines) 文脈で `watch run → triag
 
 ### secrets setup
 
-scheduled workflow は API key 認証で動く（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D5 / ADR-0018 §W5。OAuth は unattended 用途で禁止）。`combined-with-triage` の `env:` block には triage / research / review の 3 ロール分の secret が並ぶ:
+scheduled workflow は API key 認証で動く（OAuth は unattended 用途で禁止）。`combined-with-triage` の `env:` block には triage / research / review の 3 ロール分の secret が並ぶ:
 
 | agent | 必要な secret | 取得方法 |
 |---|---|---|
@@ -2535,7 +2529,7 @@ gh run watch
 
 ### triage cost 見積もり
 
-triage の cost は **research に比べて圧倒的に安い**。`gemini-2.5-flash-lite` のような cheap-model channel を使う前提で（[ADR-0018](./adr/0018-triage-extension.md) §W2）:
+triage の cost は **research に比べて圧倒的に安い**。`gemini-2.5-flash-lite` のような cheap-model channel を使う前提で:
 
 | 構成 | 1 月の triage call 数 | 試算 cost (USD) |
 |---|---|---|
@@ -2602,7 +2596,7 @@ Required GitHub Actions secrets (Settings → Secrets and variables → Actions)
 | `Triage detected items` | `radar triage --apply --triage-agent gemini-cli`。`detected` → `triaged_research` / `triaged_digest` / `triaged_unsure` / `dismissed` に振り分け |
 | `Research triaged_research items (capped at 10)` | `radar research --batch --status triaged_research --max-items 10`。triage で「重要」判定された item を 1 件 1 レポート |
 | `Research digest groups (one report per triage.group)` | `radar items list --triage-group <g>` でグループ走査し `radar research --digest --triage-group "$GROUP"` で集約。`--triage-group` が digest ファイル名を group ごとに一意化するため、単一キーワード source ＋同日複数 group でもファイル名衝突しない（[#255](https://github.com/ozzy-labs/feedradar/issues/255)） |
-| `Review researched items` | `radar review --batch --status researched --agent codex-cli`。cross-agent review (ADR-0001) |
+| `Review researched items` | `radar review --batch --status researched --agent codex-cli`。cross-agent review |
 | `Notify unsure queue` | `if: always()`。`triaged_unsure` 件数を Slack に通知（webhook 未設定なら no-op） |
 | 最終ステップ（`--output-mode` 依存） | `pr`（既定）: `Create PR with research output` ステップ。`peter-evans/create-pull-request@v6` で `items/ state/ research/` を 1 PR にまとめ、人間が PR レビューして merge。`direct-commit`: `Commit and push research output with retry` ステップ。default ブランチへ直 commit & push（PR を介さない）。詳細は[後述の `--output-mode`](#--output-mode-pr--direct-commit) を参照 |
 
@@ -2650,7 +2644,7 @@ PR を人間がレビューして merge。これで 1 サイクル。
 
 ### policy tuning workflow (月 1 推奨)
 
-triage policy は書きっぱなしでは陳腐化する（publisher が表現を変える / 自分の関心が動く）。`radar triage stats` と `radar triage feedback` を組み合わせて、**月 1 回 5 分**で精度を見直すループを回すのが推奨運用 ([ADR-0018](./adr/0018-triage-extension.md) §W5, [#242](https://github.com/ozzy-labs/feedradar/issues/242))。
+triage policy は書きっぱなしでは陳腐化する（publisher が表現を変える / 自分の関心が動く）。`radar triage stats` と `radar triage feedback` を組み合わせて、**月 1 回 5 分**で精度を見直すループを回すのが推奨運用 ([#242](https://github.com/ozzy-labs/feedradar/issues/242))。
 
 1. **集計を確認** — `radar triage stats --since 30d` で前月の triage 精度を一覧する:
 
@@ -2749,24 +2743,22 @@ radar triage stats --since 30d --json \
 |---|---|---|
 | triage step が `agent 'gemini-cli' not found in PATH` で失敗 | runner に gemini-cli が install されていない（生成 YAML は `npm install -g @ozzylabs/feedradar` しか走らない） | step の `run:` に `npm install -g @google/gemini-cli` を追加するか、`runs-on:` を gemini プリインストール image に切り替える |
 | triage step が `Authentication failed` で失敗 | `GEMINI_API_KEY` secret が未登録 / typo / 末尾改行 | `Settings → Secrets and variables → Actions` で値を再登録（GitHub UI は値を保持表示しないため、再貼り付けが安全） |
-| `triaged_unsure` が大量発生（毎日 100 件以上） | `confidenceThreshold` が高すぎる / `rules:` が unsure ケースを明示していない | `radar triage stats` で trend を見る。**閾値を 0.7 → 0.5 に下げる**か、`rules:` に「判断困難なら dismiss」を明示する。`radar triage feedback <item-id> --wrong --reason "..."` で誤判定を蓄積すれば次回 triage の prompt に反映される（ADR-0018 §W4） |
+| `triaged_unsure` が大量発生（毎日 100 件以上） | `confidenceThreshold` が高すぎる / `rules:` が unsure ケースを明示していない | `radar triage stats` で trend を見る。**閾値を 0.7 → 0.5 に下げる**か、`rules:` に「判断困難なら dismiss」を明示する。`radar triage feedback <item-id> --wrong --reason "..."` で誤判定を蓄積すれば次回 triage の prompt に反映される |
 | triage が `research` 判定を返したが内容が低品質 | rules の "重要" カテゴリが曖昧 / publisher 側の表現変化に追従できていない | 該当 item を `radar triage feedback <item-id> --wrong --reason "marketing post, not GA"` で誤判定マークし、`rules:` の "除外" カテゴリに該当パターンを追加 |
 | 同じ source の item が毎日 `triaged_unsure` に振られる | source の trustLevel / 投稿パターンが特殊で agent が判断できない | source ごと dismiss するか（`radar source remove <id>`）、`triagePolicy:` を per-source で書き直す。bundled recipe の policy はあくまで出発点 |
 | `triaged_digest` の group 名がバラついて digest が 1 item ずつになる | agent が group 名を毎回違う表現で返す（例: `ui-incremental` vs `incremental-ui`） | `rules:` で group 名を**明示**する（上の policy 書き方ガイドの bundled recipe を参照）。明示しない group は agent の自由裁量で揺らぐ |
 | `triage --apply` が `policy invalid` で全件スキップ | `sources/<id>.yaml > triagePolicy:` が schema 違反 | `radar doctor` で全 source の schema を一斉検証。`agent` / `confidenceThreshold` / `rules` の 3 フィールドが必須 |
-| dismissed item を間違えて作った（false positive） | `radar dismiss` / `radar triage --apply` の判断ミス | `radar undismiss <item-id>` で `dismissed → detected` に戻し、再 triage / 再 research する（[ADR-0018](./adr/0018-triage-extension.md) §W4） |
-
-詳細な triage 設計判断（cheap-model channel / boundary marker / status state machine 拡張）は [ADR-0018](./adr/0018-triage-extension.md) を参照。
+| dismissed item を間違えて作った（false positive） | `radar dismiss` / `radar triage --apply` の判断ミス | `radar undismiss <item-id>` で `dismissed → detected` に戻し、再 triage / 再 research する |
 
 ## routine workflow
 
-Claude Routines（Anthropic クラウド側で動く非対話エージェント）で `watch run`（必要なら triage → research → review まで）を**無人実行**するための運用ガイド。GitHub Actions の [triage workflow](#triage-workflow) と対になる位置づけで、**`radar routine generate watch|pipeline`** が出力する `.claude/routines/*.yaml` がこのセクションの主役（[ADR-0020](./adr/0020-claude-routines-generation.md)）。
+Claude Routines（Anthropic クラウド側で動く非対話エージェント）で `watch run`（必要なら triage → research → review まで）を**無人実行**するための運用ガイド。GitHub Actions の [triage workflow](#triage-workflow) と対になる位置づけで、**`radar routine generate watch|pipeline`** が出力する `.claude/routines/*.yaml` がこのセクションの主役。
 
 routine 設定ファイルの schema・Web UI フォームとの対応・正本運用ルールは org ドキュメント [`.claude/routines/README.md`](../.claude/routines/README.md) を参照。このセクションは **FeedRadar 固有の生成・安全策・運用注意**を扱う。
 
 ### GHA workflow との違い（どちらを選ぶか）
 
-GitHub Actions（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) / [ADR-0018](./adr/0018-triage-extension.md)）と Claude Routines（[ADR-0020](./adr/0020-claude-routines-generation.md)）は**実行環境が根本的に違う**。同じ「無人実行」でも前提が異なるので、用途で選ぶ:
+GitHub Actions と Claude Routines は**実行環境が根本的に違う**。同じ「無人実行」でも前提が異なるので、用途で選ぶ:
 
 | | GitHub Actions (`radar workflow generate`) | Claude Routines (`radar routine generate`) |
 |---|---|---|
@@ -2786,47 +2778,47 @@ GitHub Actions（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safet
 
 ### 自セッション完結（spawn しない）
 
-routine は**サブスク枠で動く 1 つの Claude セッション**である（[ADR-0020](./adr/0020-claude-routines-generation.md) D2）。GHA のように `radar research --agent <id>` で別プロセスの agent CLI を spawn するのではなく、routine 自身のセッションが手順を実行し、CLI の自セッション入口（`--emit-payload` でペイロードを受け取り、`--commit` で finalize する。[ADR-0019](./adr/0019-host-agent-execution-mode.md) / [ADR-0020](./adr/0020-claude-routines-generation.md) D2）で結果を確定させる。
+routine は**サブスク枠で動く 1 つの Claude セッション**である。GHA のように `radar research --agent <id>` で別プロセスの agent CLI を spawn するのではなく、routine 自身のセッションが手順を実行し、CLI の自セッション入口（`--emit-payload` でペイロードを受け取り、`--commit` で finalize する）で結果を確定させる。
 
 このため:
 
 - **追加 API キー不要**（サブスク枠で完結）
-- **別 AI による review は構造的に存在しない**。`pipeline` という type 名はこの制約を誤認させないためのもの（GHA の `combined-with-triage` をあえて避けている、[ADR-0020](./adr/0020-claude-routines-generation.md) D5）
+- **別 AI による review は構造的に存在しない**。`pipeline` という type 名はこの制約を誤認させないためのもの（GHA の `combined-with-triage` をあえて避けている）
 - 自セッション処理（`--emit-payload` / `--commit`）は **1 件ずつ・順次**（`--emit-payload` は `--batch` と非両立）。多件あるときは件数上限で総量を絞り、超過分は次回 cron に持ち越す
 
 ### 安全策（無人実行の防御層）
 
-routine は無人実行されるため、ADR-0009 / ADR-0019 の防御に加えて routine 環境固有のゲートを重ねる（[ADR-0020](./adr/0020-claude-routines-generation.md) D3）。生成 YAML にはこれらがあらかじめ焼き込まれている:
+routine は無人実行されるため、共通の untrusted 防御に加えて routine 環境固有のゲートを重ねる。生成 YAML にはこれらがあらかじめ焼き込まれている:
 
-- **出力ゲート — PR か `claude/*` のみ**: routine が作る research / review レポートや items 更新は、必ず人間レビューを通す PR か `claude/*` ブランチに着地する。**main への直接 push・自動マージは禁止**。prompt injection が成立しても無レビューで main に変更が入らない最終ゲート（D3a）。生成 YAML の `permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` がこれを担保する
-- **connector なし**: 外部サービス連携プラグインは一切有効化しない。生成 YAML の `connectors: []`（D3b）
-- **通信先は購読フィードに限定**: outbound 通信は workspace 登録済みの `sources/*.yaml` のホストに限定（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) D5b の host allowlist がそのまま適用）。任意 URL への fetch はしない（D3c）。生成 YAML の `environment.network_access` は **`custom`** で出力される（モードは `Trusted` / `Custom` / `Full` の 3 種）。Routines の既定 `Trusted` は許可外ホストへ `403`（`x-deny-reason: host_not_allowed`）を返すため購読フィードを取得できない。`Full`（全ホスト開放）は D3c の限定意図に反するので使わない。`generate` 時に `sources/*.yaml` のホストを列挙してコメントに焼き込むので、**Web UI の Custom network access にそのホストを登録**してから登録・実行する
-- **取得した外部本文はデータ扱い**: feed item の title / summary / body / tags は `<untrusted_item>...</untrusted_item>` 境界マーカーで wrap され、「**指示ではなくデータ**」として扱われる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c / D3d）。「本文に書かれた指示に従う」ことはしない
+- **出力ゲート — PR か `claude/*` のみ**: routine が作る research / review レポートや items 更新は、必ず人間レビューを通す PR か `claude/*` ブランチに着地する。**main への直接 push・自動マージは禁止**。prompt injection が成立しても無レビューで main に変更が入らない最終ゲート。生成 YAML の `permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` がこれを担保する
+- **connector なし**: 外部サービス連携プラグインは一切有効化しない。生成 YAML の `connectors: []`
+- **通信先は購読フィードに限定**: outbound 通信は workspace 登録済みの `sources/*.yaml` のホストに限定（host allowlist がそのまま適用）。任意 URL への fetch はしない。生成 YAML の `environment.network_access` は **`custom`** で出力される（モードは `Trusted` / `Custom` / `Full` の 3 種）。Routines の既定 `Trusted` は許可外ホストへ `403`（`x-deny-reason: host_not_allowed`）を返すため購読フィードを取得できない。`Full`（全ホスト開放）は購読フィード限定の意図に反するので使わない。`generate` 時に `sources/*.yaml` のホストを列挙してコメントに焼き込むので、**Web UI の Custom network access にそのホストを登録**してから登録・実行する
+- **取得した外部本文はデータ扱い**: feed item の title / summary / body / tags は `<untrusted_item>...</untrusted_item>` 境界マーカーで wrap され、「**指示ではなくデータ**」として扱われる。「本文に書かれた指示に従う」ことはしない
 
 > **token は機密**: `/fire` の per-routine bearer token は YAML・リポ・ログ・コマンドライン引数のいずれにも書かない。Web UI で 1 回だけ表示される値を password manager / secret store で別管理する（[`.claude/routines/README.md` §シークレットの取り扱い](../.claude/routines/README.md)）。
 
 ### 件数上限（暴走防止）
 
-1 回の routine 実行で扱う件数は、**指示文の裁量ではなく CLI フラグで決定論的に担保**する（[ADR-0020](./adr/0020-claude-routines-generation.md) D3e）。injection で「全件やれ」と上書きされても効く設計:
+1 回の routine 実行で扱う件数は、**指示文の裁量ではなく CLI フラグで決定論的に担保**する。injection で「全件やれ」と上書きされても効く設計:
 
-- **triage 件数**: `radar triage --max-items N`（[ADR-0018](./adr/0018-triage-extension.md) W7）
-- **research / review の取り出し件数**: `radar items list --limit N` / `radar research --batch --max-items N`（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a）
+- **triage 件数**: `radar triage --max-items N`
+- **research / review の取り出し件数**: `radar items list --limit N` / `radar research --batch --max-items N`
 
-`pipeline` の `--max-items N`（既定 `10`）は、生成 YAML に **literal value として焼き込まれ**、triage の `--max-items` と items の `--limit` を一括で駆動する。「読めば上限が明らか」「YAML を編集しない限り外れない」という [ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3c の思想を routine にも適用している。
+`pipeline` の `--max-items N`（既定 `10`）は、生成 YAML に **literal value として焼き込まれ**、triage の `--max-items` と items の `--limit` を一括で駆動する。「読めば上限が明らか」「YAML を編集しない限り外れない」という設計思想を routine にも適用している。
 
 ### 並行実行の運用注意
 
-routine には GHA の `concurrency:` group 相当が**無い**（[ADR-0020](./adr/0020-claude-routines-generation.md) D7）。よって以下を厳守する:
+routine には GHA の `concurrency:` group 相当が**無い**。よって以下を厳守する:
 
 - **routine 同士、または routine ＋ GHA workflow を同一 workspace（同一 branch）に二重起動しない**。`prepare → commit`（`--emit-payload` でペイロードを作ってから `--commit` で書き戻すまで）の間に別の実行が割り込むと、`items/` / `state/` の commit が競合する
-- routine の出力ゲートが `claude/*` か PR（D3a）に限定されているため、複数 routine が同時に main へ push し合うレースは構造的に起きにくいが、**`claude/*` ブランチや items/state の commit 競合は起こり得る**
-- [ADR-0019](./adr/0019-host-agent-execution-mode.md) の「prepare→commit 間に同一 workspace の cron を重ねない」という運用注意を routine でも継承する（`researching` のようなロック status は追加しない）
+- routine の出力ゲートが `claude/*` か PR に限定されているため、複数 routine が同時に main へ push し合うレースは構造的に起きにくいが、**`claude/*` ブランチや items/state の commit 競合は起こり得る**
+- 「prepare→commit 間に同一 workspace の cron を重ねない」という運用注意を routine でも継承する（`researching` のようなロック status は追加しない）
 
 実務上は「**1 つの workspace（リポ）に対しては watch routine か pipeline routine か GHA workflow のいずれか 1 系統だけを向ける**」のが安全。複数 cadence で回したい場合は branch / repo を分けるか、cron 時刻をずらして overlap を避ける。
 
 ### `radar routine generate <type>`
 
-`init --with-routines` が生成する雛形は `watch-daily.yaml` 1 種類で初期化時にしか作れない。後から別 cadence の watch を足したい / フルパイプライン（watch → triage → research → review）を足したい場合は **`radar routine generate <type>`** を使う（[ADR-0020](./adr/0020-claude-routines-generation.md) D1。GHA 側の [`radar workflow generate`](#radar-workflow-generate) と対等な namespace）。
+`init --with-routines` が生成する雛形は `watch-daily.yaml` 1 種類で初期化時にしか作れない。後から別 cadence の watch を足したい / フルパイプライン（watch → triage → research → review）を足したい場合は **`radar routine generate <type>`** を使う（GHA 側の [`radar workflow generate`](#radar-workflow-generate) と対等な namespace）。
 
 ```text
 radar routine generate <type> [options]
@@ -2856,7 +2848,7 @@ radar routine generate <type> [options]
 `pipeline` のみ追加で次の 2 つを持つ:
 
 - `--max-items N`（既定 `10`）: triage の `--max-items` と items の `--limit` を一括で駆動する（前述「[件数上限](#件数上限暴走防止)」）。
-- `--output-mode pr | auto-merge`（既定 `pr`）: 着地モード。既定の `pr` は `claude/pipeline/...` ブランチ＋PR を開いて止まる（人間が review・merge する。ADR-0020 D3a の安全既定）。**`auto-merge`** は同じ PR を開いた後に `gh pr merge --squash` で **自分の PR を main に squash-merge** する opt-in モード（GHA の [`--output-mode direct-commit`](#--output-mode-pr--direct-commit) と対称だが、`direct-commit` が PR を介さず main へ直 push するのに対し、こちらは必ず PR を経由するため名前を分ける）。pipeline は step 5 で `radar review` 済みなので review-complete な PR の前提を満たす。`auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは**必要だが不十分**で、Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けない）。無人 AI 出力が無レビューで default ブランチに着地する点に留意（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a-1 / [#301](https://github.com/ozzy-labs/feedradar/issues/301)）。
+- `--output-mode pr | auto-merge`（既定 `pr`）: 着地モード。既定の `pr` は `claude/pipeline/...` ブランチ＋PR を開いて止まる（人間が review・merge する。安全既定）。**`auto-merge`** は同じ PR を開いた後に `gh pr merge --squash` で **自分の PR を main に squash-merge** する opt-in モード（GHA の [`--output-mode direct-commit`](#--output-mode-pr--direct-commit) と対称だが、`direct-commit` が PR を介さず main へ直 push するのに対し、こちらは必ず PR を経由するため名前を分ける）。pipeline は step 5 で `radar review` 済みなので review-complete な PR の前提を満たす。`auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは**必要だが不十分**で、Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けない）。無人 AI 出力が無レビューで default ブランチに着地する点に留意（[#301](https://github.com/ozzy-labs/feedradar/issues/301)）。
 
 ```bash
 # watch routine を毎時で生成
@@ -2877,7 +2869,7 @@ radar routine generate pipeline \
 
 ### 適用手順（生成 → Web UI 反映 → 起動）
 
-routine には設定を宣言的に流し込む公開 API が無い（GET も無い）ため、**正本の YAML を生成 → ユーザーが Web UI に手で適用**するのが唯一の形（[ADR-0020](./adr/0020-claude-routines-generation.md) D1）。
+routine には設定を宣言的に流し込む公開 API が無い（GET も無い）ため、**正本の YAML を生成 → ユーザーが Web UI に手で適用**するのが唯一の形。
 
 1. **生成**: `radar routine generate watch|pipeline` で `.claude/routines/<name>.yaml` を作る。`status: draft` のまま PR にして merge する（正本はリポ。Web UI で直接編集しない）
 2. **Web UI に貼り付け**: [claude.ai/code/routines](https://claude.ai/code/routines) で **New routine** → 各欄に YAML の該当フィールドを貼る。複数行フィールドは `yq` で抽出すると貼りやすい:
@@ -2902,13 +2894,11 @@ routine には設定を宣言的に流し込む公開 API が無い（GET も無
 |---|---|
 | `Error: cron expression invalid` / sub-hourly が拒否される | routine の最小実行間隔は 1 時間。`*/5 * * * *` のような分単位 cron は生成時に拒否される。`"0 * * * *"`（毎時）以上の粒度で指定する |
 | 生成 YAML を Web UI に貼ったが反映されない | `.claude/routines/*.yaml` は **自動同期されない**（正本はリポ、適用は手作業）。Web UI の各欄に手で貼り直す。複数行は `yq -r '.<field>'` で抽出する |
-| routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。既定の出力ゲートで `claude/*` ブランチか PR に限定されている（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a）。main 反映は人間が PR をレビュー・マージする。無人で main に着地させたい場合は `radar routine generate pipeline --output-mode auto-merge` で opt-in する（自 PR を squash-merge。前述「[共通オプション](#共通オプション)」の `--output-mode`） |
+| routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。既定の出力ゲートで `claude/*` ブランチか PR に限定されている。main 反映は人間が PR をレビュー・マージする。無人で main に着地させたい場合は `radar routine generate pipeline --output-mode auto-merge` で opt-in する（自 PR を squash-merge。前述「[共通オプション](#共通オプション)」の `--output-mode`） |
 | `--output-mode auto-merge` の routine が main に着地しない / push が拒否される | `permissions.allow_unrestricted_git_push: true` だけでは不十分。Web UI の「Allow unrestricted branch pushes」トグルも ON にする（RemoteTrigger API は当該フィールドを受け付けないため、YAML だけでは有効化できない）。生成時の stderr 警告も参照 |
 | 2 つの routine（または routine ＋ GHA）が同じ branch で commit を競合 | 同一 workspace への二重起動。前述「[並行実行の運用注意](#並行実行の運用注意)」のとおり 1 workspace = 1 系統に絞るか、cron 時刻をずらす |
 | `pipeline` で件数が多くて 1 回で処理しきれない | 仕様（自セッション処理は 1 件ずつ・`--max-items` で総量を絞る）。超過分は次回 cron に持ち越す。早く捌きたいなら cadence を上げる（ただし最小 1 時間） |
 | クラウド側で `knowledge` / `context7` が見つからない | ローカル MCP はクラウド VM に存在しない。routine の instructions は MCP 非依存で self-contained に書く（生成テンプレは既にそうなっている） |
-
-詳細な設計判断（自セッション carve-out の根拠 / 環境別の方式分離 / triage 自セッション入口の payload・commit 契約）は [ADR-0020](./adr/0020-claude-routines-generation.md) を参照。
 
 ## トラブルシューティング
 
@@ -2922,5 +2912,5 @@ routine には設定を宣言的に流し込む公開 API が無い（GET も無
 | workspace の `items/` / `state/` をリセットしたい | `state/` ディレクトリと `items/<sourceId>/` ディレクトリを削除してから `watch run` を再実行する。`state/<sourceId>.yaml` に記録された `lastSeenIds` が消えるので、`watch run` が source 全件を再検出して `items/<sourceId>/*.yaml` を作り直す（[#24](https://github.com/ozzy-labs/feedradar/pull/24) の Item.id refactor 前後で id 形式が変わったため、古い workspace を引き継ぎたい場合の標準手順）。`sources/` `templates/` `.agents/skills/` は触らない |
 | 社内 HTTP プロキシ越しに fetch が失敗する | `HTTPS_PROXY` / `HTTP_PROXY` を設定して `radar` を起動する。Node 22.21+ / 24.5+ では `radar` が `NODE_OPTIONS=--use-env-proxy` を自動付与して self-respawn するので追加設定は不要。自動 spawn を止めたい場合は `RADAR_AUTO_PROXY=0`（`false` / `off` でも可）を設定する。`ALL_PROXY` のみ設定すると Node の `--use-env-proxy` は無視するため `HTTPS_PROXY` も併設すること（`radar` が warning を出す）。TLS 中継 / NTLM / WSL2 を含む詳細は [docs/user-guide/proxy-setup.ja.md](./user-guide/proxy-setup.ja.md) を参照 |
 | `kind: html-js` source がプロキシ越しに失敗する | `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` のいずれかを設定すれば `html-js` adapter が Playwright の `launch({ proxy })` に自動注入する。`NO_PROXY` も尊重し、Node 形式（`,` 区切り・`.example.com` で suffix match）から Playwright 形式（`;` 区切り・`*.example.com` glob）へ自動変換される。fetch 系 adapter と違い Playwright は `--use-env-proxy` を読まないため、この自動注入が必要 |
-| `refused to fetch private / loopback IPv4 address ...` / `refused to fetch URL with non-HTTP scheme ...` / `refused to fetch loopback hostname ...` | ADR-0009 §D5b の SSRF host blocklist (cloud metadata / RFC1918 / loopback / `file://` 等を遮断) が発火している。意図した遮断ならそのまま (recipe の URL を見直す)。testing 等で意図的にローカル fixture を叩きたい場合は `RADAR_FETCH_HOST_ALLOWLIST=<host>` を設定する。詳細は「[SSRF host blocklist](#ssrf-host-blocklist)」を参照 |
+| `refused to fetch private / loopback IPv4 address ...` / `refused to fetch URL with non-HTTP scheme ...` / `refused to fetch loopback hostname ...` | SSRF host blocklist (cloud metadata / RFC1918 / loopback / `file://` 等を遮断) が発火している。意図した遮断ならそのまま (recipe の URL を見直す)。testing 等で意図的にローカル fixture を叩きたい場合は `RADAR_FETCH_HOST_ALLOWLIST=<host>` を設定する。詳細は「[SSRF host blocklist](#ssrf-host-blocklist)」を参照 |
 | `Agent running [mm:ss]` から動いていないように見える / `Still waiting for "<selector>"…` が連続する | progress reporter の表示で、内部では agent / Playwright が稼働している可能性が高い。`--verbose` で agent stdout を直接見るか、`radar source test <id> --show-content` で DOM を確認する。詳細は「[進捗表示 / verbose / quiet](#進捗表示--verbose--quiet)」を参照 |

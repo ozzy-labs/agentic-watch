@@ -188,20 +188,20 @@ function printHelp(log: (m: string) => void): void {
   log("                        items match --status (and --filter-tags), respecting");
   log("                        --max-items (default: REVIEW_BATCH_DEFAULT_MAX_ITEMS).");
   log("  --status <status>     Batch-mode filter: researched (default).");
-  log("                        `researched → reviewed` is the only legal transition");
-  log("                        per ADR-0008; other values are rejected.");
+  log("                        `researched → reviewed` is the only legal transition;");
+  log("                        other values are rejected.");
   log(
     `  --max-items N         Batch-mode hard-cap on processed reports (default: ${REVIEW_BATCH_DEFAULT_MAX_ITEMS}).`,
   );
   log("  --filter-tags <list>  Batch-mode comma-separated allow-list matched against");
   log("                        each linked item's matchedKeywords (case-insensitive).");
-  log("  --emit-payload        Host-agent mode (ADR-0019): print the review payload to");
+  log("  --emit-payload        Host-agent mode: print the review payload to");
   log("                        stdout and DO NOT spawn an agent. The interactive host");
   log("                        session reviews the research file in place itself, then");
   log("                        finalizes with `radar review --commit <path>`.");
   log("                        Interactive/opt-in only — CI/headless must use the");
   log("                        default spawn path.");
-  log("  --commit <path>       Host-agent mode (ADR-0019): validate an externally-");
+  log("  --commit <path>       Host-agent mode: validate an externally-");
   log("                        reviewed report (under <cwd>/research/) against");
   log("                        ResearchFrontmatterSchema, assert the host stamped");
   log("                        reviewedAt / reviewedBy, and apply the researched →");
@@ -210,7 +210,7 @@ function printHelp(log: (m: string) => void): void {
   log(
     "  --quiet               Suppress phase markers and spinner; print only the completion line.",
   );
-  log("                        Equivalent to setting RADAR_NO_PROGRESS=1 (ADR-0015 D2).");
+  log("                        Equivalent to setting RADAR_NO_PROGRESS=1.");
   log("");
   log("Appends a review block to research/<research-id>.md, stamps the");
   log("frontmatter `reviewedAt` / `reviewedBy`, and transitions the linked");
