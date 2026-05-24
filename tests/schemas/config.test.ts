@@ -55,7 +55,21 @@ describe("schemas/config (radar.config.yaml)", () => {
   });
 
   it("rejects non-string agent values", () => {
-    expect(RadarConfigSchema.safeParse({ defaultResearchAgent: 1 }).success).toBe(false);
     expect(RadarConfigSchema.safeParse({ defaultReviewAgent: null }).success).toBe(false);
+    expect(RadarConfigSchema.safeParse({ defaultResearchAgent: 1 }).success).toBe(false);
+  });
+
+  it("accepts an optional locale field (en / ja)", () => {
+    expect(RadarConfigSchema.parse({}).locale).toBeUndefined();
+    expect(RadarConfigSchema.parse({ locale: "en" }).locale).toBe("en");
+    expect(RadarConfigSchema.parse({ locale: "ja" }).locale).toBe("ja");
+  });
+
+  it("rejects an unsupported locale value", () => {
+    const result = RadarConfigSchema.safeParse({ locale: "fr" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.find((i) => i.path[0] === "locale")).toBeDefined();
+    }
   });
 });
