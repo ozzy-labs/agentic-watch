@@ -63,6 +63,19 @@ describe("core/config :: loadRadarConfig", () => {
     expect(config).toEqual({ defaultReviewAgent: "gemini-cli" });
     expect(config.defaultResearchAgent).toBeUndefined();
   });
+
+  it("parses a config carrying a locale field (ADR-0021)", async () => {
+    const dir = await makeWorkspace("locale: ja\ndefaultResearchAgent: codex-cli\n");
+    const config = await loadRadarConfig(dir);
+    expect(config.locale).toBe("ja");
+    expect(config.defaultResearchAgent).toBe("codex-cli");
+  });
+
+  it("throws RadarConfigError on an unsupported locale value", async () => {
+    const dir = await makeWorkspace("locale: fr\n");
+    await expect(loadRadarConfig(dir)).rejects.toBeInstanceOf(RadarConfigError);
+    await expect(loadRadarConfig(dir)).rejects.toThrow(/locale/);
+  });
 });
 
 describe("core/config :: getDefaultAgent", () => {

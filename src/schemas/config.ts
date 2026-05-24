@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LocaleSchema } from "../core/locale.js";
 import { AgentIdSchema } from "./research.js";
 
 /**
@@ -12,6 +13,9 @@ import { AgentIdSchema } from "./research.js";
  *   without an explicit `--agent`. Falls through to the hard-coded default
  *   (`claude-code`) when unset.
  * - `defaultReviewAgent`: same idea for `radar review`.
+ * - `locale`: persisted UI language (`en` / `ja`), the lowest-priority layer
+ *   in `resolveLocale` (`--lang` > `RADAR_LANG` > `config.locale` > `en`). See
+ *   ADR-0021 / epic #307. `doctor` validates this for free via this schema.
  *
  * Out-of-scope (tracked separately):
  *   - default agent for `update` (Phase 5)
@@ -20,6 +24,7 @@ import { AgentIdSchema } from "./research.js";
 export const RadarConfigSchema = z.object({
   defaultResearchAgent: AgentIdSchema.optional(),
   defaultReviewAgent: AgentIdSchema.optional(),
+  locale: LocaleSchema.optional(),
 });
 export type RadarConfig = z.infer<typeof RadarConfigSchema>;
 
