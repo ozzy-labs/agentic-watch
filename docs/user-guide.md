@@ -2758,6 +2758,148 @@ radar triage stats --since 30d --json \
 
 詳細な triage 設計判断（cheap-model channel / boundary marker / status state machine 拡張）は [ADR-0018](./adr/0018-triage-extension.md) を参照。
 
+## routine workflow
+
+Claude Routines（Anthropic クラウド側で動く非対話エージェント）で `watch run`（必要なら triage → research → review まで）を**無人実行**するための運用ガイド。GitHub Actions の [triage workflow](#triage-workflow) と対になる位置づけで、**`radar routine generate watch|pipeline`** が出力する `.claude/routines/*.yaml` がこのセクションの主役（[ADR-0020](./adr/0020-claude-routines-generation.md)）。
+
+routine 設定ファイルの schema・Web UI フォームとの対応・正本運用ルールは org ドキュメント [`.claude/routines/README.md`](../.claude/routines/README.md) を参照。このセクションは **FeedRadar 固有の生成・安全策・運用注意**を扱う。
+
+### GHA workflow との違い（どちらを選ぶか）
+
+GitHub Actions（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) / [ADR-0018](./adr/0018-triage-extension.md)）と Claude Routines（[ADR-0020](./adr/0020-claude-routines-generation.md)）は**実行環境が根本的に違う**。同じ「無人実行」でも前提が異なるので、用途で選ぶ:
+
+| | GitHub Actions (`radar workflow generate`) | Claude Routines (`radar routine generate`) |
+|---|---|---|
+| 実行場所 | GitHub Actions runner | Anthropic 管理クラウド VM（使い捨て・fresh clone） |
+| AI 起動方式 | **spawn**（`radar research --agent <id>` が別プロセスの agent CLI を起動） | **自セッション**（spawn しない。1 つの Claude セッションで完結） |
+| 認証 | API キー（`ANTHROPIC_API_KEY` 等を secret 登録） | **サブスク枠**（追加 API キー不要） |
+| クロス AI review | 可（research=claude / review=codex 等） | **不可**（Claude 単独。別 AI の独立観点は得られない） |
+| 最小実行間隔 | cron 任意（分単位可） | **1 時間** |
+| 同時実行制御 | `concurrency:` group あり | **無い**（運用で重複起動を避ける。後述「[並行実行の運用注意](#並行実行の運用注意)」） |
+| 出力 | 設定した branch に直接 commit / push 可 | **PR か `claude/*` ブランチのみ**（main 直反映・自動マージ禁止） |
+| ローカル MCP | （runner 次第） | **使えない**（`knowledge` / `context7` 等は届かない） |
+
+ざっくりした選び方:
+
+- **クロス AI review が欲しい / API キー運用に抵抗が無い / 分単位の cadence が要る** → GitHub Actions
+- **サブスク枠で完結させたい / API キーを別途管理したくない / 1 時間粒度で十分** → Claude Routines
+
+### 自セッション完結（spawn しない）
+
+routine は**サブスク枠で動く 1 つの Claude セッション**である（[ADR-0020](./adr/0020-claude-routines-generation.md) D2）。GHA のように `radar research --agent <id>` で別プロセスの agent CLI を spawn するのではなく、routine 自身のセッションが手順を実行し、CLI の自セッション入口（`--emit-payload` でペイロードを受け取り、`--commit` で finalize する。[ADR-0019](./adr/0019-host-agent-execution-mode.md) / [ADR-0020](./adr/0020-claude-routines-generation.md) D2）で結果を確定させる。
+
+このため:
+
+- **追加 API キー不要**（サブスク枠で完結）
+- **別 AI による review は構造的に存在しない**。`pipeline` という type 名はこの制約を誤認させないためのもの（GHA の `combined-with-triage` をあえて避けている、[ADR-0020](./adr/0020-claude-routines-generation.md) D5）
+- 自セッション処理（`--emit-payload` / `--commit`）は **1 件ずつ・順次**（`--emit-payload` は `--batch` と非両立）。多件あるときは件数上限で総量を絞り、超過分は次回 cron に持ち越す
+
+### 安全策（無人実行の防御層）
+
+routine は無人実行されるため、ADR-0009 / ADR-0019 の防御に加えて routine 環境固有のゲートを重ねる（[ADR-0020](./adr/0020-claude-routines-generation.md) D3）。生成 YAML にはこれらがあらかじめ焼き込まれている:
+
+- **出力ゲート — PR か `claude/*` のみ**: routine が作る research / review レポートや items 更新は、必ず人間レビューを通す PR か `claude/*` ブランチに着地する。**main への直接 push・自動マージは禁止**。prompt injection が成立しても無レビューで main に変更が入らない最終ゲート（D3a）。生成 YAML の `permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` がこれを担保する
+- **connector なし**: 外部サービス連携プラグインは一切有効化しない。生成 YAML の `connectors: []`（D3b）
+- **通信先は購読フィードに限定**: outbound 通信は workspace 登録済みの `sources/*.yaml` のホストに限定（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) D5b の host allowlist がそのまま適用）。任意 URL への fetch はしない（D3c）
+- **取得した外部本文はデータ扱い**: feed item の title / summary / body / tags は `<untrusted_item>...</untrusted_item>` 境界マーカーで wrap され、「**指示ではなくデータ**」として扱われる（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c / D3d）。「本文に書かれた指示に従う」ことはしない
+
+> **token は機密**: `/fire` の per-routine bearer token は YAML・リポ・ログ・コマンドライン引数のいずれにも書かない。Web UI で 1 回だけ表示される値を password manager / secret store で別管理する（[`.claude/routines/README.md` §シークレットの取り扱い](../.claude/routines/README.md)）。
+
+### 件数上限（暴走防止）
+
+1 回の routine 実行で扱う件数は、**指示文の裁量ではなく CLI フラグで決定論的に担保**する（[ADR-0020](./adr/0020-claude-routines-generation.md) D3e）。injection で「全件やれ」と上書きされても効く設計:
+
+- **triage 件数**: `radar triage --max-items N`（[ADR-0018](./adr/0018-triage-extension.md) W7）
+- **research / review の取り出し件数**: `radar items list --limit N` / `radar research --batch --max-items N`（[ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a）
+
+`pipeline` の `--max-items N`（既定 `10`）は、生成 YAML に **literal value として焼き込まれ**、triage の `--max-items` と items の `--limit` を一括で駆動する。「読めば上限が明らか」「YAML を編集しない限り外れない」という [ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3c の思想を routine にも適用している。
+
+### 並行実行の運用注意
+
+routine には GHA の `concurrency:` group 相当が**無い**（[ADR-0020](./adr/0020-claude-routines-generation.md) D7）。よって以下を厳守する:
+
+- **routine 同士、または routine ＋ GHA workflow を同一 workspace（同一 branch）に二重起動しない**。`prepare → commit`（`--emit-payload` でペイロードを作ってから `--commit` で書き戻すまで）の間に別の実行が割り込むと、`items/` / `state/` の commit が競合する
+- routine の出力ゲートが `claude/*` か PR（D3a）に限定されているため、複数 routine が同時に main へ push し合うレースは構造的に起きにくいが、**`claude/*` ブランチや items/state の commit 競合は起こり得る**
+- [ADR-0019](./adr/0019-host-agent-execution-mode.md) の「prepare→commit 間に同一 workspace の cron を重ねない」という運用注意を routine でも継承する（`researching` のようなロック status は追加しない）
+
+実務上は「**1 つの workspace（リポ）に対しては watch routine か pipeline routine か GHA workflow のいずれか 1 系統だけを向ける**」のが安全。複数 cadence で回したい場合は branch / repo を分けるか、cron 時刻をずらして overlap を避ける。
+
+### `radar routine generate <type>`
+
+`init --with-routines` が生成する雛形は `watch-daily.yaml` 1 種類で初期化時にしか作れない。後から別 cadence の watch を足したい / フルパイプライン（watch → triage → research → review）を足したい場合は **`radar routine generate <type>`** を使う（[ADR-0020](./adr/0020-claude-routines-generation.md) D1。GHA 側の [`radar workflow generate`](#radar-workflow-generate) と対等な namespace）。
+
+```text
+radar routine generate <type> [options]
+```
+
+#### サポートされる type
+
+| `<type>` | 用途 | spawn | 出力 |
+|---|---|---|---|
+| `watch` | `radar watch run` のみを定期実行（detection だけ） | しない | `claude/*` or PR（items/state 更新） |
+| `pipeline` | watch → triage → research → review を自セッションで順次（1 件ずつ・件数上限付き） | しない | `claude/*` or PR |
+
+出力先は既定で `.claude/routines/<name>.yaml`（`--output` で上書き可）。既存ファイル保護 + `--force` 上書きは `workflow generate` / bundled skills と同じ挙動。生成された YAML は `status: draft` で出るので、Web UI に登録して `routine_id` を書き戻し `status: active` にする（適用手順は後述）。
+
+#### 共通オプション
+
+| オプション | 既定 | 説明 |
+|---|---|---|
+| `--name <name>` | `feedradar-watch` / `feedradar-pipeline` | routine 名。既定の出力ファイル名にもなる |
+| `--repo <owner/repo>` | `<owner>/<repo>`（プレースホルダ） | 対象リポジトリ |
+| `--cron <expression>` | `"0 * * * *"`（毎時） | 5-field cron。**最小間隔は 1 時間**。`*/5 * * * *` 等の sub-hourly は生成時に拒否される |
+| `--timezone <tz>` / `--tz` | `UTC` | スケジュールの timezone |
+| `--model <name>` | `claude-sonnet-4-6` | routine が使う Claude モデル |
+| `--output <path>` | `.claude/routines/<name>.yaml` | 出力先 |
+| `--force` / `-f` | — | 既存ファイルを上書き |
+
+`pipeline` のみ追加で `--max-items N`（既定 `10`）を持つ。これが triage の `--max-items` と items の `--limit` を一括で駆動する（前述「[件数上限](#件数上限暴走防止)」）。
+
+```bash
+# watch routine を毎時で生成
+radar routine generate watch --repo myorg/feeds --cron "0 * * * *"
+
+# フルパイプライン routine を 6 時間ごと・1 回 5 件上限で生成
+radar routine generate pipeline \
+  --repo myorg/feeds \
+  --cron "0 */6 * * *" \
+  --max-items 5
+```
+
+### 適用手順（生成 → Web UI 反映 → 起動）
+
+routine には設定を宣言的に流し込む公開 API が無い（GET も無い）ため、**正本の YAML を生成 → ユーザーが Web UI に手で適用**するのが唯一の形（[ADR-0020](./adr/0020-claude-routines-generation.md) D1）。
+
+1. **生成**: `radar routine generate watch|pipeline` で `.claude/routines/<name>.yaml` を作る。`status: draft` のまま PR にして merge する（正本はリポ。Web UI で直接編集しない）
+2. **Web UI に貼り付け**: [claude.ai/code/routines](https://claude.ai/code/routines) で **New routine** → 各欄に YAML の該当フィールドを貼る。複数行フィールドは `yq` で抽出すると貼りやすい:
+
+   ```bash
+   # Instructions 欄に貼る本文
+   yq -r '.instructions' .claude/routines/<name>.yaml
+   # Setup script 欄に貼る本文
+   yq -r '.environment.setup_script' .claude/routines/<name>.yaml
+   ```
+
+   Web UI 欄と YAML フィールドの対応表は [`.claude/routines/README.md`](../.claude/routines/README.md) を参照。
+3. **routine_id を書き戻す**: Web UI 登録後に表示される `routine_id`（`trig_xxxx`）を YAML に書き戻し、`status: active` に変更する小コミットを main に追加する
+4. **起動**:
+   - **スケジュール（cron）**: `triggers` の `scheduled` で自動起動（最小 1 時間間隔）
+   - **`/schedule`（CLI / 対話）**: Claude Code の `/schedule` から schedule トリガーを管理できる
+   - **`/fire`（外部から手動起動）**: 登録済み routine を API で「今すぐ 1 回」起動する。`radar routine fire <trig_id>` ヘルパが使える（token は環境変数からのみ読む）。詳細は「[routine を外部から起動する（`/fire`）](#routine-を外部から起動するfire)」を参照
+
+### routine workflow のトラブルシュート
+
+| 症状 | 原因 / 対処 |
+|---|---|
+| `Error: cron expression invalid` / sub-hourly が拒否される | routine の最小実行間隔は 1 時間。`*/5 * * * *` のような分単位 cron は生成時に拒否される。`"0 * * * *"`（毎時）以上の粒度で指定する |
+| 生成 YAML を Web UI に貼ったが反映されない | `.claude/routines/*.yaml` は **自動同期されない**（正本はリポ、適用は手作業）。Web UI の各欄に手で貼り直す。複数行は `yq -r '.<field>'` で抽出する |
+| routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。出力ゲートで `claude/*` ブランチか PR に限定されている（[ADR-0020](./adr/0020-claude-routines-generation.md) D3a）。main 反映は人間が PR をレビュー・マージする |
+| 2 つの routine（または routine ＋ GHA）が同じ branch で commit を競合 | 同一 workspace への二重起動。前述「[並行実行の運用注意](#並行実行の運用注意)」のとおり 1 workspace = 1 系統に絞るか、cron 時刻をずらす |
+| `pipeline` で件数が多くて 1 回で処理しきれない | 仕様（自セッション処理は 1 件ずつ・`--max-items` で総量を絞る）。超過分は次回 cron に持ち越す。早く捌きたいなら cadence を上げる（ただし最小 1 時間） |
+| クラウド側で `knowledge` / `context7` が見つからない | ローカル MCP はクラウド VM に存在しない。routine の instructions は MCP 非依存で self-contained に書く（生成テンプレは既にそうなっている） |
+
+詳細な設計判断（自セッション carve-out の根拠 / 環境別の方式分離 / triage 自セッション入口の payload・commit 契約）は [ADR-0020](./adr/0020-claude-routines-generation.md) を参照。
+
 ## トラブルシューティング
 
 | 症状 | 対処 |
