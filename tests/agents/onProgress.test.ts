@@ -60,6 +60,7 @@ function buildResearchRequest(overrides: Partial<ResearchRequest> = {}): Researc
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/feedradar-test/research/sample_v1.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -73,6 +74,7 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nid: sample\n---\n# v1 body\n",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -90,6 +92,7 @@ function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReque
     outputPath:
       "/tmp/feedradar-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -184,5 +187,38 @@ describe.each(adapters)("agents/$name adapter — onProgress callback (ADR-0015 
       const [, options] = run.mock.calls[0];
       expect(options.onProgress).toBe(onProgress);
     });
+  });
+});
+
+/**
+ * Cross-adapter locale contract (#316 / ADR-0021 §5). All four adapters take
+ * the same `locale` field on their request and append the same output-language
+ * directive to their prompt — none should break on a `ja` locale, and each
+ * must emit the locale-specific directive line. This guards against an adapter
+ * being forgotten when the directive policy changes.
+ */
+describe.each(adapters)("agents/$name adapter — report output locale (#316)", ({ name, build }) => {
+  it("appends a Japanese-output directive to the research prompt on locale=ja", async () => {
+    const { adapter, run } = build();
+    await adapter.research(buildResearchRequest({ agent: name, locale: "ja" }));
+    const [prompt] = run.mock.calls[0];
+    expect(prompt).toContain("Write the research report body in Japanese");
+  });
+
+  it("appends an English-output directive to the research prompt on locale=en", async () => {
+    const { adapter, run } = build();
+    await adapter.research(buildResearchRequest({ agent: name, locale: "en" }));
+    const [prompt] = run.mock.calls[0];
+    expect(prompt).toContain("Write the research report body in English.");
+  });
+
+  it("threads locale into the review + update prompts too", async () => {
+    const { adapter, run } = build();
+    await adapter.review(buildReviewRequest({ agent: name, locale: "ja" }));
+    expect(run.mock.calls[0][0]).toContain("Write the review block body in Japanese");
+
+    const { adapter: adapter2, run: run2 } = build();
+    await adapter2.update(buildUpdateRequest({ agent: name, locale: "ja" }));
+    expect(run2.mock.calls[0][0]).toContain("Write the updated research report body in Japanese");
   });
 });

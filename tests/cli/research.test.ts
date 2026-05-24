@@ -396,6 +396,64 @@ describe("cli/research", () => {
     expect(calls[0].agent).toBe("gemini-cli");
   });
 
+  // #316 / ADR-0021: the CLI resolves the report-output locale and hands it to
+  // the adapter (`--lang` flag > RADAR_LANG env > config.locale > en).
+  describe("report output locale resolution (#316)", () => {
+    it("defaults the adapter locale to 'en' when no source supplies one", async () => {
+      const workdir = await setupWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls[0].locale).toBe("en");
+    });
+
+    it("passes locale='ja' to the adapter when --lang ja is given", async () => {
+      const workdir = await setupWorkspace();
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--lang", "ja"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls[0].locale).toBe("ja");
+    });
+
+    it("falls back to config.locale when --lang / RADAR_LANG are absent", async () => {
+      const workdir = await setupWorkspace();
+      await writeFile(join(workdir, "radar.config.yaml"), "locale: ja\n", "utf8");
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls[0].locale).toBe("ja");
+    });
+
+    it("lets --lang override config.locale (flag wins)", async () => {
+      const workdir = await setupWorkspace();
+      await writeFile(join(workdir, "radar.config.yaml"), "locale: ja\n", "utf8");
+      const { adapter, calls } = buildMockAdapter(async (req) => {
+        await writeFile(req.outputPath, matter.stringify("body", validFrontmatter(req)), "utf8");
+      });
+      previousAdapter = registerAgentAdapter(adapter);
+
+      const { io } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--lang", "en"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(calls[0].locale).toBe("en");
+    });
+  });
+
   it("prefers explicit --agent over radar.config.yaml default", async () => {
     const workdir = await setupWorkspace();
     await writeFile(
