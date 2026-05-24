@@ -748,6 +748,146 @@ describe("e2e/cli (binary smoke)", () => {
     });
   });
 
+  describe("scenario S: routine generate pipeline (ADR-0020 D5 `pipeline` / #284)", () => {
+    // Sibling of scenario R for the full-pipeline routine type. Validates that
+    // the built binary renders the bundled `dist/templates/routines/
+    // pipeline.yaml.tmpl` into a contract-clean Claude Routine YAML under
+    // `.claude/routines/`. We assert the *stable* shape of the generated file
+    // (file landed, parses, draft status, repositories, the >= 1-hour cron, the
+    // `--max-items` cap threaded into the body) and deliberately avoid pinning
+    // volatile prose like `network_access` (PR #293 may change it) so this
+    // smoke survives template wording churn.
+    it("renders the pipeline routine with placeholders replaced and a parseable shape", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-routine-pipeline-"));
+      const result = await runCli(
+        [
+          "routine",
+          "generate",
+          "pipeline",
+          "--repo",
+          "acme/widgets",
+          "--cron",
+          "0 * * * *",
+          "--max-items",
+          "4",
+        ],
+        { cwd: workdir },
+      );
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+      const outputPath = join(".claude", "routines", "feedradar-pipeline.yaml");
+      expect(result.stdout).toContain(`routine generate pipeline: wrote ${outputPath}`);
+      // Stdout surfaces the Web UI paste workflow (yq) and the /schedule example
+      // (same operator affordances as the watch generator).
+      expect(result.stdout).toContain("yq -r '.instructions'");
+      expect(result.stdout).toContain("/schedule");
+
+      const written = await readFile(join(workdir, outputPath), "utf8");
+      // No placeholder leaks (every {{token}} must be substituted).
+      expect(written).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+
+      // Stable contract shape — 1:1 with the routine field set the validator
+      // requires. We pin structure, not prose.
+      const yaml = parseYaml(written);
+      expect(yaml.name).toBe("feedradar-pipeline");
+      expect(yaml.status).toBe("draft");
+      expect(yaml.routine_id).toBe("");
+      expect(yaml.repositories).toEqual(["acme/widgets"]);
+      expect(yaml.triggers?.[0]?.type).toBe("scheduled");
+      expect(yaml.triggers?.[0]?.cron).toBe("0 * * * *");
+      expect(yaml.connectors).toEqual([]);
+      expect(typeof yaml.environment?.setup_script).toBe("string");
+      // Full pipeline in one session: the instructions run the whole chain and
+      // the CLI `--max-items` cap (ADR-0020 D3e) is threaded through.
+      expect(yaml.instructions).toContain("radar watch run");
+      expect(yaml.instructions).toContain("radar triage --apply --max-items 4");
+      expect(yaml.instructions).toContain("--limit 4");
+    });
+
+    it("rejects a sub-hourly pipeline cron (Routines 1-hour minimum)", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-routine-pipeline-subhourly-"));
+      const result = await runCli(
+        ["routine", "generate", "pipeline", "--repo", "acme/widgets", "--cron", "*/10 * * * *"],
+        { cwd: workdir },
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("minimum interval of 1 hour");
+    });
+  });
+
+  describe("scenario T: routine fire (ADR-0020 /fire connector / #282, network-free)", () => {
+    // `radar routine fire <trig_id>` POSTs to api.anthropic.com. We must NEVER
+    // hit the network from a smoke test, so we only exercise the paths that
+    // exit BEFORE any fetch is attempted:
+    //   - missing token env var      → exit 2 (no fetch)
+    //   - missing <trig_id>          → exit 2 (no fetch)
+    //   - a `--token` flag           → exit 2 (refused: leak prevention)
+    //   - an invalid id WITH a token → exit 1 (id validated before fetch)
+    // The fetch-mocked POST contract (URL / headers / token-never-logged) is
+    // covered in-process by tests/cli/routine-fire.test.ts; here we only pin
+    // the binary-boundary behaviour of the no-network guards.
+    const FIRE_TOKEN_ENV = "FEEDRADAR_ROUTINE_FIRE_TOKEN";
+
+    it("errors (exit 2) when the token env var is unset, never reaching the network", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-fire-notoken-"));
+      // Explicitly clear the default token env var so an ambient export in the
+      // CI shell cannot accidentally arm a real network call.
+      const result = await runCli(["routine", "fire", "trig_abc123"], {
+        cwd: workdir,
+        extraEnv: { [FIRE_TOKEN_ENV]: "" },
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain(FIRE_TOKEN_ENV);
+    });
+
+    it("errors (exit 2) when <trig_id> is omitted", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-fire-noid-"));
+      const result = await runCli(["routine", "fire"], {
+        cwd: workdir,
+        extraEnv: { [FIRE_TOKEN_ENV]: "tok-should-not-be-used" },
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain("missing <trig_id>");
+      // Token present but never echoed (the missing-id path prints help only).
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("tok-should-not-be-used");
+    });
+
+    it("refuses a --token flag on the command line (leak prevention, exit 2)", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-fire-tokenflag-"));
+      const result = await runCli(["routine", "fire", "trig_abc123", "--token", "secret-on-argv"], {
+        cwd: workdir,
+        extraEnv: { [FIRE_TOKEN_ENV]: "" },
+      });
+      expect(result.code).toBe(2);
+      expect(result.stderr.toLowerCase()).toContain("refusing --token");
+    });
+
+    it("honours --token-env and --text but still exits before the network on a bad id", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-fire-badid-"));
+      // A token IS present (under a custom env name) and `--text` is supplied,
+      // so the parser accepts the flags and reaches fireRoutine; the invalid id
+      // (no `trig_` prefix) is rejected there BEFORE fetch runs → exit 1. This
+      // proves --token-env / --text are wired without ever opening a socket.
+      const result = await runCli(
+        ["routine", "fire", "not-a-trig-id", "--token-env", "ALT_FIRE_TOKEN", "--text", "go now"],
+        {
+          cwd: workdir,
+          extraEnv: { ALT_FIRE_TOKEN: "alt-secret-value", [FIRE_TOKEN_ENV]: "" },
+        },
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("invalid routine id");
+      // The token is never printed on any stream.
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("alt-secret-value");
+    });
+
+    it("prints help (exit 0)", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-fire-help-"));
+      const result = await runCli(["routine", "fire", "--help"], { cwd: workdir });
+      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("radar routine fire <trig_id>");
+    });
+  });
+
   describe("scenario J: source add --recipe + source recipes (bundled recipe discovery)", () => {
     // ADR-0012 §D3 / #178: recipes ship as `dist/recipes/*.yaml` and are
     // discovered via `source recipes`. `source add --recipe <name>` then
