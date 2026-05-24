@@ -1,12 +1,14 @@
 import { stat } from "node:fs/promises";
 
 import type { AgentProgressCallback } from "../agents/types.js";
+import type { Locale } from "../core/locale.js";
 import {
   createProgressReporter,
   noopProgressReporter,
   type ProgressLevel,
   type ProgressReporter,
 } from "../core/progress.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 
 /**
  * Shared progress helpers for `radar research` / `review` / `update`.
@@ -99,6 +101,28 @@ export interface BuildReporterOptions {
   tty?: boolean;
   /** Test-only output stream override. Defaults to `process.stderr`. */
   stream?: NodeJS.WritableStream;
+  /**
+   * Resolved UI locale (#313 / ADR-0021). Optional so existing test call sites
+   * that only care about reporter mechanics (`buildReporter({ level })`) keep
+   * working. When supplied, {@link buildReporter} bundles a matching
+   * {@link Translator} on the returned reporter as {@link ReporterWithTranslator.t}
+   * so the phase-emitting CLI code can localize the labels it passes to
+   * `phase()` / `start()` / `succeed()` / `fail()` without threading a second
+   * argument everywhere. `core/progress.ts` itself stays locale-agnostic — it
+   * only renders the strings the caller hands it.
+   */
+  locale?: Locale;
+}
+
+/**
+ * A {@link ProgressReporter} carrying the {@link Translator} that produces its
+ * phase labels. The reporter mechanics are unchanged; `t` is an attached
+ * convenience so callers that already hold a `buildReporter()` result can
+ * localize without separately importing the i18n layer.
+ */
+export interface ReporterWithTranslator extends ProgressReporter {
+  /** Translator bound to the resolved locale (en when none supplied). */
+  t: Translator;
 }
 
 /**
@@ -111,13 +135,20 @@ export interface BuildReporterOptions {
  * (the env check happens inside `createProgressReporter`); the CLI keeps its
  * pre-existing 1-line `io.log("research: wrote …")` summary as the only
  * surviving signal, satisfying the issue's acceptance criterion 8.
+ *
+ * The returned reporter always carries a {@link ReporterWithTranslator.t}
+ * translator (bound to `opts.locale`, defaulting to `en`). The phase-emitting
+ * CLIs use it so the milestone labels (`Loaded item …`, `Spawning …`, `Agent
+ * running…`, `Status: … → …`) follow the resolved locale (#313); agent
+ * stdout/stderr pass-through via `reporter.raw()` is never translated.
  */
-export function buildReporter(opts: BuildReporterOptions): ProgressReporter {
-  return createProgressReporter({
+export function buildReporter(opts: BuildReporterOptions): ReporterWithTranslator {
+  const reporter = createProgressReporter({
     level: opts.level,
     tty: opts.tty,
     stream: opts.stream,
   });
+  return Object.assign(reporter, { t: createTranslator(opts.locale ?? "en") });
 }
 
 const KIB = 1024;

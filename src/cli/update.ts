@@ -11,6 +11,7 @@ import type { Locale } from "../core/locale.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
@@ -283,8 +284,10 @@ async function prepareUpdate(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<PreparedUpdate | { exitCode: number }> {
-  const { cwd, researchId, warn, error, progress } = params;
+  const { cwd, researchId, warn, error, progress, t } = params;
 
   // Resolve predecessor research path.
   let prevId: string;
@@ -406,8 +409,8 @@ async function prepareUpdate(params: {
   // Phase marker: items resolved.
   progress.phase(
     linkedItems.length === 1
-      ? `Loaded item: ${linkedItems[0].id}`
-      : `Loaded ${linkedItems.length} items`,
+      ? t("cli.progress.loadedItem", { id: linkedItems[0].id })
+      : t("cli.progress.loadedItems", { count: linkedItems.length }),
     linkedItems.map((i) => i.id).join(", "),
   );
 
@@ -440,8 +443,10 @@ async function finalizeUpdate(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { outputPath, prevFm, newId, agent, linkedItems, log, warn, error, progress } = params;
+  const { outputPath, prevFm, newId, agent, linkedItems, log, warn, error, progress, t } = params;
 
   if (!(await pathExists(outputPath))) {
     error(`update: did not write ${outputPath} (agent / host ignored the output path?)`);
@@ -515,14 +520,17 @@ async function finalizeUpdate(params: {
   }
   // Phase marker emitted after the optional auto-correction so the user sees
   // "validated" only once the on-disk file is known to satisfy the schema.
-  progress.phase("Frontmatter validated");
+  progress.phase(t("cli.progress.frontmatterValidated"));
   // `update` deliberately preserves items.yaml status (ADR-0008). We still
   // surface a status phase marker so the progress stream stays uniform with
   // research / review — the value just records the no-op transition. The
   // commit path has no resolved linked items, so it skips the per-item marker.
   if (linkedItems !== undefined && linkedItems.length > 0) {
     progress.phase(
-      `Status: ${linkedItems[0].status} → ${linkedItems[0].status}`,
+      t("cli.progress.statusTransition", {
+        from: linkedItems[0].status,
+        to: linkedItems[0].status,
+      }),
       "items.yaml unchanged",
     );
   }
@@ -548,9 +556,11 @@ async function runUpdateEmitPayload(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { cwd, researchId, agent, templateId, log, warn, error, progress } = params;
-  const prepared = await prepareUpdate({ cwd, researchId, warn, error, progress });
+  const { cwd, researchId, agent, templateId, log, warn, error, progress, t } = params;
+  const prepared = await prepareUpdate({ cwd, researchId, warn, error, progress, t });
   if ("exitCode" in prepared) return prepared.exitCode;
 
   const templatesDir = join(cwd, "templates");
@@ -561,7 +571,7 @@ async function runUpdateEmitPayload(params: {
     error(`update: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  progress.phase(`Loaded template: ${templateId}.md`);
+  progress.phase(t("cli.progress.loadedTemplate", { templateId }));
 
   log(
     renderUpdatePayloadBlock({
@@ -595,8 +605,10 @@ async function runUpdateCommit(params: {
   warn: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { cwd, commitPath, log, warn, error, progress } = params;
+  const { cwd, commitPath, log, warn, error, progress, t } = params;
   const guard = await resolveCommitPathInside(cwd, "research", commitPath);
   if ("error" in guard) {
     error(`update: ${guard.error}`);
@@ -725,6 +737,7 @@ async function runUpdateCommit(params: {
     warn,
     error,
     progress,
+    t,
   });
 }
 
@@ -777,12 +790,12 @@ export async function runUpdate(
     }
     throw e;
   }
-  const progress = options.progress ?? buildReporter({ level: progressState.level });
-
   // Resolve the report-output locale (#316) BEFORE the command parser sees argv
   // (strips `--lang`). `config.locale` is the lowest-priority source, read
   // best-effort here; a malformed config is reported authoritatively by
   // `resolveUpdateAgent` below, so we tolerate the error as "no config locale".
+  // Resolved before the reporter so progress (#313) and report output (#316)
+  // share the same locale.
   let configLocale: string | undefined;
   try {
     configLocale = (await loadRadarConfig(cwd)).locale;
@@ -802,6 +815,12 @@ export async function runUpdate(
     }
     throw e;
   }
+  const progress = options.progress ?? buildReporter({ level: progressState.level, locale });
+  // Translator for the user-facing progress phase labels (#313). Built from the
+  // same resolved locale used for the report-output language (#316) so the
+  // spinner / phase markers track the report body language. Built independently
+  // of `progress` so a test-injected reporter still gets localized labels.
+  const t = createTranslator(locale);
 
   let parsed: UpdateArgs;
   try {
@@ -828,7 +847,7 @@ export async function runUpdate(
       error(`update: --commit takes a <path>, not a <research-id> (got '${parsed.researchId}')`);
       return 2;
     }
-    return runUpdateCommit({ cwd, commitPath: parsed.commit, log, warn, error, progress });
+    return runUpdateCommit({ cwd, commitPath: parsed.commit, log, warn, error, progress, t });
   }
 
   if (!parsed.researchId) {
@@ -864,6 +883,7 @@ export async function runUpdate(
       warn,
       error,
       progress,
+      t,
     });
   }
 
@@ -875,6 +895,7 @@ export async function runUpdate(
     warn,
     error,
     progress,
+    t,
   });
   if ("exitCode" in prepared) return prepared.exitCode;
   const { prevFm, prevBody, base, newVersion, newId, outputPath, linkedItems } = prepared;
@@ -888,14 +909,14 @@ export async function runUpdate(
     error(`update: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  progress.phase(`Loaded template: ${templateId}.md`);
+  progress.phase(t("cli.progress.loadedTemplate", { templateId }));
 
   log(`update: invoking ${agent} adapter for research '${prevFm.id}' -> ${base}_v${newVersion}.md`);
 
   // Phase marker + spinner for the agent run. See `research.ts` for the
   // shared pattern.
-  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
-  progress.start("Agent running");
+  progress.phase(t("cli.progress.spawning", { agent }), `cwd: ${cwd}`);
+  progress.start(t("cli.progress.agentRunning"));
   const adapterStartedAt = Date.now();
   const polling = pollOutputFileSize({ path: outputPath, reporter: progress });
 
@@ -921,12 +942,15 @@ export async function runUpdate(
     });
   } catch (e) {
     polling.stop();
-    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
+    progress.fail(t("cli.progress.agentFailed"), e instanceof Error ? e.message : String(e));
     error(`update: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
   polling.stop();
-  progress.succeed("Agent completed (exit 0)", Date.now() - adapterStartedAt);
+  progress.succeed(
+    t("cli.progress.agentCompleted", { exitCode: 0 }),
+    Date.now() - adapterStartedAt,
+  );
 
   // POST block (shared with --commit): re-read, validate, drift-correct, log.
   return finalizeUpdate({
@@ -939,6 +963,7 @@ export async function runUpdate(
     warn,
     error,
     progress,
+    t,
   });
 }
 

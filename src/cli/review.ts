@@ -12,6 +12,7 @@ import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import { isValidTransition } from "../core/transitions.js";
+import { createTranslator, type Translator } from "../i18n/index.js";
 import type { AgentId, Item, ItemStatus } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
@@ -320,8 +321,10 @@ async function runReviewCommit(params: {
   log: (m: string) => void;
   error: (m: string) => void;
   progress: ProgressReporter;
+  /** Translator for the user-facing progress phase labels (#313). */
+  t: Translator;
 }): Promise<number> {
-  const { cwd, commitPath, log, error, progress } = params;
+  const { cwd, commitPath, log, error, progress, t } = params;
   const guard = await resolveCommitPathInside(cwd, "research", commitPath);
   if ("error" in guard) {
     error(`review: ${guard.error}`);
@@ -356,7 +359,7 @@ async function runReviewCommit(params: {
     return 1;
   }
   const fm = fmResult.data;
-  progress.phase("Frontmatter validated");
+  progress.phase(t("cli.progress.frontmatterValidated"));
 
   // The host session is responsible for stamping the review (the CLI no longer
   // spawns an agent in this path). If the stamp is missing the host did not run
@@ -411,7 +414,10 @@ async function runReviewCommit(params: {
   for (const item of updated) {
     const from = transitions.get(item.id);
     if (from !== undefined && item.status === "reviewed") {
-      progress.phase(`Status: ${from} → reviewed`, `items/${item.sourceId}/${item.id}.yaml`);
+      progress.phase(
+        t("cli.progress.statusTransition", { from, to: "reviewed" }),
+        `items/${item.sourceId}/${item.id}.yaml`,
+      );
       log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
     }
   }
@@ -710,12 +716,12 @@ export async function runReview(
     }
     throw e;
   }
-  const progress = options.progress ?? buildReporter({ level: progressState.level });
-
   // Resolve the report-output locale (#316) BEFORE the command parser sees argv
   // (strips `--lang`). `config.locale` is the lowest-priority source, read
   // best-effort here; a malformed config is reported authoritatively by the
   // agent resolver below, so we tolerate the error as "no config locale".
+  // Resolved before the reporter so progress (#313) and report output (#316)
+  // share the same locale.
   let configLocale: string | undefined;
   try {
     configLocale = (await loadRadarConfig(cwd)).locale;
@@ -735,6 +741,12 @@ export async function runReview(
     }
     throw e;
   }
+  const progress = options.progress ?? buildReporter({ level: progressState.level, locale });
+  // Translator for the user-facing progress phase labels (#313). Built from the
+  // same resolved locale used for the report-output language (#316) so the
+  // spinner / phase markers track the report body language. Built independently
+  // of `progress` so a test-injected reporter still gets localized labels.
+  const t = createTranslator(locale);
 
   let parsed: ReviewArgs;
   try {
@@ -765,7 +777,7 @@ export async function runReview(
       );
       return 2;
     }
-    return runReviewCommit({ cwd, commitPath: parsed.commit, log, error, progress });
+    return runReviewCommit({ cwd, commitPath: parsed.commit, log, error, progress, t });
   }
   if (parsed.emitPayload && parsed.batch) {
     error("review: --emit-payload is incompatible with --batch");
@@ -919,8 +931,8 @@ export async function runReview(
   // the user can see what's about to be re-touched.
   progress.phase(
     linkedItems.length === 1
-      ? `Loaded item: ${linkedItems[0].id}`
-      : `Loaded ${linkedItems.length} items`,
+      ? t("cli.progress.loadedItem", { id: linkedItems[0].id })
+      : t("cli.progress.loadedItems", { count: linkedItems.length }),
     linkedItems.map((i) => i.id).join(", "),
   );
 
@@ -933,7 +945,7 @@ export async function runReview(
     error(`review: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
   }
-  progress.phase(`Loaded template: ${templateId}.md`);
+  progress.phase(t("cli.progress.loadedTemplate", { templateId }));
 
   // Host-agent emit (#254 / ADR-0019): same research / item / template
   // resolution and pre-review guards as the spawn path (reviewedAt===null,
@@ -967,8 +979,8 @@ export async function runReview(
 
   // Phase marker + spinner for the agent run. See `research.ts` for the
   // rationale of pairing `phase("Spawning …")` with `start("Agent running")`.
-  progress.phase(`Spawning ${agent}`, `cwd: ${cwd}`);
-  progress.start("Agent running");
+  progress.phase(t("cli.progress.spawning", { agent }), `cwd: ${cwd}`);
+  progress.start(t("cli.progress.agentRunning"));
   const adapterStartedAt = Date.now();
   const polling = pollOutputFileSize({ path: researchPath, reporter: progress });
 
@@ -988,7 +1000,7 @@ export async function runReview(
     });
   } catch (e) {
     polling.stop();
-    progress.fail("Agent failed", e instanceof Error ? e.message : String(e));
+    progress.fail(t("cli.progress.agentFailed"), e instanceof Error ? e.message : String(e));
     error(`review: adapter failed: ${e instanceof Error ? e.message : String(e)}`);
     // The agent may have partially written to researchPath before failing.
     // Restore the snapshot so the workspace stays consistent.
@@ -1010,7 +1022,10 @@ export async function runReview(
   // file-size poll is stopped in both the success and error branches so the
   // unref'd timer never lingers into the next CLI invocation under test.
   polling.stop();
-  progress.succeed("Agent completed (exit 0)", Date.now() - adapterStartedAt);
+  progress.succeed(
+    t("cli.progress.agentCompleted", { exitCode: 0 }),
+    Date.now() - adapterStartedAt,
+  );
 
   // Re-read and validate the modified research file.
   let postBody: string;
@@ -1074,7 +1089,7 @@ export async function runReview(
     await restoreSnapshot(snapshot);
     return 1;
   }
-  progress.phase("Frontmatter validated");
+  progress.phase(t("cli.progress.frontmatterValidated"));
 
   // Now transition item status. If this fails (filesystem error, permissions,
   // etc.), restore both the research file and the items snapshot so the
@@ -1103,7 +1118,10 @@ export async function runReview(
     // Phase marker per item so the digest case (multiple itemIds) is still
     // explicit about which yaml files moved. Uses the same `Status: a → b`
     // shape as `research.ts` per ADR-0015 D4.
-    progress.phase("Status: researched → reviewed", `items/${item.sourceId}/${item.id}.yaml`);
+    progress.phase(
+      t("cli.progress.statusTransition", { from: "researched", to: "reviewed" }),
+      `items/${item.sourceId}/${item.id}.yaml`,
+    );
     log(`review: items/${item.sourceId}/${item.id}.yaml status -> reviewed`);
   }
   return 0;
