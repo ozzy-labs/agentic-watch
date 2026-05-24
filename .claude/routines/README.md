@@ -24,6 +24,8 @@
 
 1 ルーチンあたり 1 ファイル。`instructions`（Web UI の Prompt 欄）と `environment.setup_script`（Setup script 欄）も同じ YAML 内に文字列として持つ。
 
+各 `<routine-name>.yaml` は **CLI 生成（`radar routine generate <type>`）** か **手動（`_template.yaml` から起こす）** のどちらでも作れる（使い分けは後述「[新規追加](#新規追加)」）。
+
 ## Web UI 欄 ↔ YAML フィールド対応表
 
 | Web UI 欄                                 | YAML フィールド                           |
@@ -59,15 +61,45 @@
 
 ### 新規追加
 
+routine YAML を起こす方法は 2 通りある。どちらで作っても**置き場所（`.claude/routines/*.yaml`）・正本運用ルール・Web UI 反映手順は同じ**。
+
+| 方法                                            | 向いているケース                                                                                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CLI 生成（`radar routine generate <type>`）** | `radar` CLI があるリポでの第一選択。`watch`（detection のみ）/ `pipeline`（watch → triage → research → review を自セッションで順次）の定型を、安全策込みで一発生成できる |
+| **手動（`_template.yaml` から起こす）**         | `radar` CLI が無いリポ、または定型に当てはまらない独自 routine を 1 から組む場合                                                                                            |
+
+#### CLI 生成（generate）
+
+`radar` CLI を持つリポでは、定型 routine を生成できる:
+
+```bash
+# detection だけの watch routine を毎時で生成
+radar routine generate watch --repo <owner>/<repo> --cron "0 * * * *"
+
+# watch → triage → research → review のフルパイプライン（1 回 5 件上限）
+radar routine generate pipeline --repo <owner>/<repo> --cron "0 */6 * * *" --max-items 5
+```
+
+- 出力先は既定で `.claude/routines/<name>.yaml`（`--output` で上書き可、`--force` で既存上書き）。
+- 生成 YAML は `status: draft` で出る。安全策（`permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` / `connectors: []`・件数上限の literal 焼き込み）はあらかじめ埋まっている。
+- type・オプション一覧・FeedRadar 固有の安全策は [`docs/user-guide.md` §routine workflow](../../docs/user-guide.md#routine-workflow) を参照。
+
+生成後は下記「[手動 / 生成 共通の続き](#手動--生成-共通の続き)」へ進む。
+
+#### 手動（`_template.yaml` から起こす）
+
 1. `cp .claude/routines/_template.yaml .claude/routines/<new-name>.yaml`
 2. ファイル内のフィールドを編集
    - `name` を `<new-name>` に揃える
    - `repositories:` を実際の `<owner>/<repo>` に置換
    - `instructions` の `ROUTINE_NAME` / `<owner>/<repo>` を実値に置換
    - `environment.setup_script` の **project-specific install** 領域に対象リポの依存解決コマンドを追加
-3. `status: draft` のまま PR 作成・マージ
-4. [claude.ai/code/routines](https://claude.ai/code/routines) で **New routine** → 各欄に YAML から該当フィールドの内容を貼る
-5. 表示された `routine_id` を YAML に書き戻し、`status: active` に変更する小コミットを `main` に追加
+
+#### 手動 / 生成 共通の続き
+
+1. `status: draft` のまま PR 作成・マージ
+2. [claude.ai/code/routines](https://claude.ai/code/routines) で **New routine** → 各欄に YAML から該当フィールドの内容を貼る
+3. 表示された `routine_id` を YAML に書き戻し、`status: active` に変更する小コミットを `main` に追加
 
 ### 更新
 
@@ -78,6 +110,20 @@
 
 1. Web UI で routine を削除
 2. `git rm .claude/routines/<name>.yaml`
+
+### 外部からの起動（fire）
+
+スケジュール（cron）以外に、登録済み routine を API で「今すぐ 1 回」起動できる。`radar` CLI があるリポでは `radar routine fire <trig_id>` ヘルパが使える:
+
+```bash
+export FEEDRADAR_ROUTINE_FIRE_TOKEN='...'   # Web UI で 1 回だけ表示された per-routine token
+radar routine fire trig_abc123
+radar routine fire trig_abc123 --text "manual run after release v1.2.0"  # 起動コンテキスト
+```
+
+- `<trig_id>` は Web UI 登録後に発行される `trig_` プレフィックスの routine ID（= YAML の `routine_id`）。
+- token は **環境変数からのみ**読む（既定 `FEEDRADAR_ROUTINE_FIRE_TOKEN`、`--token-env <NAME>` で別名指定可）。リポ・YAML・コマンドライン引数には**書かない**（後述「[シークレットの取り扱い](#シークレットの取り扱い)」）。
+- API・認証の詳細は [`docs/user-guide.md` §routine を外部から起動する（`/fire`）](../../docs/user-guide.md#routine-を外部から起動するfire) を参照。
 
 ### シークレットの取り扱い
 
