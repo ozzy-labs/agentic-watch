@@ -266,7 +266,7 @@ describe("cli/routine/generate-pipeline", () => {
       expect(warnings.some((w) => /overwriting/.test(w))).toBe(true);
     });
 
-    it("prints Web UI paste instructions (yq), a /schedule example, and the no-cross-agent note", async () => {
+    it("prints Web UI paste instructions (yq), a corrected /schedule caveat, and the no-cross-agent note", async () => {
       await run();
       const joined = logs.join("\n");
       expect(joined).toContain("yq -r '.instructions'");
@@ -274,6 +274,12 @@ describe("cli/routine/generate-pipeline", () => {
       expect(joined).toContain("/schedule");
       expect(joined).toContain("claude.ai/code/routines");
       expect(joined).toContain("NO cross-agent review");
+      // Issue #300: the old `/schedule create --name --cron --repo` example is a
+      // fabricated syntax — it must not appear. Instead the output describes the
+      // real conversational form and the Web-UI-only caveats.
+      expect(joined).not.toContain("/schedule create");
+      expect(joined).toContain("`/schedule <description>`");
+      expect(joined).toContain("Allow unrestricted branch");
     });
 
     it("emits a file that passes #280's validate.py", async () => {
