@@ -100,9 +100,15 @@ repositories:
 environment:
   # Environment label shown in the Web UI.
   name: feedradar-watch
-  # trusted / none / open. `trusted` lets radar reach the subscribed feeds
-  # (ADR-0020 D3c limits outbound to sources/*.yaml hosts).
-  network_access: trusted
+  # Network access mode: Trusted / Custom / Full (Web UI: Environment > Network access).
+  #   Trusted (Default): only a curated host allowlist; ANY other host gets
+  #     403 (x-deny-reason: host_not_allowed) — so it CANNOT fetch arbitrary feeds.
+  #   Custom: you supply the allowlist — use this, scoped to your subscribed feeds.
+  #   Full: unrestricted egress — NOT used (ADR-0020 D3c / ADR-0009 D5b limit
+  #     outbound to sources/*.yaml hosts; never open the routine to any host).
+  # In the Web UI Custom network access allowlist, add each subscribed-feed host
+  # this routine must fetch (the hostnames from your sources/*.yaml `url:` fields).
+  network_access: custom
   # Names only — never write secret values here (register them in the Web UI).
   # The watch-only routine needs none beyond the auto-provided GITHUB_TOKEN.
   variables: []

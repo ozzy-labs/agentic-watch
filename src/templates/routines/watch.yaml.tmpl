@@ -11,6 +11,9 @@
 #
 # Placeholders below are substituted by `generate-watch.ts` from CLI flags:
 #   {{name}}  {{repository}}  {{cron}}  {{timezone}}  {{model}}
+# The network_access block is also computed by the generator from the
+# workspace's sources/*.yaml hosts (Custom allowlist — ADR-0020 D3c /
+# ADR-0009 D5b).
 
 # One-line summary + ops notes. Web UI has no field for this; repo-only.
 notes: |
@@ -99,9 +102,7 @@ repositories:
 environment:
   # Environment label shown in the Web UI.
   name: feedradar-watch
-  # trusted / none / open. `trusted` lets radar reach the subscribed feeds
-  # (ADR-0020 D3c limits outbound to sources/*.yaml hosts).
-  network_access: trusted
+{{networkAccessBlock}}
   # Names only — never write secret values here (register them in the Web UI).
   # The watch-only routine needs none beyond the auto-provided GITHUB_TOKEN.
   variables: []

@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  collectSourceHosts,
   generateWatchRoutine,
   isSafeRoutinePath,
   isSubHourlyCron,
   isValidCron,
   parseGenerateWatchRoutineArgs,
+  renderNetworkAccessBlock,
   renderWatchRoutineTemplate,
   SUPPORTED_MODELS,
   type SupportedModel,
@@ -88,21 +90,96 @@ describe("cli/routine/generate-watch", () => {
   describe("renderWatchRoutineTemplate", () => {
     it("substitutes every placeholder globally", () => {
       const tpl =
-        "name: {{name}}\nrepo: {{repository}}\ncron: {{cron}}\ntz: {{timezone}}\nmodel: {{model}}\nagain: {{name}}";
+        "name: {{name}}\nrepo: {{repository}}\ncron: {{cron}}\ntz: {{timezone}}\nmodel: {{model}}\n{{networkAccessBlock}}\nagain: {{name}}";
       const out = renderWatchRoutineTemplate(tpl, {
         name: "my-watch",
         repository: "acme/widgets",
         cron: "0 * * * *",
         timezone: "Asia/Tokyo",
         model: "claude-opus-4-7",
+        networkAccessBlock: "  network_access: custom",
       });
       expect(out).toContain("name: my-watch");
       expect(out).toContain("repo: acme/widgets");
       expect(out).toContain("cron: 0 * * * *");
       expect(out).toContain("tz: Asia/Tokyo");
       expect(out).toContain("model: claude-opus-4-7");
+      expect(out).toContain("network_access: custom");
       expect(out).toContain("again: my-watch");
       expect(out).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
+    });
+  });
+
+  describe("renderNetworkAccessBlock (F2: network_access)", () => {
+    it("emits `custom` mode and never the wrong mode names", () => {
+      const block = renderNetworkAccessBlock([]);
+      expect(block).toContain("network_access: custom");
+      // The old comment claimed `trusted / none / open`; the real modes are
+      // Trusted / Custom / Full.
+      expect(block).toContain("Trusted / Custom / Full");
+      expect(block).not.toMatch(/network_access:\s*trusted/);
+      expect(block).not.toMatch(/network_access:\s*(none|open|full)/);
+      // Records the 403 fact so the user understands why Trusted is wrong.
+      expect(block).toContain("403");
+    });
+
+    it("lists enumerated hosts as Custom allowlist comments", () => {
+      const block = renderNetworkAccessBlock(["aws.amazon.com", "blog.example.com"]);
+      expect(block).toContain("#   - aws.amazon.com");
+      expect(block).toContain("#   - blog.example.com");
+      expect(block).toContain("network_access: custom");
+    });
+
+    it("falls back to an explicit Web UI instruction when no hosts enumerable", () => {
+      const block = renderNetworkAccessBlock([]);
+      expect(block).toContain("Custom network access allowlist");
+      expect(block).toMatch(/sources\/\*\.yaml/);
+    });
+  });
+
+  describe("collectSourceHosts (F2: sources/*.yaml host enumeration)", () => {
+    let workdir: string;
+
+    beforeEach(async () => {
+      workdir = await mkdtemp(join(tmpdir(), "feedradar-routine-hosts-"));
+    });
+
+    it("returns [] when there is no sources/ directory", async () => {
+      expect(await collectSourceHosts(workdir)).toEqual([]);
+    });
+
+    it("extracts and de-duplicates hostnames from sources/*.yaml", async () => {
+      const sourcesDir = join(workdir, "sources");
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(
+        join(sourcesDir, "blog.yaml"),
+        "id: blog\nkind: rss\nurl: https://blog.example.com/feed.xml\n",
+        "utf8",
+      );
+      await writeFile(
+        join(sourcesDir, "blog2.yaml"),
+        "id: blog2\nkind: rss\nurl: https://blog.example.com/other.xml\n",
+        "utf8",
+      );
+      await writeFile(
+        join(sourcesDir, "news.yaml"),
+        "id: news\nkind: rss\nurl: https://news.example.org/rss\n",
+        "utf8",
+      );
+      const hosts = await collectSourceHosts(workdir);
+      // De-duplicated (blog.example.com appears once) and sorted.
+      expect(hosts).toEqual(["blog.example.com", "news.example.org"]);
+    });
+
+    it("maps npm-registry sources to registry.npmjs.org", async () => {
+      const sourcesDir = join(workdir, "sources");
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(
+        join(sourcesDir, "pkg.yaml"),
+        'id: pkg\nkind: npm-registry\nurl: "@scope/pkg"\n',
+        "utf8",
+      );
+      expect(await collectSourceHosts(workdir)).toEqual(["registry.npmjs.org"]);
     });
   });
 
@@ -133,7 +210,7 @@ describe("cli/routine/generate-watch", () => {
         "--tz",
         "Asia/Tokyo",
         "--model",
-        "claude-haiku-4-6",
+        "claude-haiku-4-5",
         "--output",
         ".claude/routines/custom.yaml",
         "--force",
@@ -141,7 +218,7 @@ describe("cli/routine/generate-watch", () => {
       expect(parsed.repository).toBe("acme/widgets");
       expect(parsed.cron).toBe("0 0 * * *");
       expect(parsed.timezone).toBe("Asia/Tokyo");
-      expect(parsed.model).toBe("claude-haiku-4-6");
+      expect(parsed.model).toBe("claude-haiku-4-5");
       expect(parsed.output).toBe(".claude/routines/custom.yaml");
       expect(parsed.force).toBe(true);
     });
@@ -220,6 +297,28 @@ describe("cli/routine/generate-watch", () => {
       expect(written).toContain("npm install -g @ozzylabs/feedradar");
       // Output gate: claude/* branch, never main.
       expect(written).toContain("claude/watch/");
+      // F2: network access is Custom (Trusted Default would 403 on feed hosts),
+      // never the old `trusted` value or the wrong `none`/`open` mode names.
+      expect(written).toContain("network_access: custom");
+      expect(written).not.toMatch(/network_access:\s*trusted/);
+      expect(written).not.toMatch(/network_access:\s*(none|open|full)/);
+    });
+
+    it("emits the subscribed-feed hosts into the Custom allowlist comments", async () => {
+      const sourcesDir = join(workdir, "sources");
+      await mkdir(sourcesDir, { recursive: true });
+      await writeFile(
+        join(sourcesDir, "aws.yaml"),
+        "id: aws\nkind: rss\nurl: https://aws.amazon.com/about-aws/whats-new/recent/feed/\n",
+        "utf8",
+      );
+      await run();
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-watch.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("#   - aws.amazon.com");
+      expect(written).toContain("network_access: custom");
     });
 
     it("rejects sub-hourly cron with a 1-hour-minimum message", async () => {
