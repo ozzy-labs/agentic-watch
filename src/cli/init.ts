@@ -447,6 +447,10 @@ const FEEDRADAR_MD_SCAFFOLD = {
 export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   const { cwd, force } = options;
   const locale: Locale = options.locale ?? "en";
+  // Localize the post-run result summary / next-steps notices (#312). The
+  // bundled-asset warnings remain developer-facing (they signal a broken
+  // package layout, not a user error) so they are intentionally left untranslated.
+  const t = createTranslator(locale);
   const warn = options.warn ?? ((m: string) => console.warn(m));
   const info = options.info ?? ((m: string) => console.log(m));
 
@@ -670,20 +674,20 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
   // avoid clobbering defaultResearchAgent / defaultReviewAgent.
   await writeLocaleToConfig({ cwd, force, locale, copiedFiles, skippedFiles, warn });
 
-  info(`init: workspace ready at ${cwd}`);
-  info(`init: directories created: ${createdDirs.join(", ")}`);
+  info(t("cli.init.workspaceReady", { cwd }));
+  info(t("cli.init.directoriesCreated", { dirs: createdDirs.join(", ") }));
   if (copiedFiles.length > 0) {
-    info(`init: skills copied: ${copiedFiles.join(", ")}`);
+    info(t("cli.init.skillsCopied", { files: copiedFiles.join(", ") }));
   }
   if (skippedFiles.length > 0) {
-    info(`init: files skipped: ${skippedFiles.join(", ")}`);
+    info(t("cli.init.filesSkipped", { files: skippedFiles.join(", ") }));
   }
   // Next-step hint: FEEDRADAR.md is the canonical entry point for the
   // human who just ran init. Point them at it (when present) so they don't
   // have to hunt for usage docs. Skip the hint when the file wasn't written
   // (workspace owner chose --no-feedradar-md or pre-existing protected).
   if (copiedFiles.includes("FEEDRADAR.md")) {
-    info("init: next steps — read FEEDRADAR.md for natural-language and slash usage.");
+    info(t("cli.init.nextSteps"));
   }
 
   return { createdDirs, copiedFiles, skippedFiles };

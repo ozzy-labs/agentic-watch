@@ -477,6 +477,229 @@ Types:
 
 type 別のオプションは \`radar routine generate <type> --help\` を参照。`,
 
+  // --- user-facing errors & result notifications (#312) ---------------------
+  // dismiss (#312)
+  "cli.dismiss.batchIncompatiblePositional": ({ count }: { count: number }): string =>
+    `dismiss: --batch は位置引数の <item-id> と併用できません (${count} 件指定されました)`,
+  "cli.dismiss.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `dismiss: 不正な --status '${status}' (有効値: ${allowed})`,
+  "cli.dismiss.statusRequiresBatch": "dismiss: --status は --batch と併用してください",
+  "cli.dismiss.maxItemsRequiresBatch": "dismiss: --max-items は --batch と併用してください",
+  "cli.dismiss.filterTagsRequiresBatch": "dismiss: --filter-tags は --batch と併用してください",
+  "cli.dismiss.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `dismiss: 不正な --max-items '${raw}' (正の整数を指定してください)`,
+  "cli.dismiss.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `dismiss: 不正な --max-items '${raw}' (0 より大きい値を指定してください)`,
+  "cli.dismiss.missingItemId": "dismiss: <item-id> が指定されていません",
+  "cli.dismiss.itemNotFound": ({ id }: { id: string }): string =>
+    `dismiss: アイテム '${id}' が items/ 配下に見つかりません`,
+  "cli.dismiss.itemWrongStatus": ({
+    id,
+    status,
+    allowed,
+    nextStatuses,
+  }: {
+    id: string;
+    status: string;
+    allowed: string;
+    nextStatuses: string;
+  }): string =>
+    `dismiss: アイテム '${id}' のステータスは '${status}' です。期待値: ${allowed} のいずれか (dismiss はこれらのステータスからのみ 'dismissed' に遷移できます)。'${status}' から遷移可能なステータス: ${nextStatuses}`,
+  "cli.dismiss.failedUpdate": ({ reason }: { reason: string }): string =>
+    `dismiss: アイテムのステータス更新に失敗しました: ${reason}`,
+  "cli.dismiss.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `dismiss: items/${sourceId}/${id}.yaml のステータスを dismissed に変更しました`,
+  "cli.dismiss.noItemsMatched": ({ status, tags }: { status: string; tags: string }): string =>
+    `dismiss: --batch のフィルタに一致するアイテムがありません (status=${status}${tags})`,
+  "cli.dismiss.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `dismiss: --max-items ${maxItems} の上限に達しました。超過した ${dropped} 件を除外します (一致 ${matched} 件)`,
+  "cli.dismiss.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    cap: number;
+  }): string =>
+    `dismiss: --batch で ${count} 件を処理します (status=${status}${tags}, 上限=${cap})`,
+  "cli.dismiss.batchCompleted": ({ count }: { count: number }): string =>
+    `dismiss: --batch で ${count} 件を処理しました`,
+
+  // undismiss (#312)
+  "cli.undismiss.missingItemId": "undismiss: <item-id> が指定されていません",
+  "cli.undismiss.itemsDirNotFound":
+    "undismiss: items/ が見つかりません (`radar init` を実行してください)",
+  "cli.undismiss.itemNotFound": ({ id }: { id: string }): string =>
+    `undismiss: アイテム '${id}' が items/ 配下に見つかりません`,
+  "cli.undismiss.notDismissed": ({ id, status }: { id: string; status: string }): string =>
+    `undismiss: アイテム '${id}' のステータスは '${status}' です。期待値: 'dismissed' (undismiss は dismiss の取り消しのみを行い、他の遷移には使えません)`,
+  "cli.undismiss.forbiddenTransition":
+    "undismiss: ステートマシンが 'dismissed → detected' を許可していません (内部エラー)",
+  "cli.undismiss.humanOriginRequiresForce": ({ id }: { id: string }): string =>
+    `undismiss: アイテム '${id}' は人間によって dismiss されています。取り消すには --force を指定してください (意図的な安全ガードです)`,
+  "cli.undismiss.failedUpdate": ({ reason }: { reason: string }): string =>
+    `undismiss: アイテムの更新に失敗しました: ${reason}`,
+  "cli.undismiss.revertedHumanOrigin": ({ id }: { id: string }): string =>
+    `undismiss: 人間由来の dismiss を取り消しました: '${id}' (--force 使用)`,
+  "cli.undismiss.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `undismiss: items/${sourceId}/${id}.yaml のステータスを detected に変更しました`,
+
+  // doctor diagnostics (#312)
+  "cli.doctor.workspaceDirExists": ({ dir }: { dir: string }): string => `${dir}/ は存在します`,
+  "cli.doctor.workspaceDirMissing": ({ dir }: { dir: string }): string =>
+    `${dir}/ がありません — \`radar init\` でワークスペースを作成してください`,
+  "cli.doctor.configValid": "radar.config.yaml は有効です (または存在せず、既定値が適用されます)",
+  "cli.doctor.configInvalid": ({ reason }: { reason: string }): string =>
+    `radar.config.yaml が不正です: ${reason}`,
+  "cli.doctor.agentFound": ({
+    agent,
+    binary,
+    path,
+  }: {
+    agent: string;
+    binary: string;
+    path: string;
+  }): string => `${agent}: ${binary} が ${path} に見つかりました`,
+  "cli.doctor.agentMissing": ({ agent, binary }: { agent: string; binary: string }): string =>
+    `${agent}: ${binary} が PATH に見つかりません (\`radar research --agent ${agent}\` を使うにはインストールしてください)`,
+  "cli.doctor.playwrightNotRequired": "playwright: 不要です (html-js ソースが設定されていません)",
+  "cli.doctor.playwrightOk": ({ path }: { path: string }): string =>
+    `playwright: 正常 — chromium は ${path} にあります`,
+  "cli.doctor.playwrightModuleMissing": ({
+    sources,
+    hint,
+  }: {
+    sources: string;
+    hint: string;
+  }): string =>
+    `playwright: モジュールがインストールされていません (html-js ソースに必要: ${sources})\n  ${hint}`,
+  "cli.doctor.playwrightChromiumMissing": ({
+    path,
+    sources,
+    hint,
+  }: {
+    path: string;
+    sources: string;
+    hint: string;
+  }): string =>
+    `playwright: chromium が '${path}' に見つかりません (html-js ソースに必要: ${sources})\n  ${hint}`,
+  "cli.doctor.proxyEnvAllProxyOnly": ({
+    source,
+    masked,
+  }: {
+    source: string;
+    masked: string;
+  }): string =>
+    `proxy: $${source}=${masked} を検出しました (Node --use-env-proxy は ALL_PROXY を無視します。HTTPS_PROXY または HTTP_PROXY を設定してください)`,
+  "cli.doctor.proxyEnvDetected": ({ source, masked }: { source: string; masked: string }): string =>
+    `proxy: $${source}=${masked} を検出しました`,
+  "cli.doctor.proxyEnvNone":
+    "proxy: プロキシ環境変数が設定されていません (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY)",
+  "cli.doctor.proxyActive": "proxy: NODE_USE_ENV_PROXY が有効です (radar が自動適用)",
+  "cli.doctor.proxyActiveMissing":
+    "proxy: NODE_USE_ENV_PROXY が未設定です。fetch が HTTPS_PROXY を無視する場合は radar を bin 経由で再実行してください (直接 import しない)",
+  "cli.doctor.proxyActiveNotRequired": "proxy: NODE_USE_ENV_PROXY は不要です (プロキシ未検出)",
+  "cli.doctor.tlsCaSet": ({ path }: { path: string }): string => `tls: NODE_EXTRA_CA_CERTS=${path}`,
+  "cli.doctor.tlsCaUnset":
+    "tls: NODE_EXTRA_CA_CERTS が未設定です (TLS を傍受するプロキシでは失敗する可能性があります)",
+  "cli.doctor.healthcheckSkippedFlag": "proxy healthcheck: スキップしました (--no-proxy-check)",
+  "cli.doctor.healthcheckSkippedNoProxy": "proxy healthcheck: スキップしました (プロキシ未検出)",
+  "cli.doctor.healthcheck407": ({ url }: { url: string }): string =>
+    `proxy healthcheck: ${url} から 407 Proxy Authentication Required ($HTTPS_PROXY の userinfo を確認してください)`,
+  "cli.doctor.healthcheckOk": ({
+    status,
+    statusText,
+    elapsed,
+  }: {
+    status: number;
+    statusText: string;
+    elapsed: number;
+  }): string =>
+    `proxy healthcheck: 正常 (api.github.com から ${status} ${statusText}、${elapsed}ms)`,
+  "cli.doctor.healthcheckOther": ({
+    status,
+    statusText,
+    elapsed,
+  }: {
+    status: number;
+    statusText: string;
+    elapsed: number;
+  }): string =>
+    `proxy healthcheck: api.github.com から ${status} ${statusText}、${elapsed}ms`.trimEnd(),
+  "cli.doctor.healthcheckTimeout": ({ elapsed }: { elapsed: number }): string =>
+    `proxy healthcheck: ${elapsed}ms 後にタイムアウト (プロキシに到達できない可能性があります。$HTTPS_PROXY の host:port を確認してください)`,
+  "cli.doctor.healthcheckTls": ({ code }: { code: string }): string =>
+    `proxy healthcheck: TLS エラー (${code})。プロキシの傍受用 CA を信頼するには NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem を設定してください。`,
+  "cli.doctor.healthcheckRefused":
+    "proxy healthcheck: 接続が拒否されました。$HTTPS_PROXY の host:port に到達できるか確認してください。",
+  "cli.doctor.healthcheckDns": ({ code }: { code: string }): string =>
+    `proxy healthcheck: DNS の名前解決に失敗しました (${code})。$HTTPS_PROXY のプロキシホストを解決できません。`,
+  "cli.doctor.healthcheckResetTimeout": ({ code }: { code: string }): string =>
+    `proxy healthcheck: 接続が${code === "ETIMEDOUT" ? "タイムアウトしました" : "リセットされました"} (${code})。`,
+  "cli.doctor.healthcheckFailed": ({ reason }: { reason: string }): string =>
+    `proxy healthcheck: 失敗 — ${reason}`,
+  "cli.doctor.summary": ({
+    ok,
+    warn,
+    error,
+  }: {
+    ok: number;
+    warn: number;
+    error: number;
+  }): string => `doctor: ${ok} ok, ${warn} warn, ${error} error`,
+
+  // init result summary / next-steps (#312)
+  "cli.init.workspaceReady": ({ cwd }: { cwd: string }): string =>
+    `init: ワークスペースを ${cwd} に準備しました`,
+  "cli.init.directoriesCreated": ({ dirs }: { dirs: string }): string =>
+    `init: ディレクトリを作成しました: ${dirs}`,
+  "cli.init.skillsCopied": ({ files }: { files: string }): string =>
+    `init: スキルをコピーしました: ${files}`,
+  "cli.init.filesSkipped": ({ files }: { files: string }): string =>
+    `init: スキップしたファイル: ${files}`,
+  "cli.init.nextSteps":
+    "init: 次のステップ — 自然言語やスラッシュの使い方は FEEDRADAR.md を参照してください。",
+
+  // items (#312)
+  "cli.items.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `items: 不明なサブコマンド '${sub}' です`,
+  "cli.items.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `items list: 不正な --status '${status}' (有効値: ${allowed})`,
+  "cli.items.invalidSince": ({ since }: { since: string }): string =>
+    `items list: 不正な --since '${since}' (形式: Ns | Nm | Nh | Nd)`,
+  "cli.items.noItemsDir":
+    "items list: items/ ディレクトリがありません (まず `radar init` を実行してください)",
+  "cli.items.noMatch": "items list: フィルタに一致するアイテムがありません",
+
+  // watch (#312)
+  "cli.watch.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `watch: 不明なサブコマンド '${sub}' です`,
+  "cli.watch.bootstrapComplete": ({ sources }: { sources: number }): string =>
+    `watch run: bootstrap 完了 (${sources} ソース)`,
+  "cli.watch.backfillComplete": ({ total, sources }: { total: number; sources: number }): string =>
+    `watch run: backfill 完了 — ${sources} ソースで ${total} 件のアイテムを取り込みました`,
+  "cli.watch.runComplete": ({ total, sources }: { total: number; sources: number }): string =>
+    `watch run: ${sources} ソースで ${total} 件の新規アイテム`,
+
+  // zod-validation error preamble (#312)
+  "cli.config.schemaViolation": ({ file, issues }: { file: string; issues: string }): string =>
+    `${file} のスキーマ違反:\n${issues}`,
+  "cli.config.failedRead": ({ file, reason }: { file: string; reason: string }): string =>
+    `${file} の読み込みに失敗しました: ${reason}`,
+  "cli.config.failedParse": ({ file, reason }: { file: string; reason: string }): string =>
+    `${file} の YAML としての解析に失敗しました: ${reason}`,
+
   // --- init help (#311) -----------------------------------------------------
   "cli.init.help": `使い方: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]
                           [--no-claude-skills] [--no-gemini-commands]

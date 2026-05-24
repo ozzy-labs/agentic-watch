@@ -1,6 +1,7 @@
 import { access, constants } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { loadRadarConfig, RadarConfigError } from "../core/config.js";
+import { applyZodLocale } from "../core/locale.js";
 import {
   CHROMIUM_MISSING_HINT,
   PLAYWRIGHT_MODULE_MISSING_HINT,
@@ -51,6 +52,13 @@ export interface DoctorCommandOptions {
    * a network round-trip that is guaranteed to fail.
    */
   noProxyCheck?: boolean;
+  /**
+   * Test seam / wiring: inject the translator that renders the (user-facing)
+   * diagnostic messages. When omitted, `runDoctorChecks` resolves the workspace
+   * locale itself and builds one; `runDoctor` always passes its already-resolved
+   * translator so flag/env/config resolution happens exactly once (#312).
+   */
+  t?: Translator;
   /**
    * Test seam: override `fetch` used by the proxy healthcheck so the test can
    * drive the 200 / 407 / TLS / ECONNREFUSED branches deterministically
@@ -201,6 +209,11 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const whichImpl = options.whichImpl ?? defaultWhich;
+  // Resolve the UI locale so the diagnostic lines are localized. doctor is a
+  // user-facing health check (#312), so its check messages + summary go through
+  // the translator. A test seam (`options.t`) lets callers inject a translator
+  // directly; otherwise the locale is resolved from --lang / env / config.
+  const t = options.t ?? createTranslator(await resolveWorkspaceLocale({ flag: undefined, cwd }));
   const checks: DoctorCheck[] = [];
 
   // 1. Workspace directories. Each missing dir is a `warn` — the user may
@@ -213,13 +226,13 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
       checks.push({
         id: `workspace:${dir}`,
         status: "ok",
-        message: `${dir}/ exists`,
+        message: t("cli.doctor.workspaceDirExists", { dir }),
       });
     } else {
       checks.push({
         id: `workspace:${dir}`,
         status: "warn",
-        message: `${dir}/ missing — run \`radar init\` to scaffold the workspace`,
+        message: t("cli.doctor.workspaceDirMissing", { dir }),
       });
     }
   }
@@ -229,18 +242,18 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
   //    because `radar` itself fails on every invocation when the config
   //    parses but mismatches the schema — see `core/config.ts#loadRadarConfig`.
   try {
-    await loadRadarConfig(cwd);
+    await loadRadarConfig(cwd, t);
     checks.push({
       id: "config",
       status: "ok",
-      message: "radar.config.yaml valid (or absent — defaults apply)",
+      message: t("cli.doctor.configValid"),
     });
   } catch (e) {
-    const message = e instanceof RadarConfigError ? e.message : String(e);
+    const reason = e instanceof RadarConfigError ? e.message : String(e);
     checks.push({
       id: "config",
       status: "error",
-      message: `radar.config.yaml invalid: ${message}`,
+      message: t("cli.doctor.configInvalid", { reason }),
     });
   }
 
@@ -254,13 +267,13 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
       checks.push({
         id: `agent:${agent}`,
         status: "ok",
-        message: `${agent}: ${binary} found at ${found}`,
+        message: t("cli.doctor.agentFound", { agent, binary, path: found }),
       });
     } else {
       checks.push({
         id: `agent:${agent}`,
         status: "warn",
-        message: `${agent}: ${binary} not found in PATH (install it to use \`radar research --agent ${agent}\`)`,
+        message: t("cli.doctor.agentMissing", { agent, binary }),
       });
     }
   }
@@ -284,7 +297,7 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     checks.push({
       id: "playwright",
       status: "ok",
-      message: "playwright: not required (no html-js sources configured)",
+      message: t("cli.doctor.playwrightNotRequired"),
     });
   } else {
     const probe = await probePlaywright(options.probeOptions);
@@ -292,23 +305,26 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
       checks.push({
         id: "playwright",
         status: "ok",
-        message: `playwright: ok — chromium at ${probe.executablePath}`,
+        message: t("cli.doctor.playwrightOk", { path: probe.executablePath }),
       });
     } else if (probe.status === "module-missing") {
       checks.push({
         id: "playwright",
         status: "error",
-        message: `playwright: module not installed (required by html-js sources: ${htmlJsSources.join(
-          ", ",
-        )})\n  ${PLAYWRIGHT_MODULE_MISSING_HINT}`,
+        message: t("cli.doctor.playwrightModuleMissing", {
+          sources: htmlJsSources.join(", "),
+          hint: PLAYWRIGHT_MODULE_MISSING_HINT,
+        }),
       });
     } else {
       checks.push({
         id: "playwright",
         status: "error",
-        message: `playwright: chromium missing at '${probe.executablePath}' (required by html-js sources: ${htmlJsSources.join(
-          ", ",
-        )})\n  ${CHROMIUM_MISSING_HINT}`,
+        message: t("cli.doctor.playwrightChromiumMissing", {
+          path: probe.executablePath,
+          sources: htmlJsSources.join(", "),
+          hint: CHROMIUM_MISSING_HINT,
+        }),
       });
     }
   }
@@ -337,20 +353,20 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
       checks.push({
         id: "proxy:env",
         status: "warn",
-        message: `proxy: detected via $${proxyDetection.source}=${masked} (Node --use-env-proxy ignores ALL_PROXY; set HTTPS_PROXY or HTTP_PROXY instead)`,
+        message: t("cli.doctor.proxyEnvAllProxyOnly", { source: proxyDetection.source, masked }),
       });
     } else {
       checks.push({
         id: "proxy:env",
         status: "ok",
-        message: `proxy: detected via $${proxyDetection.source}=${masked}`,
+        message: t("cli.doctor.proxyEnvDetected", { source: proxyDetection.source, masked }),
       });
     }
   } else {
     checks.push({
       id: "proxy:env",
       status: "ok",
-      message: "proxy: no proxy env var set (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY)",
+      message: t("cli.doctor.proxyEnvNone"),
     });
   }
 
@@ -358,7 +374,7 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     checks.push({
       id: "proxy:active",
       status: "ok",
-      message: "proxy: NODE_USE_ENV_PROXY active (auto-applied by radar)",
+      message: t("cli.doctor.proxyActive"),
     });
   } else if (proxyDetection && !proxyDetection.allProxyOnly) {
     // Proxy is set but the respawn sentinel is missing — usually means the
@@ -369,14 +385,13 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     checks.push({
       id: "proxy:active",
       status: "warn",
-      message:
-        "proxy: NODE_USE_ENV_PROXY not set; if fetch ignores HTTPS_PROXY, re-run radar via the bin (not direct import)",
+      message: t("cli.doctor.proxyActiveMissing"),
     });
   } else {
     checks.push({
       id: "proxy:active",
       status: "ok",
-      message: "proxy: NODE_USE_ENV_PROXY not required (no proxy detected)",
+      message: t("cli.doctor.proxyActiveNotRequired"),
     });
   }
 
@@ -385,13 +400,13 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     checks.push({
       id: "tls:ca",
       status: "ok",
-      message: `tls: NODE_EXTRA_CA_CERTS=${caBundle}`,
+      message: t("cli.doctor.tlsCaSet", { path: caBundle }),
     });
   } else {
     checks.push({
       id: "tls:ca",
       status: "ok",
-      message: "tls: NODE_EXTRA_CA_CERTS not set (TLS-intercepting proxies may fail)",
+      message: t("cli.doctor.tlsCaUnset"),
     });
   }
 
@@ -399,19 +414,22 @@ export async function runDoctorChecks(options: DoctorCommandOptions = {}): Promi
     checks.push({
       id: "proxy:healthcheck",
       status: "ok",
-      message: "proxy healthcheck: skipped (--no-proxy-check)",
+      message: t("cli.doctor.healthcheckSkippedFlag"),
     });
   } else if (!proxyDetection) {
     checks.push({
       id: "proxy:healthcheck",
       status: "ok",
-      message: "proxy healthcheck: skipped (no proxy detected)",
+      message: t("cli.doctor.healthcheckSkippedNoProxy"),
     });
   } else {
-    const result = await runProxyHealthcheck({
-      fetchImpl: options.fetchImpl,
-      nowImpl: options.nowImpl,
-    });
+    const result = await runProxyHealthcheck(
+      {
+        fetchImpl: options.fetchImpl,
+        nowImpl: options.nowImpl,
+      },
+      t,
+    );
     checks.push(result);
   }
 
@@ -444,7 +462,10 @@ interface ProxyHealthcheckOptions {
  *   - TLS-intercept errors  → error (hint NODE_EXTRA_CA_CERTS)
  *   - ECONNREFUSED / ENOTFOUND / abort timeout → error (proxy unreachable)
  */
-async function runProxyHealthcheck(opts: ProxyHealthcheckOptions): Promise<DoctorCheck> {
+async function runProxyHealthcheck(
+  opts: ProxyHealthcheckOptions,
+  t: Translator,
+): Promise<DoctorCheck> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const nowImpl = opts.nowImpl ?? (() => performance.now());
 
@@ -464,25 +485,32 @@ async function runProxyHealthcheck(opts: ProxyHealthcheckOptions): Promise<Docto
       return {
         id: "proxy:healthcheck",
         status: "warn",
-        message: `proxy healthcheck: 407 Proxy Authentication Required from ${PROXY_HEALTHCHECK_URL} (check userinfo in $HTTPS_PROXY)`,
+        message: t("cli.doctor.healthcheck407", { url: PROXY_HEALTHCHECK_URL }),
       };
     }
     if (res.status >= 200 && res.status < 300) {
       return {
         id: "proxy:healthcheck",
         status: "ok",
-        message: `proxy healthcheck: ok (${res.status} ${res.statusText || "OK"} from api.github.com in ${elapsed}ms)`,
+        message: t("cli.doctor.healthcheckOk", {
+          status: res.status,
+          statusText: res.statusText || "OK",
+          elapsed,
+        }),
       };
     }
     return {
       id: "proxy:healthcheck",
       status: "warn",
-      message:
-        `proxy healthcheck: ${res.status} ${res.statusText || ""} from api.github.com in ${elapsed}ms`.trimEnd(),
+      message: t("cli.doctor.healthcheckOther", {
+        status: res.status,
+        statusText: res.statusText || "",
+        elapsed,
+      }),
     };
   } catch (err) {
     const elapsed = Math.round(nowImpl() - start);
-    return classifyProxyError(err, elapsed);
+    return classifyProxyError(err, elapsed, t);
   } finally {
     clearTimeout(timeout);
   }
@@ -495,12 +523,12 @@ async function runProxyHealthcheck(opts: ProxyHealthcheckOptions): Promise<Docto
  * text as a last-resort heuristic. Unknown errors fall through to a generic
  * "healthcheck failed" line.
  */
-function classifyProxyError(err: unknown, elapsedMs: number): DoctorCheck {
+function classifyProxyError(err: unknown, elapsedMs: number, t: Translator): DoctorCheck {
   if (err instanceof Error && err.name === "AbortError") {
     return {
       id: "proxy:healthcheck",
       status: "error",
-      message: `proxy healthcheck: timeout after ${elapsedMs}ms (proxy may be unreachable; verify $HTTPS_PROXY host:port)`,
+      message: t("cli.doctor.healthcheckTimeout", { elapsed: elapsedMs }),
     };
   }
 
@@ -514,28 +542,28 @@ function classifyProxyError(err: unknown, elapsedMs: number): DoctorCheck {
       return {
         id: "proxy:healthcheck",
         status: "error",
-        message: `proxy healthcheck: TLS error (${code}). Set NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem to trust your proxy's intercepting CA.`,
+        message: t("cli.doctor.healthcheckTls", { code }),
       };
     }
     if (code === "ECONNREFUSED") {
       return {
         id: "proxy:healthcheck",
         status: "error",
-        message: `proxy healthcheck: connection refused. Verify the proxy host:port in $HTTPS_PROXY is reachable.`,
+        message: t("cli.doctor.healthcheckRefused"),
       };
     }
     if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
       return {
         id: "proxy:healthcheck",
         status: "error",
-        message: `proxy healthcheck: DNS lookup failed (${code}). The proxy host in $HTTPS_PROXY can't be resolved.`,
+        message: t("cli.doctor.healthcheckDns", { code }),
       };
     }
     if (code === "ECONNRESET" || code === "ETIMEDOUT") {
       return {
         id: "proxy:healthcheck",
         status: "error",
-        message: `proxy healthcheck: connection ${code === "ETIMEDOUT" ? "timed out" : "reset"} (${code}).`,
+        message: t("cli.doctor.healthcheckResetTimeout", { code }),
       };
     }
   }
@@ -544,7 +572,7 @@ function classifyProxyError(err: unknown, elapsedMs: number): DoctorCheck {
   return {
     id: "proxy:healthcheck",
     status: "error",
-    message: `proxy healthcheck: failed — ${message}`,
+    message: t("cli.doctor.healthcheckFailed", { reason: message }),
   };
 }
 
@@ -626,6 +654,10 @@ export async function runDoctor(
     throw e;
   }
   const locale = await resolveWorkspaceLocale({ flag: langState.flag, cwd, warn: error });
+  // Localize zod's built-in messages so the `radar.config.yaml` schema-violation
+  // issue bodies (rendered inside `cli.doctor.configInvalid`) follow the UI
+  // locale alongside the wrapping preamble (#312).
+  applyZodLocale(locale);
   const t = createTranslator(locale);
 
   let parsed: DoctorArgs;
@@ -642,9 +674,11 @@ export async function runDoctor(
 
   // CLI flag wins over the option seam. Tests typically pass `noProxyCheck`
   // through `options`; users pass `--no-proxy-check`. OR semantics mean either
-  // path can opt out without the other interfering.
+  // path can opt out without the other interfering. Pass the already-resolved
+  // translator so locale resolution happens exactly once (#312).
   const report = await runDoctorChecks({
     ...options,
+    t,
     noProxyCheck: options.noProxyCheck ?? parsed.noProxyCheck,
   });
   for (const check of report.checks) {
@@ -654,7 +688,11 @@ export async function runDoctor(
   }
   log("");
   log(
-    `doctor: ${report.summary.ok} ok, ${report.summary.warn} warn, ${report.summary.error} error`,
+    t("cli.doctor.summary", {
+      ok: report.summary.ok,
+      warn: report.summary.warn,
+      error: report.summary.error,
+    }),
   );
   return report.summary.error > 0 ? 1 : 0;
 }

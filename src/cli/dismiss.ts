@@ -127,15 +127,19 @@ async function findItems(
   return { items: matched };
 }
 
-function parseMaxItems(raw: string | undefined, error: (m: string) => void): number | null {
+function parseMaxItems(
+  raw: string | undefined,
+  error: (m: string) => void,
+  t: Translator,
+): number | null {
   if (raw === undefined) return DISMISS_BATCH_DEFAULT_MAX_ITEMS;
   if (!/^[0-9]+$/.test(raw)) {
-    error(`dismiss: invalid --max-items '${raw}' (expected positive integer)`);
+    error(t("cli.dismiss.invalidMaxItemsInteger", { raw }));
     return null;
   }
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n <= 0) {
-    error(`dismiss: invalid --max-items '${raw}' (must be > 0)`);
+    error(t("cli.dismiss.invalidMaxItemsPositive", { raw }));
     return null;
   }
   return n;
@@ -168,12 +172,18 @@ async function dismissItems(
   items: Item[],
   log: (m: string) => void,
   error: (m: string) => void,
+  t: Translator,
 ): Promise<number> {
   const offenders = items.filter((i) => !isValidTransition(i.status, "dismissed"));
   if (offenders.length > 0) {
     for (const item of offenders) {
       error(
-        `dismiss: item '${item.id}' is in status '${item.status}', expected one of ${DISMISS_ALLOWED_STATUSES.join(" | ")} (dismiss transitions to 'dismissed' only from these). Valid next statuses for '${item.status}': ${allowedTransitions(item.status).join(", ") || "(none)"}`,
+        t("cli.dismiss.itemWrongStatus", {
+          id: item.id,
+          status: item.status,
+          allowed: DISMISS_ALLOWED_STATUSES.join(" | "),
+          nextStatuses: allowedTransitions(item.status).join(", ") || "(none)",
+        }),
       );
     }
     return 1;
@@ -183,12 +193,12 @@ async function dismissItems(
   try {
     await saveItems(join(cwd, "items"), updated);
   } catch (e) {
-    error(`dismiss: failed to update item status: ${e instanceof Error ? e.message : String(e)}`);
+    error(t("cli.dismiss.failedUpdate", { reason: e instanceof Error ? e.message : String(e) }));
     return 1;
   }
 
   for (const item of updated) {
-    log(`dismiss: items/${item.sourceId}/${item.id}.yaml status -> dismissed`);
+    log(t("cli.dismiss.transitioned", { sourceId: item.sourceId, id: item.id }));
   }
   return 0;
 }
@@ -213,24 +223,26 @@ async function runDismissBatch(
   log: (m: string) => void,
   warn: (m: string) => void,
   error: (m: string) => void,
+  t: Translator,
 ): Promise<number> {
   if (parsed.itemIds.length > 0) {
-    error(
-      `dismiss: --batch is incompatible with positional <item-id> arguments (got ${parsed.itemIds.length})`,
-    );
+    error(t("cli.dismiss.batchIncompatiblePositional", { count: parsed.itemIds.length }));
     return 2;
   }
 
   const rawStatus = parsed.status ?? "detected";
   if (!(DISMISS_ALLOWED_STATUSES as readonly string[]).includes(rawStatus)) {
     error(
-      `dismiss: invalid --status '${rawStatus}' (expected: ${DISMISS_ALLOWED_STATUSES.join(" | ")})`,
+      t("cli.dismiss.invalidStatus", {
+        status: rawStatus,
+        allowed: DISMISS_ALLOWED_STATUSES.join(" | "),
+      }),
     );
     return 2;
   }
   const status: DismissAllowedStatus = rawStatus as DismissAllowedStatus;
 
-  const maxItems = parseMaxItems(parsed.maxItems, error);
+  const maxItems = parseMaxItems(parsed.maxItems, error, t);
   if (maxItems === null) return 2;
   const filterTags = parseFilterTags(parsed.filterTags);
 
@@ -250,33 +262,32 @@ async function runDismissBatch(
       return a.id.localeCompare(b.id);
     });
 
+  const tagsSuffix = filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : "";
+
   if (matches.length === 0) {
-    log(
-      `dismiss: no items matched --batch filters (status=${status}${
-        filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-      })`,
-    );
+    log(t("cli.dismiss.noItemsMatched", { status, tags: tagsSuffix }));
     return 0;
   }
 
   let selected = matches;
   if (matches.length > maxItems) {
     const dropped = matches.length - maxItems;
-    warn(
-      `dismiss: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matches.length})`,
-    );
+    warn(t("cli.dismiss.capReached", { maxItems, dropped, matched: matches.length }));
     selected = matches.slice(0, maxItems);
   }
 
   log(
-    `dismiss: --batch will process ${selected.length} item(s) (status=${status}${
-      filterTags.length > 0 ? `, tags=${filterTags.join(",")}` : ""
-    }, cap=${maxItems})`,
+    t("cli.dismiss.batchWillProcess", {
+      count: selected.length,
+      status,
+      tags: tagsSuffix,
+      cap: maxItems,
+    }),
   );
 
-  const code = await dismissItems(cwd, selected, log, error);
+  const code = await dismissItems(cwd, selected, log, error, t);
   if (code !== 0) return code;
-  log(`dismiss: --batch completed ${selected.length} item(s)`);
+  log(t("cli.dismiss.batchCompleted", { count: selected.length }));
   return 0;
 }
 
@@ -334,25 +345,25 @@ export async function runDismiss(
     return 0;
   }
   if (parsed.batch) {
-    return runDismissBatch(parsed, cwd, log, warn, error);
+    return runDismissBatch(parsed, cwd, log, warn, error, t);
   }
   // Surface the batch-only flags when used outside `--batch`; matches
   // research/review's "no silent ignore" stance so a typo does not become a
   // no-op.
   if (parsed.status !== undefined) {
-    error("dismiss: --status requires --batch");
+    error(t("cli.dismiss.statusRequiresBatch"));
     return 2;
   }
   if (parsed.maxItems !== undefined) {
-    error("dismiss: --max-items requires --batch");
+    error(t("cli.dismiss.maxItemsRequiresBatch"));
     return 2;
   }
   if (parsed.filterTags !== undefined) {
-    error("dismiss: --filter-tags requires --batch");
+    error(t("cli.dismiss.filterTagsRequiresBatch"));
     return 2;
   }
   if (parsed.itemIds.length === 0) {
-    error("dismiss: missing <item-id>");
+    error(t("cli.dismiss.missingItemId"));
     printHelp(t, error);
     return 2;
   }
@@ -361,10 +372,10 @@ export async function runDismiss(
   const uniqueIds = [...new Set(parsed.itemIds)];
   const found = await findItems(cwd, uniqueIds);
   if ("missing" in found) {
-    error(`dismiss: item '${found.missing}' not found under items/`);
+    error(t("cli.dismiss.itemNotFound", { id: found.missing }));
     return 1;
   }
-  return dismissItems(cwd, found.items, log, error);
+  return dismissItems(cwd, found.items, log, error, t);
 }
 
 export const dismissCommand: Command = {

@@ -521,6 +521,238 @@ Types:
 
 Run \`radar routine generate <type> --help\` for type-specific options.`,
 
+  // --- user-facing errors & result notifications (#312) ---------------------
+  // Catalog of the user-facing error / result-notification strings emitted by
+  // the CLI commands (option-validation errors, file/state errors needing user
+  // action, and completion notices). Developer-facing internal logs / traces
+  // are intentionally NOT translated (ADR-0021 boundary). Dynamic values are
+  // interpolated via the function-entry params, not placeholder strings.
+
+  // dismiss (#312)
+  "cli.dismiss.batchIncompatiblePositional": ({ count }: { count: number }): string =>
+    `dismiss: --batch is incompatible with positional <item-id> arguments (got ${count})`,
+  "cli.dismiss.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `dismiss: invalid --status '${status}' (expected: ${allowed})`,
+  "cli.dismiss.statusRequiresBatch": "dismiss: --status requires --batch",
+  "cli.dismiss.maxItemsRequiresBatch": "dismiss: --max-items requires --batch",
+  "cli.dismiss.filterTagsRequiresBatch": "dismiss: --filter-tags requires --batch",
+  "cli.dismiss.invalidMaxItemsInteger": ({ raw }: { raw: string }): string =>
+    `dismiss: invalid --max-items '${raw}' (expected positive integer)`,
+  "cli.dismiss.invalidMaxItemsPositive": ({ raw }: { raw: string }): string =>
+    `dismiss: invalid --max-items '${raw}' (must be > 0)`,
+  "cli.dismiss.missingItemId": "dismiss: missing <item-id>",
+  "cli.dismiss.itemNotFound": ({ id }: { id: string }): string =>
+    `dismiss: item '${id}' not found under items/`,
+  "cli.dismiss.itemWrongStatus": ({
+    id,
+    status,
+    allowed,
+    nextStatuses,
+  }: {
+    id: string;
+    status: string;
+    allowed: string;
+    nextStatuses: string;
+  }): string =>
+    `dismiss: item '${id}' is in status '${status}', expected one of ${allowed} (dismiss transitions to 'dismissed' only from these). Valid next statuses for '${status}': ${nextStatuses}`,
+  "cli.dismiss.failedUpdate": ({ reason }: { reason: string }): string =>
+    `dismiss: failed to update item status: ${reason}`,
+  "cli.dismiss.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `dismiss: items/${sourceId}/${id}.yaml status -> dismissed`,
+  "cli.dismiss.noItemsMatched": ({ status, tags }: { status: string; tags: string }): string =>
+    `dismiss: no items matched --batch filters (status=${status}${tags})`,
+  "cli.dismiss.capReached": ({
+    maxItems,
+    dropped,
+    matched,
+  }: {
+    maxItems: number;
+    dropped: number;
+    matched: number;
+  }): string =>
+    `dismiss: --max-items ${maxItems} cap reached; dropping ${dropped} excess item(s) (matched ${matched})`,
+  "cli.dismiss.batchWillProcess": ({
+    count,
+    status,
+    tags,
+    cap,
+  }: {
+    count: number;
+    status: string;
+    tags: string;
+    cap: number;
+  }): string =>
+    `dismiss: --batch will process ${count} item(s) (status=${status}${tags}, cap=${cap})`,
+  "cli.dismiss.batchCompleted": ({ count }: { count: number }): string =>
+    `dismiss: --batch completed ${count} item(s)`,
+
+  // undismiss (#312)
+  "cli.undismiss.missingItemId": "undismiss: missing <item-id>",
+  "cli.undismiss.itemsDirNotFound": "undismiss: items/ not found (run `radar init`)",
+  "cli.undismiss.itemNotFound": ({ id }: { id: string }): string =>
+    `undismiss: item '${id}' not found under items/`,
+  "cli.undismiss.notDismissed": ({ id, status }: { id: string; status: string }): string =>
+    `undismiss: item '${id}' is in status '${status}', expected 'dismissed' (undismiss reverses a dismiss, not other transitions)`,
+  "cli.undismiss.forbiddenTransition":
+    "undismiss: state machine forbids 'dismissed → detected' (internal error)",
+  "cli.undismiss.humanOriginRequiresForce": ({ id }: { id: string }): string =>
+    `undismiss: item '${id}' was dismissed by human; pass --force to revert (this is a deliberate safety gate)`,
+  "cli.undismiss.failedUpdate": ({ reason }: { reason: string }): string =>
+    `undismiss: failed to update item: ${reason}`,
+  "cli.undismiss.revertedHumanOrigin": ({ id }: { id: string }): string =>
+    `undismiss: reverted human-origin dismiss for '${id}' (used --force)`,
+  "cli.undismiss.transitioned": ({ sourceId, id }: { sourceId: string; id: string }): string =>
+    `undismiss: items/${sourceId}/${id}.yaml status -> detected`,
+
+  // doctor diagnostics (#312)
+  "cli.doctor.workspaceDirExists": ({ dir }: { dir: string }): string => `${dir}/ exists`,
+  "cli.doctor.workspaceDirMissing": ({ dir }: { dir: string }): string =>
+    `${dir}/ missing — run \`radar init\` to scaffold the workspace`,
+  "cli.doctor.configValid": "radar.config.yaml valid (or absent — defaults apply)",
+  "cli.doctor.configInvalid": ({ reason }: { reason: string }): string =>
+    `radar.config.yaml invalid: ${reason}`,
+  "cli.doctor.agentFound": ({
+    agent,
+    binary,
+    path,
+  }: {
+    agent: string;
+    binary: string;
+    path: string;
+  }): string => `${agent}: ${binary} found at ${path}`,
+  "cli.doctor.agentMissing": ({ agent, binary }: { agent: string; binary: string }): string =>
+    `${agent}: ${binary} not found in PATH (install it to use \`radar research --agent ${agent}\`)`,
+  "cli.doctor.playwrightNotRequired": "playwright: not required (no html-js sources configured)",
+  "cli.doctor.playwrightOk": ({ path }: { path: string }): string =>
+    `playwright: ok — chromium at ${path}`,
+  "cli.doctor.playwrightModuleMissing": ({
+    sources,
+    hint,
+  }: {
+    sources: string;
+    hint: string;
+  }): string =>
+    `playwright: module not installed (required by html-js sources: ${sources})\n  ${hint}`,
+  "cli.doctor.playwrightChromiumMissing": ({
+    path,
+    sources,
+    hint,
+  }: {
+    path: string;
+    sources: string;
+    hint: string;
+  }): string =>
+    `playwright: chromium missing at '${path}' (required by html-js sources: ${sources})\n  ${hint}`,
+  "cli.doctor.proxyEnvAllProxyOnly": ({
+    source,
+    masked,
+  }: {
+    source: string;
+    masked: string;
+  }): string =>
+    `proxy: detected via $${source}=${masked} (Node --use-env-proxy ignores ALL_PROXY; set HTTPS_PROXY or HTTP_PROXY instead)`,
+  "cli.doctor.proxyEnvDetected": ({ source, masked }: { source: string; masked: string }): string =>
+    `proxy: detected via $${source}=${masked}`,
+  "cli.doctor.proxyEnvNone": "proxy: no proxy env var set (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY)",
+  "cli.doctor.proxyActive": "proxy: NODE_USE_ENV_PROXY active (auto-applied by radar)",
+  "cli.doctor.proxyActiveMissing":
+    "proxy: NODE_USE_ENV_PROXY not set; if fetch ignores HTTPS_PROXY, re-run radar via the bin (not direct import)",
+  "cli.doctor.proxyActiveNotRequired": "proxy: NODE_USE_ENV_PROXY not required (no proxy detected)",
+  "cli.doctor.tlsCaSet": ({ path }: { path: string }): string => `tls: NODE_EXTRA_CA_CERTS=${path}`,
+  "cli.doctor.tlsCaUnset": "tls: NODE_EXTRA_CA_CERTS not set (TLS-intercepting proxies may fail)",
+  "cli.doctor.healthcheckSkippedFlag": "proxy healthcheck: skipped (--no-proxy-check)",
+  "cli.doctor.healthcheckSkippedNoProxy": "proxy healthcheck: skipped (no proxy detected)",
+  "cli.doctor.healthcheck407": ({ url }: { url: string }): string =>
+    `proxy healthcheck: 407 Proxy Authentication Required from ${url} (check userinfo in $HTTPS_PROXY)`,
+  "cli.doctor.healthcheckOk": ({
+    status,
+    statusText,
+    elapsed,
+  }: {
+    status: number;
+    statusText: string;
+    elapsed: number;
+  }): string =>
+    `proxy healthcheck: ok (${status} ${statusText} from api.github.com in ${elapsed}ms)`,
+  "cli.doctor.healthcheckOther": ({
+    status,
+    statusText,
+    elapsed,
+  }: {
+    status: number;
+    statusText: string;
+    elapsed: number;
+  }): string =>
+    `proxy healthcheck: ${status} ${statusText} from api.github.com in ${elapsed}ms`.trimEnd(),
+  "cli.doctor.healthcheckTimeout": ({ elapsed }: { elapsed: number }): string =>
+    `proxy healthcheck: timeout after ${elapsed}ms (proxy may be unreachable; verify $HTTPS_PROXY host:port)`,
+  "cli.doctor.healthcheckTls": ({ code }: { code: string }): string =>
+    `proxy healthcheck: TLS error (${code}). Set NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem to trust your proxy's intercepting CA.`,
+  "cli.doctor.healthcheckRefused":
+    "proxy healthcheck: connection refused. Verify the proxy host:port in $HTTPS_PROXY is reachable.",
+  "cli.doctor.healthcheckDns": ({ code }: { code: string }): string =>
+    `proxy healthcheck: DNS lookup failed (${code}). The proxy host in $HTTPS_PROXY can't be resolved.`,
+  "cli.doctor.healthcheckResetTimeout": ({ code }: { code: string }): string =>
+    `proxy healthcheck: connection ${code === "ETIMEDOUT" ? "timed out" : "reset"} (${code}).`,
+  "cli.doctor.healthcheckFailed": ({ reason }: { reason: string }): string =>
+    `proxy healthcheck: failed — ${reason}`,
+  "cli.doctor.summary": ({
+    ok,
+    warn,
+    error,
+  }: {
+    ok: number;
+    warn: number;
+    error: number;
+  }): string => `doctor: ${ok} ok, ${warn} warn, ${error} error`,
+
+  // init result summary / next-steps (#312)
+  "cli.init.workspaceReady": ({ cwd }: { cwd: string }): string =>
+    `init: workspace ready at ${cwd}`,
+  "cli.init.directoriesCreated": ({ dirs }: { dirs: string }): string =>
+    `init: directories created: ${dirs}`,
+  "cli.init.skillsCopied": ({ files }: { files: string }): string =>
+    `init: skills copied: ${files}`,
+  "cli.init.filesSkipped": ({ files }: { files: string }): string =>
+    `init: files skipped: ${files}`,
+  "cli.init.nextSteps":
+    "init: next steps — read FEEDRADAR.md for natural-language and slash usage.",
+
+  // items (#312)
+  "cli.items.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `items: unknown subcommand '${sub}'`,
+  "cli.items.invalidStatus": ({ status, allowed }: { status: string; allowed: string }): string =>
+    `items list: invalid --status '${status}' (expected: ${allowed})`,
+  "cli.items.invalidSince": ({ since }: { since: string }): string =>
+    `items list: invalid --since '${since}' (expected Ns | Nm | Nh | Nd)`,
+  "cli.items.noItemsDir": "items list: no items/ directory (run `radar init` first)",
+  "cli.items.noMatch": "items list: no items match the filter",
+
+  // watch (#312)
+  // NOTE: the `--bootstrap`/`--backfill`/`--max-pages`/`--verbose`/`--quiet`
+  // mutual-exclusion errors are thrown from the sync `parseWatchArgs` (before a
+  // translator is in scope) and re-wrapped opaquely at the catch boundary, so
+  // they are left untranslated here (recorded as a cross-cutting gap for a
+  // follow-up that refactors the parser to thread `t`).
+  "cli.watch.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `watch: unknown subcommand '${sub}'`,
+  "cli.watch.bootstrapComplete": ({ sources }: { sources: number }): string =>
+    `watch run: bootstrap complete (${sources} sources)`,
+  "cli.watch.backfillComplete": ({ total, sources }: { total: number; sources: number }): string =>
+    `watch run: backfill complete — ${total} item(s) ingested across ${sources} source(s)`,
+  "cli.watch.runComplete": ({ total, sources }: { total: number; sources: number }): string =>
+    `watch run: ${total} new item(s) across ${sources} source(s)`,
+
+  // zod-validation error preamble (#312) ------------------------------------
+  // The localized issue bodies come from zod's per-locale messages (wired via
+  // `applyZodLocale`); only the wrapping preamble lines are translated here.
+  "cli.config.schemaViolation": ({ file, issues }: { file: string; issues: string }): string =>
+    `${file} schema violation:\n${issues}`,
+  "cli.config.failedRead": ({ file, reason }: { file: string; reason: string }): string =>
+    `failed to read ${file}: ${reason}`,
+  "cli.config.failedParse": ({ file, reason }: { file: string; reason: string }): string =>
+    `failed to parse ${file} as YAML: ${reason}`,
+
   // --- init help (#311) -----------------------------------------------------
   "cli.init.help": `Usage: radar init [--lang <en|ja>] [--force] [--with-routines] [--with-actions]
                           [--no-claude-skills] [--no-gemini-commands]

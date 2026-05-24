@@ -202,16 +202,13 @@ export async function runWatch(args: string[], options: WatchCommandOptions = {}
   }
 
   const totalDetected = Object.values(result.detected).reduce((acc, list) => acc + list.length, 0);
+  const sourceCount = Object.keys(result.states).length;
   if (parsed.bootstrap) {
-    log(`watch run: bootstrap complete (${Object.keys(result.states).length} sources)`);
+    log(t("cli.watch.bootstrapComplete", { sources: sourceCount }));
   } else if (parsed.backfill) {
-    log(
-      `watch run: backfill complete — ${totalDetected} item(s) ingested across ${Object.keys(result.states).length} source(s)`,
-    );
+    log(t("cli.watch.backfillComplete", { total: totalDetected, sources: sourceCount }));
   } else {
-    log(
-      `watch run: ${totalDetected} new item(s) across ${Object.keys(result.states).length} source(s)`,
-    );
+    log(t("cli.watch.runComplete", { total: totalDetected, sources: sourceCount }));
   }
 
   return result.errors.length > 0 ? 1 : 0;
@@ -246,7 +243,7 @@ export const watchCommand: Command = {
     if (sub === "run") {
       return runWatch(rest);
     }
-    console.error(`watch: unknown subcommand '${sub}'`);
+    console.error(t("cli.watch.unknownSubcommand", { sub }));
     printWatchHelp(t, (m) => console.error(m));
     return 2;
   },

@@ -214,7 +214,7 @@ export async function runItems(args: string[], options: ItemsCommandOptions = {}
     case "list":
       return runItemsList(rest, options);
     default:
-      error(`items: unknown subcommand '${sub}'`);
+      error(t("cli.items.unknownSubcommand", { sub }));
       printItemsHelp(t, error);
       return 2;
   }
@@ -265,7 +265,10 @@ export async function runItemsList(
     const v = ItemStatusSchema.safeParse(parsed.status);
     if (!v.success) {
       error(
-        `items list: invalid --status '${parsed.status}' (expected: ${ItemStatusSchema.options.join(" | ")})`,
+        t("cli.items.invalidStatus", {
+          status: parsed.status,
+          allowed: ItemStatusSchema.options.join(" | "),
+        }),
       );
       return 2;
     }
@@ -278,7 +281,7 @@ export async function runItemsList(
       log("[]");
       return 0;
     }
-    log("items list: no items/ directory (run `radar init` first)");
+    log(t("cli.items.noItemsDir"));
     return 0;
   }
 
@@ -300,7 +303,7 @@ export async function runItemsList(
   if (parsed.since) {
     const cutoff = parseSinceCutoff(parsed.since);
     if (!cutoff) {
-      error(`items list: invalid --since '${parsed.since}' (expected Ns | Nm | Nh | Nd)`);
+      error(t("cli.items.invalidSince", { since: parsed.since }));
       return 2;
     }
     items = items.filter((i) => {
@@ -335,7 +338,7 @@ export async function runItemsList(
   }
 
   if (items.length === 0) {
-    log("items list: no items match the filter");
+    log(t("cli.items.noMatch"));
     return 0;
   }
 
