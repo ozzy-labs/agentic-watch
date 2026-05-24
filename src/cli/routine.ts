@@ -1,4 +1,5 @@
 import type { Command } from "./index.js";
+import { runFireRoutine } from "./routine/fire.js";
 import { runGeneratePipelineRoutine } from "./routine/generate-pipeline.js";
 import { runGenerateWatchRoutine } from "./routine/generate-watch.js";
 
@@ -25,8 +26,9 @@ function printRoutineHelp(log: (m: string) => void): void {
   log("Subcommands:");
   log("  generate <type>  Generate a Claude Code Routine YAML (.claude/routines/)");
   log("                   Types: watch | pipeline");
+  log("  fire <trig_id>   Trigger a registered routine from the outside (/fire API)");
   log("");
-  log("Run `radar routine generate <type> --help` for type-specific options.");
+  log("Run `radar routine <subcommand> --help` for subcommand-specific options.");
 }
 
 function printGenerateHelp(log: (m: string) => void): void {
@@ -51,6 +53,10 @@ function printGenerateHelp(log: (m: string) => void): void {
  * Claude Routines (self-session, no spawn). See ADR-0020 D1 for the namespace
  * split and D5 for the `<type>` roster (`watch` for detection only; `pipeline`
  * for the full watch -> triage -> research -> review self-session chain).
+ *
+ * Subcommands: `generate <type>` emits the source-of-truth YAML; `fire
+ * <trig_id>` triggers an already-registered routine from the outside via the
+ * `/fire` API (ADR-0020 §「外部からの起動」).
  */
 export async function runRoutine(
   args: string[],
@@ -64,6 +70,10 @@ export async function runRoutine(
   if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
     printRoutineHelp(log);
     return sub ? 0 : 2;
+  }
+
+  if (sub === "fire") {
+    return runFireRoutine(rest, options.io ?? {});
   }
 
   if (sub !== "generate") {
@@ -92,6 +102,6 @@ export async function runRoutine(
 
 export const routineCommand: Command = {
   name: "routine",
-  summary: "Generate Claude Code Routines (generate <type>)",
+  summary: "Manage Claude Code Routines (generate <type> / fire <trig_id>)",
   run: (args) => runRoutine(args),
 };

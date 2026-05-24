@@ -197,8 +197,16 @@ environment:
     sudo apt-get update -qq
     sudo apt-get install -y -qq gh
 
-# Web UI: Trigger (array; schedule / api / github can co-exist later).
+# Web UI: Trigger (array; schedule / api / github can co-exist).
+#
+# External /fire trigger (ADR-0020). Uncomment the `- type: api` item below to
+# also allow firing this routine on demand from outside (CI, a webhook,
+# `radar routine fire`, ...). The per-routine bearer token is issued ONCE in
+# the Web UI (shown a single time; Regenerate / Revoke there) — it is NOT
+# stored in this file. Fire with:
+#   radar routine fire <routine_id>     # token read from FEEDRADAR_ROUTINE_FIRE_TOKEN
 triggers:
+  # - type: api
   - type: scheduled
     # 5-field cron. Minimum interval is 1 HOUR (Routines limit). The generator
     # rejects sub-hourly expressions before writing this file.

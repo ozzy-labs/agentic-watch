@@ -85,8 +85,15 @@ environment:
     #   pnpm install --frozen-lockfile  # Node (pnpm)
     #   bundle install --jobs=4         # Ruby
 
-# Web UI: Trigger（配列。schedule / api / github を将来併用可能）
+# Web UI: Trigger（配列。schedule / api / github を併用可能）
+#
+# 外部からの /fire トリガー（ADR-0020）。下の `- type: api` のコメントを外すと、
+# CI や webhook、`radar routine fire` から手動でこのルーチンを起動できる。
+# per-routine の bearer token は Web UI で 1 回だけ発行・表示される
+# （Regenerate / Revoke も Web UI）。token はこのファイルには書かない。起動例:
+#   radar routine fire <routine_id>     # token は FEEDRADAR_ROUTINE_FIRE_TOKEN から読む
 triggers:
+  # - type: api
   - type: scheduled
     # 5 フィールドの cron 式（最小実行間隔は 1 時間）
     cron: "0 23 * * *"
