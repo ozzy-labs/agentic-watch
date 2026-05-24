@@ -107,9 +107,14 @@ jobs:
               'dist/gemini-commands/review.toml',
               'dist/gemini-commands/update.toml',
               'dist/gemini-commands/dismiss.toml',
-              'dist/templates/agents/AGENTS.md',
-              'dist/templates/default.md',
-              'dist/templates/digest.md',
+              // Per-locale templates (ADR-0021 D7): report templates + workspace
+              // docs ship under dist/templates/{en,ja}/ (en is the default).
+              'dist/templates/en/agents/AGENTS.md',
+              'dist/templates/en/default.md',
+              'dist/templates/en/digest.md',
+              'dist/templates/ja/agents/AGENTS.md',
+              'dist/templates/ja/default.md',
+              'dist/templates/ja/digest.md',
             ];
             const missing = required.filter(p => !files.includes(p));
             if (missing.length > 0) {
