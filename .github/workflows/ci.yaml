@@ -116,8 +116,8 @@ jobs:
               'dist/templates/ja/default.md',
               'dist/templates/ja/digest.md',
               // Per-locale workflow / routine scaffolds (#315): the
-              // `workflow generate` / `routine generate` / `init --with-*`
-              // commands read these from dist/templates/{en,ja}/.
+              // workflow-generate / routine-generate / init --with-* commands
+              // read these from dist/templates/{en,ja}/.
               'dist/templates/en/workflows/watch.template.yaml.tmpl',
               'dist/templates/en/workflows/combined.template.yaml.tmpl',
               'dist/templates/en/workflows/combined-with-triage.template.yaml.tmpl',
