@@ -7,6 +7,7 @@ import { initCommand } from "./init.js";
 import { itemsCommand } from "./items.js";
 import { researchCommand } from "./research.js";
 import { reviewCommand } from "./review.js";
+import { routineCommand } from "./routine.js";
 import { sourceCommand } from "./source.js";
 import { triageCommand } from "./triage.js";
 import { undismissCommand } from "./undismiss.js";
@@ -33,6 +34,7 @@ const commands: Command[] = [
   updateCommand,
   doctorCommand,
   workflowCommand,
+  routineCommand,
 ];
 
 // Read the installed package's version at runtime so `radar --version`

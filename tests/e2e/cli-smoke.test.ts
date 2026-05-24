@@ -699,6 +699,55 @@ describe("e2e/cli (binary smoke)", () => {
     });
   });
 
+  describe("scenario R: routine generate watch (ADR-0020 D5 / #280)", () => {
+    // Validates that the built binary renders the bundled
+    // `dist/templates/routines/watch.yaml.tmpl` into a valid Claude Routine
+    // YAML under `.claude/routines/`. Mirrors scenario H (workflow side): a
+    // packaging regression that dropped the routines template directory would
+    // fail here with "bundled template not found".
+    it("renders the watch routine with placeholders replaced and a parseable shape", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-routine-watch-"));
+      const result = await runCli(
+        ["routine", "generate", "watch", "--repo", "acme/widgets", "--cron", "0 0 * * *"],
+        { cwd: workdir },
+      );
+      expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+      const outputPath = join(".claude", "routines", "feedradar-watch.yaml");
+      expect(result.stdout).toContain(`routine generate watch: wrote ${outputPath}`);
+      // Stdout surfaces the Web UI paste workflow (yq) and the /schedule example.
+      expect(result.stdout).toContain("yq -r '.instructions'");
+      expect(result.stdout).toContain("/schedule");
+
+      const written = await readFile(join(workdir, outputPath), "utf8");
+      // No placeholder leaks.
+      expect(written).not.toContain("{{name}}");
+      expect(written).not.toContain("{{repository}}");
+      expect(written).not.toContain("{{cron}}");
+      expect(written).not.toContain("{{model}}");
+
+      // Parses cleanly and carries the watch-only routine shape (1:1 with the
+      // org `_template.yaml`).
+      const yaml = parseYaml(written);
+      expect(yaml.name).toBe("feedradar-watch");
+      expect(yaml.status).toBe("draft");
+      expect(yaml.repositories).toEqual(["acme/widgets"]);
+      expect(yaml.triggers?.[0]?.cron).toBe("0 0 * * *");
+      // Watch-only: instructions run `radar watch run`, no triage/research.
+      expect(yaml.instructions).toContain("radar watch run");
+      expect(yaml.instructions).not.toContain("radar triage");
+    });
+
+    it("rejects a sub-hourly cron (Routines 1-hour minimum)", async () => {
+      const workdir = await mkdtemp(join(tmpdir(), "aw-e2e-routine-subhourly-"));
+      const result = await runCli(
+        ["routine", "generate", "watch", "--repo", "acme/widgets", "--cron", "*/5 * * * *"],
+        { cwd: workdir },
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("minimum interval of 1 hour");
+    });
+  });
+
   describe("scenario J: source add --recipe + source recipes (bundled recipe discovery)", () => {
     // ADR-0012 §D3 / #178: recipes ship as `dist/recipes/*.yaml` and are
     // discovered via `source recipes`. `source add --recipe <name>` then
