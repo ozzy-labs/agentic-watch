@@ -230,11 +230,13 @@ describe("cli/init", () => {
         warn: (m) => warnings.push(m),
         info: () => undefined,
       });
-      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(false);
+      expect(await pathExists(join(workdir, ".claude", "routines", "watch-daily.yaml"))).toBe(
+        false,
+      );
       expect(await pathExists(join(workdir, ".github", "workflows", "watch.yaml"))).toBe(false);
     });
 
-    it("--with-routines emits claude/routines/watch-daily.md", async () => {
+    it("--with-routines emits .claude/routines/watch-daily.yaml", async () => {
       const result = await initWorkspace({
         cwd: workdir,
         force: false,
@@ -244,14 +246,17 @@ describe("cli/init", () => {
         warn: (m) => warnings.push(m),
         info: () => undefined,
       });
-      const dest = join(workdir, "claude", "routines", "watch-daily.md");
+      const dest = join(workdir, ".claude", "routines", "watch-daily.yaml");
       expect(await pathExists(dest)).toBe(true);
       const body = await readFile(dest, "utf8");
-      // Sanity: scaffold is the bundled template (frontmatter + ADR-0004 link).
-      expect(body).toMatch(/^---/);
-      expect(body).toMatch(/schedule:/);
+      // Sanity: scaffold is the bundled YAML template (Web-UI 1:1 fields,
+      // ADR-0004 link, no MD frontmatter). #281 migrated this from the old
+      // `claude/routines/watch-daily.md` MD scaffold.
+      expect(body).not.toMatch(/^---/);
+      expect(body).toMatch(/^name: watch-daily$/m);
+      expect(body).toMatch(/cron: "0 0 \* \* \*"/);
       expect(body).toContain("ADR-0004");
-      expect(result.copiedFiles).toContain("claude/routines/watch-daily.md");
+      expect(result.copiedFiles).toContain(".claude/routines/watch-daily.yaml");
     });
 
     it("--with-actions emits .github/workflows/watch.yaml", async () => {
@@ -285,15 +290,15 @@ describe("cli/init", () => {
         warn: (m) => warnings.push(m),
         info: () => undefined,
       });
-      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(true);
+      expect(await pathExists(join(workdir, ".claude", "routines", "watch-daily.yaml"))).toBe(true);
       expect(await pathExists(join(workdir, ".github", "workflows", "watch.yaml"))).toBe(true);
-      expect(result.copiedFiles).toContain("claude/routines/watch-daily.md");
+      expect(result.copiedFiles).toContain(".claude/routines/watch-daily.yaml");
       expect(result.copiedFiles).toContain(".github/workflows/watch.yaml");
     });
 
     it("protects existing scaffold files without --force", async () => {
-      const dest = join(workdir, "claude", "routines", "watch-daily.md");
-      await mkdir(join(workdir, "claude", "routines"), { recursive: true });
+      const dest = join(workdir, ".claude", "routines", "watch-daily.yaml");
+      await mkdir(join(workdir, ".claude", "routines"), { recursive: true });
       await writeFile(dest, "user-edited routine", "utf8");
 
       const result = await initWorkspace({
@@ -307,8 +312,8 @@ describe("cli/init", () => {
       });
 
       expect(await readFile(dest, "utf8")).toBe("user-edited routine");
-      expect(result.skippedFiles).toContain("claude/routines/watch-daily.md");
-      expect(warnings.some((m) => m.includes("claude/routines/watch-daily.md"))).toBe(true);
+      expect(result.skippedFiles).toContain(".claude/routines/watch-daily.yaml");
+      expect(warnings.some((m) => m.includes(".claude/routines/watch-daily.yaml"))).toBe(true);
     });
 
     it("overwrites existing scaffold files with --force", async () => {
@@ -343,8 +348,10 @@ describe("cli/init", () => {
         warn: (m) => warnings.push(m),
         info: () => undefined,
       });
-      expect(await pathExists(join(workdir, "claude", "routines", "watch-daily.md"))).toBe(false);
-      expect(result.skippedFiles).toContain("claude/routines/watch-daily.md");
+      expect(await pathExists(join(workdir, ".claude", "routines", "watch-daily.yaml"))).toBe(
+        false,
+      );
+      expect(result.skippedFiles).toContain(".claude/routines/watch-daily.yaml");
       expect(warnings.some((m) => m.includes("bundled template not found"))).toBe(true);
     });
   });

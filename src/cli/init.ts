@@ -187,7 +187,7 @@ interface InitOptions {
   noFeedradarMd?: boolean;
   /**
    * Emit the Claude Routines schedule template
-   * (`claude/routines/watch-daily.md`).
+   * (`.claude/routines/watch-daily.yaml`).
    */
   withRoutines?: boolean;
   /**
@@ -271,11 +271,18 @@ const GEMINI_COMMANDS = ["research", "review", "update", "dismiss"] as const;
  *
  * See ADR-0004 for the policy: `radar` does not run schedules
  * itself; these scaffolds wire it into Claude Routines / GitHub Actions.
+ *
+ * The routines scaffold lands at `.claude/routines/watch-daily.yaml` (dotted
+ * dir per the org convention; YAML form 1:1 with the Web UI). This unifies it
+ * with `radar routine generate watch`, which writes the same `.claude/routines/`
+ * YAML shape (ADR-0004 / ADR-0020 §"形式・出力先の統一"). The pre-#281 scaffold
+ * (`claude/routines/watch-daily.md`, MD frontmatter, no leading dot) is gone —
+ * see the migration note in the user-guide / README.
  */
 const SCHEDULE_SCAFFOLDS = {
   routines: {
-    src: "routines/watch-daily.md",
-    dest: ["claude", "routines", "watch-daily.md"] as const,
+    src: "routines/watch-daily.yaml",
+    dest: [".claude", "routines", "watch-daily.yaml"] as const,
   },
   actions: {
     src: "workflows/watch.yaml",
@@ -793,7 +800,7 @@ export const initCommand: Command = {
       console.log("Options:");
       console.log("  --force                Overwrite existing files");
       console.log(
-        "  --with-routines        Generate claude/routines/watch-daily.md (Claude Routines scaffold)",
+        "  --with-routines        Generate .claude/routines/watch-daily.yaml (Claude Routines scaffold)",
       );
       console.log(
         "  --with-actions         Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)",

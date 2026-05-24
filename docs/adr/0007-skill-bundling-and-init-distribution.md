@@ -29,7 +29,7 @@ Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026
 | **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`radar <subcommand>` を呼ぶだけの薄い wrapper | `src/claude-skills/` | `--no-claude-skills` |
 | **Gemini commands** | `<cwd>/.gemini/commands/<name>.toml` | Gemini CLI interactive で `/research` 等の slash command として発火、TOML の `prompt` キーから `radar <subcommand> {{args}}` を呼ぶ | `src/gemini-commands/` | `--no-gemini-commands` |
 | **AGENTS.md** | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer) | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
-| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+| **schedule scaffolds** (opt-in) | `<cwd>/.claude/routines/watch-daily.yaml` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
 
 `package.json` の `files` には `dist/skills` / `dist/claude-skills` / `dist/gemini-commands` / `dist/templates` を含めて配布する。
 
@@ -141,7 +141,7 @@ Revision (a) (2026-05-17) で `.claude/skills/` の slash-command wrapper を de
 | **engine SKILL (SSoT)** | `<cwd>/.agents/skills/<name>/SKILL.md` | adapter (`claude` / `codex` / `gemini` / `copilot`) が spawn 時に読む procedure 本体 | `src/skills/` | (なし、SSoT) |
 | **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`radar <subcommand>` を呼ぶだけ | `src/claude-skills/` | `--no-claude-skills` |
 | **AGENTS.md** (新規) | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions (workspace 概要、主要コマンド、典型ワークフロー、docs pointer) | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
-| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+| **schedule scaffolds** (opt-in) | `<cwd>/.claude/routines/watch-daily.yaml` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
 
 #### AGENTS.md の内容方針
 
@@ -194,7 +194,7 @@ Revision (a) で Claude Code、Revision (b) で Codex / Gemini / Copilot の **a
 | **Claude discovery SKILL** | `<cwd>/.claude/skills/<name>/SKILL.md` | Claude Code interactive で `/research` 等の slash command として発火、`radar <subcommand>` を呼ぶだけ | `src/claude-skills/` | `--no-claude-skills` |
 | **Gemini commands (新規)** | `<cwd>/.gemini/commands/<name>.toml` | Gemini CLI interactive で `/research` 等の slash command として発火、TOML の `prompt` キーから `radar <subcommand> {{args}}` を呼ぶ | `src/gemini-commands/` | `--no-gemini-commands` |
 | **AGENTS.md** | `<cwd>/AGENTS.md` | Codex / Gemini / Copilot が auto-read する agent-agnostic instructions | `src/templates/agents/AGENTS.md` | `--no-agents-md` |
-| **schedule scaffolds** (opt-in) | `<cwd>/claude/routines/watch-daily.md` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
+| **schedule scaffolds** (opt-in) | `<cwd>/.claude/routines/watch-daily.yaml` / `<cwd>/.github/workflows/watch.yaml` | 定期実行 scheduler への接続用雛形 (ADR-0004) | `src/templates/{routines,workflows}/` | (opt-in: `--with-routines` / `--with-actions`) |
 
 #### B1: engine SKILL の dual-mode 化
 
@@ -287,7 +287,7 @@ table を SSoT として参照できるようにする。
 | **FEEDRADAR.md** | `<cwd>/FEEDRADAR.md` | 人間向け workspace ガイド (自然言語指示 / slash の使い方を主、CLI 直叩きを副) | `src/templates/feedradar.md` | `--no-feedradar-md` |
 | **templates/default.md** | `<cwd>/templates/default.md` | 単体 research のテンプレート雛形 (frontmatter は engine SKILL 側で生成、body のみ) | `src/templates/default.md` | `--no-templates` |
 | **templates/digest.md** | `<cwd>/templates/digest.md` | digest research のテンプレート雛形 (ADR-0011) | `src/templates/digest.md` | `--no-templates` (共通) |
-| **schedule scaffolds (Routines)** | `<cwd>/claude/routines/watch-daily.md` | Claude Routines 定期実行雛形 (ADR-0004) | `src/templates/routines/` | (opt-in: `--with-routines`) |
+| **schedule scaffolds (Routines)** | `<cwd>/.claude/routines/watch-daily.yaml` | Claude Routines 定期実行雛形 (ADR-0004 / ADR-0020 で YAML 統一・パス修正) | `src/templates/routines/` | (opt-in: `--with-routines`) |
 | **schedule scaffolds (Actions)** | `<cwd>/.github/workflows/watch.yaml` | GitHub Actions 定期実行雛形 (ADR-0004) | `src/templates/workflows/watch.yaml` | (opt-in: `--with-actions`) |
 
 合計 **10 種類** の bundled asset を `init` が扱う (Revision (c) 時点の 5 層 +

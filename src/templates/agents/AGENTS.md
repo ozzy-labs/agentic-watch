@@ -43,7 +43,7 @@ radar init --no-feedradar-md    # FEEDRADAR.md (人間向けガイド) 生成を
 radar init --no-claude-skills       # .claude/skills/ を skip
 radar init --no-gemini-commands     # .gemini/commands/ を skip
 radar init --no-templates           # templates/default.md 生成を skip
-radar init --with-routines          # claude/routines/watch-daily.md を生成
+radar init --with-routines          # .claude/routines/watch-daily.yaml を生成
 radar init --with-actions           # .github/workflows/watch.yaml を生成
 radar init --force                  # 既存ファイルを上書き
 

@@ -66,7 +66,7 @@ radar research <item-id> --agent claude-code
 ├── .claude/skills/      # Claude Code / Copilot CLI 用 slash-command 雛形 (薄い wrapper、`--no-claude-skills` で skip)
 ├── .gemini/commands/    # Gemini CLI 用 TOML slash-command 雛形 (`--no-gemini-commands` で skip)
 ├── .github/workflows/   # 定期実行ワークフロー (`--with-actions` 指定時のみ)
-└── claude/routines/     # Claude Routines (`--with-routines` 指定時のみ)
+└── .claude/routines/    # Claude Routines (`--with-routines` 指定時のみ、watch-daily.yaml)
 ```
 
 `--with-routines` / `--with-actions` を指定すると、定期実行 scheduler への接続用雛形が追加で生成される（詳細は本ドキュメントの「[スケジュール実行](#スケジュール実行)」セクション）。
@@ -1912,7 +1912,7 @@ radar research <item-id> --agent gemini-cli   # gemini-cli が使われる (明�
 
 | フラグ / コマンド | 生成先 | 用途 |
 |---|---|---|
-| `radar init --with-routines` | `claude/routines/watch-daily.md` | Claude Routines (Anthropic 管理クラウド VM) |
+| `radar init --with-routines` | `.claude/routines/watch-daily.yaml` | Claude Routines (Anthropic 管理クラウド VM) |
 | `radar init --with-actions` | `.github/workflows/watch.yaml` | GitHub Actions (cron + workflow_dispatch、初回 init 時の bootstrap 用) |
 | `radar workflow generate watch` | `.github/workflows/feedradar-watch.yaml` (既定) | GitHub Actions watch 雛形を **後追い生成**（複数 cadence / agent 切替対応、ADR-0014） |
 | `radar workflow generate combined` | `.github/workflows/feedradar-combined.yaml` (既定) | watch → 自動 research の連鎖（ハードキャップ + rebase リトライ内蔵、ADR-0014） |
@@ -2241,7 +2241,9 @@ cron cadence を変えたい / `combined` (watch + 自動 research) を追加し
 
 ### Claude Routines 雛形の検証手順
 
-1. `radar init --with-routines` で `claude/routines/watch-daily.md` が生成される
+> **移行注記（#281・破壊的変更）**: 出力先・形式が変わった。旧 `claude/routines/watch-daily.md`（ドット無し・Markdown frontmatter）→ 新 `.claude/routines/watch-daily.yaml`（ドット有り・YAML、Web UI フォームと 1:1）。これは `radar routine generate watch`（[ADR-0020](./adr/0020-claude-routines-generation.md)）が出力する `.claude/routines/*.yaml` と形式・出力先を統一するため。旧 `.md` 雛形を使っていた場合は再度 `radar init --with-routines` を実行して新 YAML を取得し、旧ファイルを削除する。
+
+1. `radar init --with-routines` で `.claude/routines/watch-daily.yaml` が生成される
 2. Claude Routines に routine を登録する（取り込み方法は Claude Routines 側の手順に従う）
 3. Routine 実行画面で API キー (`ANTHROPIC_API_KEY` 等) を secret として渡す
 4. 1 回手動実行（Routines UI から）して `watch run` が成功すること、`items/` / `state/` の commit が push されることを確認する
