@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { renderPipelineRoutineTemplate } from "../../src/cli/routine/generate-pipeline.js";
+import {
+  buildOutputGateConstraint,
+  buildOutputGateNote,
+  buildPipelineLandingStep,
+  type OutputMode,
+  renderPipelineRoutineTemplate,
+} from "../../src/cli/routine/generate-pipeline.js";
 import {
   renderNetworkAccessBlock,
   renderWatchRoutineTemplate,
@@ -101,7 +107,11 @@ describe("bundled routine templates :: contract", () => {
     expect(out).toContain(`OK   ${dest}`);
   });
 
-  it("rendered pipeline.yaml.tmpl passes validate.py", async () => {
+  // Both --output-mode values (#301) must render to a contract-clean routine.
+  it.each<OutputMode>([
+    "pr",
+    "auto-merge",
+  ])("rendered pipeline.yaml.tmpl (--output-mode %s) passes validate.py", async (mode) => {
     const tmpl = await readFile(PIPELINE_TMPL, "utf8");
     const rendered = renderPipelineRoutineTemplate(tmpl, {
       name: "feedradar-pipeline",
@@ -111,6 +121,10 @@ describe("bundled routine templates :: contract", () => {
       model: "claude-sonnet-4-6",
       maxItems: 10,
       networkAccessBlock: renderNetworkAccessBlock(["example.com"]),
+      landingStep: buildPipelineLandingStep(mode),
+      outputGateConstraint: buildOutputGateConstraint(mode),
+      outputGateNote: buildOutputGateNote(mode),
+      allowUnrestrictedGitPush: mode === "auto-merge",
     });
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
     expect(parseYaml(rendered)).toMatchObject({ name: "feedradar-pipeline", status: "draft" });

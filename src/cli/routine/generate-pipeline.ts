@@ -38,6 +38,136 @@ import {
 export const PIPELINE_DEFAULT_MAX_ITEMS = 10;
 
 /**
+ * Landing / output modes for the pipeline routine's step-6 commit (#301).
+ *
+ * Symmetric with the GHA `combined-with-triage --output-mode pr|direct-commit`
+ * (#258), but the names differ because the mechanics differ:
+ *
+ * - `pr` (default): open a `claude/pipeline/...` branch + PR and STOP. A human
+ *   reviews and merges. This is the ADR-0020 D3a safe default — no unreviewed
+ *   routine output reaches the default branch.
+ * - `auto-merge`: open the same `claude/pipeline/...` PR, then immediately
+ *   `gh pr merge --squash` it so the output lands on `main`. Distinct from the
+ *   GHA `direct-commit` (which pushes to main with NO PR at all); here a PR is
+ *   always created first. Opt-in because the step-5 self-review makes the PR
+ *   review-complete (ADR-0020 D3a opt-in auto-merge).
+ *
+ * NB: `--auto` (vs immediate `--squash`) is intentionally NOT used — on a repo
+ * with no required checks `gh pr merge --auto` never merges, so the routine
+ * uses an immediate squash merge instead (#301).
+ */
+export const OUTPUT_MODES = ["pr", "auto-merge"] as const;
+export type OutputMode = (typeof OUTPUT_MODES)[number];
+
+/**
+ * Build the instructions step-6 commit/landing block for the given output mode.
+ *
+ * - `pr`: open a `claude/pipeline/...` branch + PR and stop (the current,
+ *   pre-#301 behavior).
+ * - `auto-merge`: the same branch + PR, then `git switch main` and
+ *   `gh pr merge "${BRANCH}" --squash --delete-branch` so the output lands on
+ *   `main`. Switching to `main` before `--delete-branch` keeps the merge
+ *   robust; the merge is fail-soft (`|| true`) so a transient failure leaves
+ *   the PR open rather than aborting the routine.
+ *
+ * Emitted with the same 5-space body indentation as the surrounding numbered
+ * step (the placeholder sits where the step body starts). Exported for unit
+ * testing (mirrors the GHA generator's `buildFinalStep`).
+ */
+export function buildPipelineLandingStep(mode: OutputMode): string {
+  // The `${...}` / `$(...)` tokens below are bash expansions in the GENERATED
+  // YAML, not JS template placeholders, so they are assembled by concatenation
+  // to keep biome's noTemplateCurlyInString quiet (same convention as the GHA
+  // `generate-combined-with-triage.ts` builders).
+  const BR = "$" + "{BRANCH}";
+  const DATE_BRANCH = "$" + "(date -u +%Y%m%d-%H%M)";
+  const DATE_COMMIT = "$" + "(date -u +%Y-%m-%d)";
+  const common = [
+    `       BRANCH="claude/pipeline/${DATE_BRANCH}"`,
+    `       git switch -c "${BR}"`,
+    "       git add items/ state/ research/",
+    `       git commit -m "chore(pipeline): triage/research/review ${DATE_COMMIT}"`,
+    `       git push -u origin "${BR}"`,
+    `       gh pr create --fill --base main --head "${BR}" || true`,
+  ];
+  if (mode === "auto-merge") {
+    return [
+      "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+      "     branch, open a pull request, then squash-merge it to `main` (auto-merge is",
+      "     opt-in here — the step-5 review makes the PR review-complete):",
+      "",
+      "     ```bash",
+      "     if ! git diff --quiet items/ state/ research/; then",
+      ...common,
+      "       # Switch off the head branch before --delete-branch so the merge is",
+      "       # robust, then squash-merge immediately (NOT --auto: on a repo with no",
+      "       # required checks --auto never merges). Fail-soft so a transient merge",
+      "       # failure leaves the PR open rather than aborting the run.",
+      "       git switch main",
+      `       gh pr merge "${BR}" --squash --delete-branch || true`,
+      "     fi",
+      "     ```",
+    ].join("\n");
+  }
+  return [
+    "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+    "     branch and open a pull request (do NOT push to `main`):",
+    "",
+    "     ```bash",
+    "     if ! git diff --quiet items/ state/ research/; then",
+    ...common,
+    "     fi",
+    "     ```",
+  ].join("\n");
+}
+
+/**
+ * Build the hard-constraints output-gate bullet for the given output mode.
+ *
+ * - `pr`: the current "do NOT push to main; claude/* branch + PR only"
+ *   constraint (ADR-0020 D3a, no auto-merge).
+ * - `auto-merge`: flips the constraint to say auto-merge is intentional — the
+ *   routine opens a `claude/pipeline/...` PR then squash-merges it, and the
+ *   step-5 review is what makes the PR review-complete (ADR-0020 D3a opt-in
+ *   auto-merge).
+ *
+ * Exported for unit testing (mirrors the GHA generator's exported builders).
+ */
+export function buildOutputGateConstraint(mode: OutputMode): string {
+  if (mode === "auto-merge") {
+    return [
+      "  - Auto-merge is intentional here: this routine opens a `claude/pipeline/...`",
+      "    PR then squash-merges it to `main`. The step-5 review makes the PR",
+      "    review-complete (ADR-0020 D3a opt-in auto-merge).",
+    ].join("\n");
+  }
+  return [
+    "  - Do NOT push to `main` directly. Always use a `claude/pipeline/...` branch",
+    "    and a PR (ADR-0020 D3a output gate; no auto-merge).",
+  ].join("\n");
+}
+
+/**
+ * Build the `notes:` output-gate sentence for the given output mode. Mirrors
+ * `buildOutputGateConstraint` but phrased for the ops `notes` block.
+ */
+export function buildOutputGateNote(mode: OutputMode): string {
+  if (mode === "auto-merge") {
+    return [
+      "  Output is committed to a `claude/*` branch / PR, then squash-merged to main",
+      "  (auto-merge is opt-in; the step-5 review makes the PR review-complete —",
+      "  ADR-0020 D3a). Single Claude session, no spawn (D2): the cross-agent review",
+      "  of the GHA pipeline is NOT present here.",
+    ].join("\n");
+  }
+  return [
+    "  Output is committed to a `claude/*` branch / PR only (never main directly;",
+    "  ADR-0020 D3a). Single Claude session, no spawn (D2): the cross-agent review",
+    "  of the GHA pipeline is NOT present here.",
+  ].join("\n");
+}
+
+/**
  * Resolve the directory holding the bundled routine templates.
  *
  * Mirrors `resolveTemplatesRoot` in `generate-watch.ts`: the compiled CLI lives
@@ -79,6 +209,10 @@ export function renderPipelineRoutineTemplate(
     model: string;
     maxItems: number;
     networkAccessBlock: string;
+    landingStep: string;
+    outputGateConstraint: string;
+    outputGateNote: string;
+    allowUnrestrictedGitPush: boolean;
   },
 ): string {
   return template
@@ -88,7 +222,11 @@ export function renderPipelineRoutineTemplate(
     .replace(/\{\{timezone\}\}/g, values.timezone)
     .replace(/\{\{model\}\}/g, values.model)
     .replace(/\{\{maxItems\}\}/g, String(values.maxItems))
-    .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock);
+    .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock)
+    .replace(/\{\{landingStep\}\}/g, values.landingStep)
+    .replace(/\{\{outputGateConstraint\}\}/g, values.outputGateConstraint)
+    .replace(/\{\{outputGateNote\}\}/g, values.outputGateNote)
+    .replace(/\{\{allowUnrestrictedGitPush\}\}/g, String(values.allowUnrestrictedGitPush));
 }
 
 export interface GeneratePipelineRoutineOptions {
@@ -99,6 +237,8 @@ export interface GeneratePipelineRoutineOptions {
   timezone: string;
   model: SupportedModel;
   maxItems: number;
+  /** Landing mode for the step-6 commit (#301). Defaults to `pr`. */
+  outputMode: OutputMode;
   output: string;
   force: boolean;
   /** Test seam: override the templates root location. */
@@ -125,10 +265,16 @@ export interface GeneratePipelineRoutineResult {
 export async function generatePipelineRoutine(
   options: GeneratePipelineRoutineOptions,
 ): Promise<GeneratePipelineRoutineResult> {
-  const { cwd, name, repository, cron, timezone, model, maxItems, output, force } = options;
+  const { cwd, name, repository, cron, timezone, model, maxItems, outputMode, output, force } =
+    options;
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
+  if (!(OUTPUT_MODES as readonly string[]).includes(outputMode)) {
+    throw new Error(
+      `invalid --output-mode '${outputMode}' (expected one of: ${OUTPUT_MODES.join(" | ")})`,
+    );
+  }
   if (!isValidCron(cron)) {
     throw new Error(
       `invalid --cron expression '${cron}' (expected 5-field POSIX cron, e.g. "0 * * * *")`,
@@ -168,6 +314,10 @@ export async function generatePipelineRoutine(
     model,
     maxItems,
     networkAccessBlock: renderNetworkAccessBlock(hosts),
+    landingStep: buildPipelineLandingStep(outputMode),
+    outputGateConstraint: buildOutputGateConstraint(outputMode),
+    outputGateNote: buildOutputGateNote(outputMode),
+    allowUnrestrictedGitPush: outputMode === "auto-merge",
   });
 
   const destAbs = isAbsolute(output) ? output : join(cwd, output);
@@ -185,8 +335,17 @@ export async function generatePipelineRoutine(
 
   log(`routine generate pipeline: wrote ${destRel}`);
   log(
-    `routine generate pipeline: name='${name}', repo='${repository}', cron='${cron}', model='${model}', max-items=${maxItems}`,
+    `routine generate pipeline: name='${name}', repo='${repository}', cron='${cron}', model='${model}', max-items=${maxItems}, output-mode='${outputMode}'`,
   );
+  if (outputMode === "auto-merge") {
+    warn(
+      "routine generate pipeline: --output-mode auto-merge sets " +
+        "`allow_unrestricted_git_push: true`, but that is NECESSARY, NOT SUFFICIENT — " +
+        "you must ALSO turn ON the Web UI 'Allow unrestricted branch pushes' toggle " +
+        "(the RemoteTrigger API does not accept this field). Note that unattended AI " +
+        "output then lands on the default branch with NO human review.",
+    );
+  }
   log("");
   log("Routines has no declarative apply API — paste this routine into the Web UI by hand:");
   log("  1. Open https://claude.ai/code/routines and click New routine.");
@@ -213,9 +372,15 @@ export async function generatePipelineRoutine(
   log(
     `Item caps are CLI-enforced (ADR-0020 D3e): triage --max-items ${maxItems} / items --limit ${maxItems}.`,
   );
-  log(
-    "Output gate (ADR-0020 D3a): this routine writes to a claude/* branch / PR only — never main directly.",
-  );
+  if (outputMode === "auto-merge") {
+    log(
+      "Output gate (ADR-0020 D3a): this routine opens a claude/* PR then squash-merges it to main (review-complete via step 5).",
+    );
+  } else {
+    log(
+      "Output gate (ADR-0020 D3a): this routine writes to a claude/* branch / PR only — never main directly.",
+    );
+  }
 
   return { outputPath: destRel };
 }
@@ -227,6 +392,7 @@ interface ParsedFlags {
   timezone: string;
   model: SupportedModel;
   maxItems: number;
+  outputMode: OutputMode;
   output: string;
   force: boolean;
   help: boolean;
@@ -245,6 +411,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
   let timezone = "UTC";
   let model: SupportedModel = "claude-sonnet-4-6";
   let maxItems = PIPELINE_DEFAULT_MAX_ITEMS;
+  let outputMode: OutputMode = "pr";
   let output: string | undefined;
   let force = false;
   let help = false;
@@ -300,6 +467,17 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
       maxItems = n;
       continue;
     }
+    if (a === "--output-mode") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(OUTPUT_MODES as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --output-mode expects one of: ${OUTPUT_MODES.join(" | ")}, got '${value}'`,
+        );
+      }
+      outputMode = value as OutputMode;
+      continue;
+    }
     if (a === "--output") {
       const value = args[++i];
       if (value === undefined) throw new Error(`option ${a} requires a value`);
@@ -323,6 +501,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
     timezone,
     model,
     maxItems,
+    outputMode,
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
     help,
@@ -351,6 +530,9 @@ export function printGeneratePipelineRoutineHelp(log: (m: string) => void): void
   log(
     `                        (default: ${PIPELINE_DEFAULT_MAX_ITEMS}). Drives triage --max-items and items --limit.`,
   );
+  log("  --output-mode <mode>  pr | auto-merge (default: pr). 'auto-merge' squash-merges");
+  log("                        the routine's own PR to main (requires the Web UI 'Allow");
+  log("                        unrestricted branch pushes' toggle).");
   log("  --output <path>       Output file under .claude/routines/");
   log("                        (default: .claude/routines/<name>.yaml)");
   log("  --force, -f           Overwrite existing output file");
@@ -391,6 +573,7 @@ export async function runGeneratePipelineRoutine(
       timezone: parsed.timezone,
       model: parsed.model,
       maxItems: parsed.maxItems,
+      outputMode: parsed.outputMode,
       output: parsed.output,
       force: parsed.force,
       io,
