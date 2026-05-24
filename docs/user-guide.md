@@ -2248,6 +2248,54 @@ cron cadence を変えたい / `combined` (watch + 自動 research) を追加し
 3. Routine 実行画面で API キー (`ANTHROPIC_API_KEY` 等) を secret として渡す
 4. 1 回手動実行（Routines UI から）して `watch run` が成功すること、`items/` / `state/` の commit が push されることを確認する
 
+### routine を外部から起動する（`/fire`）
+
+スケジュール（cron）に加えて、登録済み routine は **`/fire` API で外部から手動起動**できる（[ADR-0020](./adr/0020-claude-routines-generation.md)）。CI ジョブや webhook、手元の CLI から「今すぐ 1 回回したい」ときに使う。
+
+#### 仕組み
+
+- エンドポイント: `POST https://api.anthropic.com/v1/claude_code/routines/{routine_id}/fire`
+- `routine_id` は Web UI で routine 登録後に発行される ID（`trig_` プレフィックス）。YAML の `routine_id` フィールドに控えておく。
+- 認証は **per-routine の bearer token**。token は Web UI で発行し、**1 回だけ表示される**（その場で控える）。再表示はできず、`Regenerate`（再発行）/ `Revoke`（失効）も Web UI から行う。
+- 必須ヘッダ:
+  - `Authorization: Bearer <per-routine-token>`
+  - `anthropic-version: 2023-06-01`
+  - `anthropic-beta: experimental-cc-routine-2026-04-01`
+- レスポンスは **セッション作成時に即返る**（routine の完了は待たない）。
+- リクエスト body の `text` は **自由文字列**で、起動コンテキストとして渡せる。API 側ではパースされず、routine セッションにそのまま渡る。
+
+> token は機密。リポジトリ・YAML・ログ・コマンドライン引数のいずれにも書かない。CI では secret store に入れて環境変数で渡す。
+
+#### `radar routine fire <trig_id>`（ヘルパ）
+
+curl を直接叩く代わりに、CLI ヘルパで起動できる。token は **環境変数から読む**（コマンドライン引数では受け取らない＝`ps` やシェル履歴に漏れない）。
+
+```bash
+# token を環境変数で渡す（既定の変数名）。
+export FEEDRADAR_ROUTINE_FIRE_TOKEN='...'   # Web UI で 1 回だけ表示された token
+
+# 起動（セッション作成のみ。完了は待たない）。
+radar routine fire trig_abc123
+
+# 起動コンテキストを渡す（routine セッションに自由文字列として届く）。
+radar routine fire trig_abc123 --text "manual run after release v1.2.0"
+
+# 別名の環境変数に入れている場合（複数 routine を扱うとき）。
+radar routine fire trig_abc123 --token-env MY_OTHER_ROUTINE_TOKEN
+```
+
+| オプション | 既定 | 説明 |
+|---|---|---|
+| `<trig_id>` | （必須） | Web UI で発行された routine ID（`trig_` プレフィックス） |
+| `--text <msg>` | なし | 起動コンテキスト（body の `text`）。API はパースせずそのまま渡す |
+| `--token-env <NAME>` | `FEEDRADAR_ROUTINE_FIRE_TOKEN` | token を読む環境変数名 |
+
+token は環境変数からのみ読み、出力（成功ログ・エラーメッセージ）に一切含めない。`--token` フラグは受け付けず、指定するとエラーになる。
+
+#### 生成 YAML の api トリガー雛形
+
+`radar routine generate <type>` が出力する YAML の `triggers` 配列には、`scheduled` トリガーに加えて **`api` トリガーの雛形がコメントで含まれる**。`/fire` を有効化したい場合はコメントを外して Web UI に反映する（token は YAML には書かず Web UI で発行する旨をコメントで明記している）。
+
 ### スコープ外（CLI 側）
 
 - 雛形 file が実 cron で動くかの自動テストは行わない（実機検証はユーザー側責務、ADR-0004）
