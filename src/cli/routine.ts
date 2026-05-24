@@ -1,4 +1,5 @@
 import type { Command } from "./index.js";
+import { runGeneratePipelineRoutine } from "./routine/generate-pipeline.js";
 import { runGenerateWatchRoutine } from "./routine/generate-watch.js";
 
 /**
@@ -23,7 +24,7 @@ function printRoutineHelp(log: (m: string) => void): void {
   log("");
   log("Subcommands:");
   log("  generate <type>  Generate a Claude Code Routine YAML (.claude/routines/)");
-  log("                   Types: watch");
+  log("                   Types: watch | pipeline");
   log("");
   log("Run `radar routine generate <type> --help` for type-specific options.");
 }
@@ -33,7 +34,10 @@ function printGenerateHelp(log: (m: string) => void): void {
   log("");
   log("Types:");
   log(
-    "  watch   Periodic `radar watch run` self-session routine; commits items/state to a claude/* branch (ADR-0020 D5)",
+    "  watch     Periodic `radar watch run` self-session routine; commits items/state to a claude/* branch (ADR-0020 D5)",
+  );
+  log(
+    "  pipeline  Full watch -> triage -> research -> review self-session routine, one item at a time (ADR-0020 D5)",
   );
   log("");
   log("Run `radar routine generate <type> --help` for type-specific options.");
@@ -45,8 +49,8 @@ function printGenerateHelp(log: (m: string) => void): void {
  * Parallels `runWorkflow` in `src/cli/workflow.ts` (GitHub Actions side): the
  * `workflow` namespace targets GHA (spawn + API key), while `routine` targets
  * Claude Routines (self-session, no spawn). See ADR-0020 D1 for the namespace
- * split and D5 for the `<type>` roster (`watch` here; `pipeline` lands in
- * #284).
+ * split and D5 for the `<type>` roster (`watch` for detection only; `pipeline`
+ * for the full watch -> triage -> research -> review self-session chain).
  */
 export async function runRoutine(
   args: string[],
@@ -77,6 +81,8 @@ export async function runRoutine(
   switch (type) {
     case "watch":
       return runGenerateWatchRoutine(typeArgs, options.io ?? {}, cwd);
+    case "pipeline":
+      return runGeneratePipelineRoutine(typeArgs, options.io ?? {}, cwd);
     default:
       error(`routine generate: unknown type '${type}'`);
       printGenerateHelp(error);

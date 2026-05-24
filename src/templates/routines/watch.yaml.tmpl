@@ -5,8 +5,8 @@
 #
 # This is the watch-only routine (ADR-0020 D5 `watch` type): it runs
 # `radar watch run` on a schedule and commits detected items/state to a
-# `claude/*` branch. No triage / research / review (those land in the
-# `pipeline` type, #284). routine self-session completes in one Claude
+# `claude/*` branch. No triage / research / review (use the `pipeline` type
+# for the full chain). routine self-session completes in one Claude
 # session — NO spawn of other agents (ADR-0020 D2).
 #
 # Placeholders below are substituted by `generate-watch.ts` from CLI flags:
