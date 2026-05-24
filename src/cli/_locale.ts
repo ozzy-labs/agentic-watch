@@ -86,6 +86,35 @@ export function readLangEnv(env: NodeJS.ProcessEnv = process.env): string | unde
 }
 
 /**
+ * Resolve the effective {@link import("../core/locale.js").Locale} for a
+ * report-producing command (`research` / `review` / `update`, #316).
+ *
+ * Strips `--lang` from `argv` (so the command's own `parseArgs` never sees it)
+ * and resolves the effective locale honoring the ADR-0021 priority chain:
+ *
+ *   `--lang` flag  >  `RADAR_LANG` env  >  `config.locale`  >  default (`en`)
+ *
+ * Unlike `init` (which establishes a workspace and deliberately ignores any
+ * pre-existing `config.locale`), these commands run *inside* an existing
+ * workspace, so `config.locale` IS consulted as the lowest-priority layer.
+ *
+ * Returns the locale plus the lang-stripped argv. `--lang` with no value
+ * throws {@link LangFlagError} so callers surface an exit-code-2 usage error.
+ */
+export function resolveCommandLocale(
+  argv: string[],
+  configLocale: string | undefined,
+  options: { env?: NodeJS.ProcessEnv; warn?: (message: string) => void } = {},
+): { rest: string[]; locale: Locale } {
+  const { rest, flag } = parseLangFlag(argv);
+  const locale = resolveLocale(
+    { flag, env: readLangEnv(options.env), config: configLocale },
+    options.warn ? { warn: options.warn } : {},
+  );
+  return { rest, locale };
+}
+
+/**
  * Resolve the effective UI locale for a command that runs *inside* an
  * initialized workspace (workflow / routine generators), honoring all three
  * layers per ADR-0021:

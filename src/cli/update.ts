@@ -7,12 +7,14 @@ import { renderUpdatePayloadBlock } from "../agents/_boundary.js";
 import { getAgentAdapter } from "../agents/index.js";
 import { getDefaultAgent, loadRadarConfig, RadarConfigError } from "../core/config.js";
 import { loadItems } from "../core/items.js";
+import type { Locale } from "../core/locale.js";
 import type { ProgressReporter } from "../core/progress.js";
 import type { ResearchTemplate } from "../core/templates.js";
 import { loadTemplate } from "../core/templates.js";
 import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 import { AgentIdSchema, ResearchFrontmatterSchema } from "../schemas/index.js";
 import { resolveCommitPathInside } from "./_commit-path.js";
+import { LangFlagError, resolveCommandLocale } from "./_locale.js";
 import {
   buildAgentProgressCallback,
   buildReporter,
@@ -777,9 +779,33 @@ export async function runUpdate(
   }
   const progress = options.progress ?? buildReporter({ level: progressState.level });
 
+  // Resolve the report-output locale (#316) BEFORE the command parser sees argv
+  // (strips `--lang`). `config.locale` is the lowest-priority source, read
+  // best-effort here; a malformed config is reported authoritatively by
+  // `resolveUpdateAgent` below, so we tolerate the error as "no config locale".
+  let configLocale: string | undefined;
+  try {
+    configLocale = (await loadRadarConfig(cwd)).locale;
+  } catch {
+    configLocale = undefined;
+  }
+  let langRest: string[];
+  let locale: Locale;
+  try {
+    const resolved = resolveCommandLocale(progressState.rest, configLocale, { warn });
+    langRest = resolved.rest;
+    locale = resolved.locale;
+  } catch (e) {
+    if (e instanceof LangFlagError) {
+      error(`update: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+
   let parsed: UpdateArgs;
   try {
-    parsed = parseArgs(progressState.rest);
+    parsed = parseArgs(langRest);
   } catch (e) {
     error(`update: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
@@ -890,6 +916,7 @@ export async function runUpdate(
       items: linkedItems,
       outputPath,
       cwd,
+      locale,
       onProgress: buildAgentProgressCallback(progress),
     });
   } catch (e) {

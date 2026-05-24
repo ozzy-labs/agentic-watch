@@ -47,6 +47,7 @@ function buildResearchRequest(overrides: Partial<ResearchRequest> = {}): Researc
     items: [SAMPLE_ITEM],
     outputPath: "/tmp/feedradar-test/research/sample.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -60,6 +61,7 @@ function buildReviewRequest(overrides: Partial<ReviewRequest> = {}): ReviewReque
     researchFrontmatter: SAMPLE_RESEARCH_FM,
     researchBody: "---\nstub: true\n---\n# body\n",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }
@@ -77,6 +79,7 @@ function buildUpdateRequest(overrides: Partial<UpdateRequest> = {}): UpdateReque
     outputPath:
       "/tmp/feedradar-test/research/20260510_anthropic-news-claude-code-shiny-new-feature_v2.md",
     cwd: "/tmp/feedradar-test",
+    locale: "en",
     ...overrides,
   };
 }

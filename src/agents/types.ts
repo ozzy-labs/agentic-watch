@@ -1,3 +1,4 @@
+import type { Locale } from "../core/locale.js";
 import type { AgentId, Item, ResearchFrontmatter } from "../schemas/index.js";
 
 /**
@@ -38,6 +39,19 @@ export interface ResearchRequest {
    * (#196 forward-compat: existing call sites work unchanged).
    */
   onProgress?: AgentProgressCallback;
+  /**
+   * Effective UI locale resolved by the CLI (ADR-0021, epic #307 / #316).
+   *
+   * Controls the **output language of the generated report body** only. The
+   * prompt itself stays in English (the SKILL is the canonical English
+   * procedure — ADR-0021 §5); the adapter appends a short output-language
+   * directive built from this locale so prose (summary / details) matches the
+   * per-locale template headings the CLI also passes via `templateBody`.
+   *
+   * Does NOT translate the report `# <Title>` (item title is in the source
+   * language) or the digest filename slug.
+   */
+  locale: Locale;
 }
 
 /**
@@ -79,6 +93,12 @@ export interface ReviewRequest {
    * {@link ResearchRequest.onProgress}.
    */
   onProgress?: AgentProgressCallback;
+  /**
+   * Effective UI locale resolved by the CLI. See
+   * {@link ResearchRequest.locale}: controls the output language of the review
+   * block prose; the prompt stays English (ADR-0021 §5).
+   */
+  locale: Locale;
 }
 
 /**
@@ -130,6 +150,12 @@ export interface UpdateRequest {
    * {@link ResearchRequest.onProgress}.
    */
   onProgress?: AgentProgressCallback;
+  /**
+   * Effective UI locale resolved by the CLI. See
+   * {@link ResearchRequest.locale}: controls the output language of the
+   * regenerated report body; the prompt stays English (ADR-0021 §5).
+   */
+  locale: Locale;
 }
 
 export interface AgentAdapter {
