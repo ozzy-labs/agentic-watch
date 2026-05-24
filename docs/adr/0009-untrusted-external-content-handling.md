@@ -324,6 +324,7 @@ After (spawn、本改訂):
   - [ADR-0008 Item Status State Machine](./0008-status-state-machine.md) (M5b 却下理由の出所)
   - [ADR-0010 html-js Adapter and Playwright Distribution](./0010-html-js-adapter-and-distribution.md) (§A 信頼境界表に `html-js` 行追加、Chromium バイナリ脆弱性追跡責任の所在)
   - [ADR-0012 JSON API Adapter and Recipe Bundling Strategy](./0012-json-api-adapter-and-recipe-strategy.md) (§A 信頼境界表に `json-api` / `json-feed` 行追加、generic adapter 用追加防御 D5a〜D5c、recipe 作者という第二の信頼境界)
+  - [ADR-0020 Claude Routines Generation](./0020-claude-routines-generation.md) (M1c 境界マーカー / M2a / M2b / M3b self-check guidance を routine の自セッション実行時にも継続適用、D5b host allowlist で通信先を購読フィードに限定)
 - 関連 docs: [`docs/user-guide.md`](../user-guide.md) § Security 警告 ([#48](https://github.com/ozzy-labs/feedradar/issues/48))
 - knowledge:
   - [`ai/practice/prompt-injection`](https://github.com/ozzy-labs/mcp-server-knowledge/blob/main/knowledge/ai/practice/prompt-injection.md) (6 layer 防御階層、lethal trifecta、OWASP LLM01)
