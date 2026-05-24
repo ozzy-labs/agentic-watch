@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import type { Translator } from "../i18n/index.js";
 import type { AgentId, ConfigurableCommand, RadarConfig } from "../schemas/index.js";
 import { RadarConfigSchema } from "../schemas/index.js";
 
@@ -47,7 +48,7 @@ export class RadarConfigError extends Error {
  * Returning `{}` for the missing-file case lets callers treat absence as
  * "use the hard-coded default" without an extra `await pathExists` round-trip.
  */
-export async function loadRadarConfig(cwd: string): Promise<RadarConfig> {
+export async function loadRadarConfig(cwd: string, t?: Translator): Promise<RadarConfig> {
   const file = join(cwd, CONFIG_FILENAME);
   if (!(await pathExists(file))) {
     return {};
@@ -56,16 +57,22 @@ export async function loadRadarConfig(cwd: string): Promise<RadarConfig> {
   try {
     raw = await readFile(file, "utf8");
   } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
     throw new RadarConfigError(
-      `failed to read ${CONFIG_FILENAME}: ${e instanceof Error ? e.message : String(e)}`,
+      t
+        ? t("cli.config.failedRead", { file: CONFIG_FILENAME, reason })
+        : `failed to read ${CONFIG_FILENAME}: ${reason}`,
     );
   }
   let parsed: unknown;
   try {
     parsed = parseYaml(raw);
   } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
     throw new RadarConfigError(
-      `failed to parse ${CONFIG_FILENAME} as YAML: ${e instanceof Error ? e.message : String(e)}`,
+      t
+        ? t("cli.config.failedParse", { file: CONFIG_FILENAME, reason })
+        : `failed to parse ${CONFIG_FILENAME} as YAML: ${reason}`,
     );
   }
   // An empty file parses to `null` / `undefined`; normalize to `{}` so the
@@ -73,10 +80,16 @@ export async function loadRadarConfig(cwd: string): Promise<RadarConfig> {
   const candidate = parsed ?? {};
   const result = RadarConfigSchema.safeParse(candidate);
   if (!result.success) {
+    // The per-issue bodies come from zod's locale (applied via
+    // `applyZodLocale`); only the wrapping preamble is translated here (#312).
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join(".") || "<root>"}: ${i.message}`)
       .join("\n");
-    throw new RadarConfigError(`${CONFIG_FILENAME} schema violation:\n${issues}`);
+    throw new RadarConfigError(
+      t
+        ? t("cli.config.schemaViolation", { file: CONFIG_FILENAME, issues })
+        : `${CONFIG_FILENAME} schema violation:\n${issues}`,
+    );
   }
   return result.data;
 }

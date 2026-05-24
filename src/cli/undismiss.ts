@@ -115,14 +115,14 @@ export async function runUndismiss(
     return 0;
   }
   if (!parsed.itemId) {
-    error("undismiss: missing <item-id>");
+    error(t("cli.undismiss.missingItemId"));
     printHelp(t, error);
     return 2;
   }
 
   const itemsDir = join(cwd, "items");
   if (!(await pathExists(itemsDir))) {
-    error(`undismiss: items/ not found (run \`radar init\`)`);
+    error(t("cli.undismiss.itemsDirNotFound"));
     return 1;
   }
 
@@ -135,20 +135,18 @@ export async function runUndismiss(
   }
   const item = items.find((i) => i.id === parsed.itemId);
   if (!item) {
-    error(`undismiss: item '${parsed.itemId}' not found under items/`);
+    error(t("cli.undismiss.itemNotFound", { id: parsed.itemId }));
     return 1;
   }
 
   if (item.status !== "dismissed") {
-    error(
-      `undismiss: item '${item.id}' is in status '${item.status}', expected 'dismissed' (undismiss reverses a dismiss, not other transitions)`,
-    );
+    error(t("cli.undismiss.notDismissed", { id: item.id, status: item.status }));
     return 1;
   }
   // Defensive guard against future state machine changes: ensure
   // `dismissed → detected` is still legal before mutating.
   if (!isValidTransition("dismissed", "detected")) {
-    error(`undismiss: state machine forbids 'dismissed → detected' (internal error)`);
+    error(t("cli.undismiss.forbiddenTransition"));
     return 1;
   }
 
@@ -158,9 +156,7 @@ export async function runUndismiss(
   const triageOrigin = origin.startsWith("triage_");
 
   if (!triageOrigin && !parsed.force) {
-    error(
-      `undismiss: item '${item.id}' was dismissed by human; pass --force to revert (this is a deliberate safety gate)`,
-    );
+    error(t("cli.undismiss.humanOriginRequiresForce", { id: item.id }));
     return 2;
   }
 
@@ -173,14 +169,14 @@ export async function runUndismiss(
   try {
     await saveItems(itemsDir, [updated]);
   } catch (e) {
-    error(`undismiss: failed to update item: ${e instanceof Error ? e.message : String(e)}`);
+    error(t("cli.undismiss.failedUpdate", { reason: e instanceof Error ? e.message : String(e) }));
     return 1;
   }
 
   if (!triageOrigin) {
-    warn(`undismiss: reverted human-origin dismiss for '${item.id}' (used --force)`);
+    warn(t("cli.undismiss.revertedHumanOrigin", { id: item.id }));
   }
-  log(`undismiss: items/${item.sourceId}/${item.id}.yaml status -> detected`);
+  log(t("cli.undismiss.transitioned", { sourceId: item.sourceId, id: item.id }));
   return 0;
 }
 
