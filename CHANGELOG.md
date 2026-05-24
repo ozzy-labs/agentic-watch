@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/ozzy-labs/feedradar/compare/v0.2.0...v0.2.1) (2026-05-24)
+
+
+### Features
+
+* **routine:** add --output-mode pr|auto-merge to routine generate pipeline ([#304](https://github.com/ozzy-labs/feedradar/issues/304)) ([01c0247](https://github.com/ozzy-labs/feedradar/commit/01c0247e192dce8805090497513f8272674ba05a))
+
+
+### Bug Fixes
+
+* **routine:** correct misleading /schedule guidance in generate output ([#302](https://github.com/ozzy-labs/feedradar/issues/302)) ([c280164](https://github.com/ozzy-labs/feedradar/commit/c2801649b0619528e15fe93b7d1b601cad4fb85a))
+
 ## [0.2.0](https://github.com/ozzy-labs/feedradar/compare/v0.1.9...v0.2.0) (2026-05-24)
 
 
