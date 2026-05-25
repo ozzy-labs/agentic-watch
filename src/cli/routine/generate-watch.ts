@@ -53,6 +53,14 @@ export const PROMPT_MODES = ["inline", "bootstrap"] as const;
 export type PromptMode = (typeof PROMPT_MODES)[number];
 
 /**
+ * Display-only indent the Web UI paste view prepends to each canonical bootstrap
+ * prompt line so the block reads cleanly under the numbered step header (#377).
+ * The 7-space width matches the surrounding `pasteStep3Bootstrap` numbering.
+ * The machine-consumed `--emit-bootstrap-prompt` surface does NOT apply this.
+ */
+export const BOOTSTRAP_PASTE_INDENT = "       ";
+
+/**
  * Build the bootstrap prompt body (#327 / #365): the 4-line SHORT prompt the
  * routine reads to learn it must `Read` the committed YAML and follow its
  * `instructions:` block at run time.
@@ -73,14 +81,6 @@ export type PromptMode = (typeof PROMPT_MODES)[number];
  * indent on top of this canonical text for human readability under the numbered
  * steps.
  */
-/**
- * Display-only indent the Web UI paste view prepends to each canonical bootstrap
- * prompt line so the block reads cleanly under the numbered step header (#377).
- * The 7-space width matches the surrounding `pasteStep3Bootstrap` numbering.
- * The machine-consumed `--emit-bootstrap-prompt` surface does NOT apply this.
- */
-export const BOOTSTRAP_PASTE_INDENT = "       ";
-
 export function buildBootstrapPrompt(
   values: { name: string; path: string },
   t: Translator,
