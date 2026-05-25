@@ -173,7 +173,7 @@ instructions: |
      ```bash
      # 読み取り専用: まだ人間の triage レビュー待ちのアイテム数を数える。遷移も dismiss も
      # しない。
-     radar items list --status triaged_unsure --json | jq length
+     radar items list --status triaged_unsure --field id | wc -l
      ```
 
 {{landingStep}}

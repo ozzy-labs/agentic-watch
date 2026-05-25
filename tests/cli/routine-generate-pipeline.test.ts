@@ -258,7 +258,10 @@ describe("cli/routine/generate-pipeline", () => {
         /radar items list --triage-group "\$\{GROUP\}" --status triaged_digest --field id/,
       );
       expect(written).toMatch(/radar research --digest \$\{IDS\} --triage-group "\$\{GROUP\}"/);
-      expect(written).toContain("radar items list --status triaged_unsure --json | jq length");
+      expect(written).toContain("radar items list --status triaged_unsure --field id | wc -l");
+      // #357: the Routines cloud VM only installs `gh` (no jq), so the emitted
+      // template MUST stay jq-free — count via `--field id | wc -l` instead.
+      expect(written).not.toMatch(/\bjq\b/);
       // The review step reviews EVERY report (per-item + digest), so the old
       // `head -n {{maxItems}}` cap is gone — a digest must never be starved.
       expect(written).not.toContain("head -n 10");
@@ -320,8 +323,11 @@ describe("cli/routine/generate-pipeline", () => {
         // regex (escaped `$`) to sidestep biome's noTemplateCurlyInString.
         expect(yaml).toContain("radar items list --status triaged_digest --field triage.group");
         expect(yaml).toMatch(/radar research --digest \$\{IDS\} --triage-group "\$\{GROUP\}"/);
-        expect(yaml).toContain("radar items list --status triaged_unsure --json | jq length");
+        expect(yaml).toContain("radar items list --status triaged_unsure --field id | wc -l");
         expect(yaml).not.toMatch(/head -n \d+/);
+        // #357: jq is not installed on the Routines cloud VM — keep both locales
+        // jq-free.
+        expect(yaml).not.toMatch(/\bjq\b/);
       }
     });
 
