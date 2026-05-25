@@ -437,6 +437,10 @@ export async function generatePipelineRoutine(
   printPromptModePaste(promptMode, { path: destRel, name }, t, log);
   log(t("cli.routine.pasteStep4"));
   log("");
+  log(t("cli.routine.setupSkillHint1"));
+  log(t("cli.routine.setupSkillHint2"));
+  log(t("cli.routine.setupSkillHint3"));
+  log("");
   log(t("cli.routine.scheduleNote1"));
   log(t("cli.routine.scheduleNote2"));
   log(t("cli.routine.scheduleNote3"));

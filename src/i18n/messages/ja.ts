@@ -1416,6 +1416,15 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     "     (bootstrap プロンプト: 以降の instructions 変更はリポへのコミットで反映され、Web UI への再貼り付けは不要です。)",
   "cli.routine.pasteStep4":
     "  4. 登録後、発行された routine_id (trig_xxxx) を YAML に書き戻し、status: active を設定します。",
+  // /routine-setup skill hint (#367): 上記の Web UI 手貼りフローの代替。skill は
+  // 正本 YAML を読んで RemoteTrigger API で登録 (または再適用) するため、手順 1-4 が
+  // 1 コマンドにまとまる。RemoteTrigger ツールは Claude Code harness が in-process で
+  // 注入するため Claude 専用 — Web UI フローを置き換えるのではなく併記して案内する。
+  "cli.routine.setupSkillHint1":
+    "Claude Code をお使いですか? /routine-setup skill で上記の手順を自動化できます:",
+  "cli.routine.setupSkillHint2":
+    "この YAML を読み込み、RemoteTrigger API 経由で routine を登録 (または再適用) します",
+  "cli.routine.setupSkillHint3": "— Web UI での手動登録に代わる Claude 専用の手段です。",
   "cli.routine.scheduleNote1":
     "/schedule (Claude Code) について: 対話形式です — `/schedule <説明>` で作成し、",
   "cli.routine.scheduleNote2":

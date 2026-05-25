@@ -1521,6 +1521,17 @@ Options:
     "     (bootstrap prompt: future instructions edits land via repo commits — no Web UI re-paste needed.)",
   "cli.routine.pasteStep4":
     "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
+  // /routine-setup skill hint (#367): an alternative to the manual Web UI paste
+  // flow above. The skill reads the committed YAML and drives the RemoteTrigger
+  // API for you, so steps 1-4 collapse into one command. Claude Code only (the
+  // RemoteTrigger tool is injected in-process by the Claude Code harness), so
+  // this is offered alongside — not instead of — the Web UI flow.
+  "cli.routine.setupSkillHint1":
+    "Using Claude Code? The /routine-setup skill can automate the steps above:",
+  "cli.routine.setupSkillHint2":
+    "it reads this YAML and registers (or re-applies) the routine via the RemoteTrigger",
+  "cli.routine.setupSkillHint3":
+    "API — a Claude-only alternative to the manual Web UI registration.",
   "cli.routine.scheduleNote1":
     "Note on /schedule (Claude Code): it is conversational — `/schedule <description>`",
   "cli.routine.scheduleNote2":
