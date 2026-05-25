@@ -1555,6 +1555,15 @@ Options:
     "workflow, there is NO cross-agent review here — one Claude does every step.",
   "cli.routine.pipelineItemCaps": ({ maxItems }: { maxItems: number }): string =>
     `Item caps are CLI-enforced: triage --max-items ${maxItems} / items --limit ${maxItems}.`,
+  // Locale-output directive (#376): emitted into the generated `instructions:`
+  // hard-constraints block ONLY for locale != en, because the bootstrap prompt
+  // is language-neutral (#365 / ADR-0021) and the report-body locale directive
+  // (#358) does not cover the agent's free-form user-facing prose. The `en`
+  // value exists for catalog parity and is NOT emitted (en is already the
+  // default output language). The text must be authored in the target locale's
+  // language (it lands verbatim inside the localized instructions).
+  "cli.routine.localeOutputDirective":
+    "Write the user-facing prose you author yourself — the PR title and body, the run summary, and the commit message body — in the configured workspace locale's language (the same locale that drives the research / review report bodies). The Conventional Commits subject line (e.g. `chore(pipeline): ...`) STAYS in English; only its body and the other free-form output follow the locale.",
   // routine fire result notification (#342 A2-adjacent: fire completion lines)
   "cli.routine.fireTriggered": ({
     routineId,

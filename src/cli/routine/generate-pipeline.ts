@@ -232,6 +232,34 @@ export function buildOutputGateNote(mode: OutputMode, locale: Locale = "en"): st
 }
 
 /**
+ * Build the locale-output directive bullet appended to the `instructions:`
+ * hard-constraints block (#376).
+ *
+ * Symptom: a `pipeline` routine generated with `--lang ja` (locale != en) emits
+ * Japanese report bodies (#358 covers the research / review payload prose) but
+ * the agent's OWN free-form user-facing output — the PR title / body, the run
+ * summary (step 9), and the commit message body — comes out in English. The
+ * bootstrap prompt is language-neutral by design (#365 / ADR-0021) and the
+ * generated instructions never tell the agent to author that prose in the
+ * configured locale, so it defaults to English.
+ *
+ * Fix: for locale != en, emit one extra hard-constraint bullet (sourced from
+ * the localized `cli.routine.localeOutputDirective` key) instructing the agent
+ * to write its free-form user-facing prose in the workspace locale's language,
+ * while keeping the Conventional Commits subject line in English. For `en` the
+ * default IS English, so nothing is emitted (the placeholder collapses to an
+ * empty line that the surrounding template tolerates).
+ *
+ * Returns the bullet WITH the surrounding 2-space `notes`/constraint indentation
+ * and a leading `- ` so it slots into the `## Hard constraints` list, or `""`
+ * for `en`. Exported for unit testing (mirrors the other instruction builders).
+ */
+export function buildLocaleOutputDirective(locale: Locale, t: Translator): string {
+  if (locale === "en") return "";
+  return `  - ${t("cli.routine.localeOutputDirective")}`;
+}
+
+/**
  * Resolve the directory holding the bundled routine templates.
  *
  * Mirrors `resolveTemplatesRoot` in `generate-watch.ts`: the compiled CLI lives
@@ -276,21 +304,32 @@ export function renderPipelineRoutineTemplate(
     landingStep: string;
     outputGateConstraint: string;
     outputGateNote: string;
+    localeOutputDirective: string;
     allowUnrestrictedGitPush: boolean;
   },
 ): string {
-  return template
-    .replace(/\{\{name\}\}/g, values.name)
-    .replace(/\{\{repository\}\}/g, values.repository)
-    .replace(/\{\{cron\}\}/g, values.cron)
-    .replace(/\{\{timezone\}\}/g, values.timezone)
-    .replace(/\{\{model\}\}/g, values.model)
-    .replace(/\{\{maxItems\}\}/g, String(values.maxItems))
-    .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock)
-    .replace(/\{\{landingStep\}\}/g, values.landingStep)
-    .replace(/\{\{outputGateConstraint\}\}/g, values.outputGateConstraint)
-    .replace(/\{\{outputGateNote\}\}/g, values.outputGateNote)
-    .replace(/\{\{allowUnrestrictedGitPush\}\}/g, String(values.allowUnrestrictedGitPush));
+  return (
+    template
+      .replace(/\{\{name\}\}/g, values.name)
+      .replace(/\{\{repository\}\}/g, values.repository)
+      .replace(/\{\{cron\}\}/g, values.cron)
+      .replace(/\{\{timezone\}\}/g, values.timezone)
+      .replace(/\{\{model\}\}/g, values.model)
+      .replace(/\{\{maxItems\}\}/g, String(values.maxItems))
+      .replace(/\{\{networkAccessBlock\}\}/g, values.networkAccessBlock)
+      .replace(/\{\{landingStep\}\}/g, values.landingStep)
+      .replace(/\{\{outputGateConstraint\}\}/g, values.outputGateConstraint)
+      .replace(/\{\{outputGateNote\}\}/g, values.outputGateNote)
+      // For locale == en the directive is empty (en is already the default output
+      // language). Strip the whole placeholder line — including its trailing
+      // newline — so the `en` instructions block carries no spurious blank line;
+      // otherwise substitute the localized bullet in place.
+      .replace(
+        /\{\{localeOutputDirective\}\}\n?/g,
+        values.localeOutputDirective === "" ? "" : `${values.localeOutputDirective}\n`,
+      )
+      .replace(/\{\{allowUnrestrictedGitPush\}\}/g, String(values.allowUnrestrictedGitPush))
+  );
 }
 
 export interface GeneratePipelineRoutineOptions {
@@ -400,6 +439,7 @@ export async function generatePipelineRoutine(
     landingStep: buildPipelineLandingStep(outputMode, locale),
     outputGateConstraint: buildOutputGateConstraint(outputMode, locale),
     outputGateNote: buildOutputGateNote(outputMode, locale),
+    localeOutputDirective: buildLocaleOutputDirective(locale, t),
     allowUnrestrictedGitPush: outputMode === "auto-merge",
   });
 

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import {
+  buildLocaleOutputDirective,
   buildOutputGateConstraint,
   buildOutputGateNote,
   buildPipelineLandingStep,
@@ -16,6 +17,7 @@ import {
   renderWatchRoutineTemplate,
 } from "../../src/cli/routine/generate-watch.js";
 import type { Locale } from "../../src/core/locale.js";
+import { createTranslator } from "../../src/i18n/index.js";
 
 /**
  * Contract guard for the bundled routine templates under
@@ -135,6 +137,7 @@ describe.each<Locale>([
       landingStep: buildPipelineLandingStep(mode, locale),
       outputGateConstraint: buildOutputGateConstraint(mode, locale),
       outputGateNote: buildOutputGateNote(mode, locale),
+      localeOutputDirective: buildLocaleOutputDirective(locale, createTranslator(locale)),
       allowUnrestrictedGitPush: mode === "auto-merge",
     });
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
