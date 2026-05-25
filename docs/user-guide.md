@@ -1655,7 +1655,7 @@ radar research --commit <path>
 
 | サブコマンド | 説明 |
 |---|---|
-| `--emit-payload` | item ロード + テンプレ解決 + `outputPath` 確定 + `<untrusted_item>` ラップ済みコンテンツを含む payload を **stdout に出力**する。agent は spawn しない。出力は「人間可読プロンプト + 末尾に機械可読 JSON フェンス」のハイブリッド形式 |
+| `--emit-payload` | item ロード + テンプレ解決 + `outputPath` 確定 + `<untrusted_item>` ラップ済みコンテンツを含む payload を **stdout に出力**する。agent は spawn しない。出力は「人間可読プロンプト + 末尾に機械可読 JSON フェンス」のハイブリッド形式。解決済み locale の**出力言語ディレクティブ**も payload に埋め込まれるため、host-agent 経路（routine pipeline 含む）でもレポート本文が locale に追従する（[#358](https://github.com/ozzy-labs/feedradar/issues/358) / [ADR-0021 §5](./adr/0021-i18n-strategy.md)） |
 | `--commit <path>` | ホストセッションが書いた Markdown を `ResearchFrontmatterSchema` で検証し、`detected → researched` に遷移する。検証失敗時はロールバックして非ゼロ終了（finalize は spawn パスと同じ `finalizeResearch()` を共有するため挙動が一致する）。`<path>` は `<cwd>/research/` 配下に制約される（`..` 脱出・兄弟ディレクトリ・symlink 脱出を拒否、コードで担保） |
 
 `review` / `update` も同じ 2-call で host モードに対応する（triage / review / update への展開方針）:
@@ -1981,7 +1981,7 @@ locale: ja        # en | ja — ロケール解決の最下層。--lang / RADAR_
 ### locale に追従するもの
 
 - **生成ファイル** — レポート雛形（`templates/default.md` / `digest.md`）・運用ドキュメント（`FEEDRADAR.md` / `AGENTS.md` / `CLAUDE.md`）・生成される workflow / routine YAML（step 名・コメント・注記）は、対応する per-locale テンプレ（`en/` または `ja/`）から生成される（[ADR-0021 D6/D7](./adr/0021-i18n-strategy.md)）。`init` / `workflow generate` / `routine generate` が解決した locale に対応するサブツリーを使う。
-- **レポート本文の出力言語** — `research` / `review` / `update` がエージェントに書かせる本文（要約・詳細）は locale に追従する。adapter 契約に locale を渡し、プロンプトに出力言語ディレクティブ（「出力言語は X」）を付与して実現する（[ADR-0021 D5](./adr/0021-i18n-strategy.md)）。
+- **レポート本文の出力言語** — `research` / `review` / `update` がエージェントに書かせる本文（要約・詳細）は locale に追従する。**spawn 経路**（adapter を起動して実行）では adapter 契約に locale を渡し argv プロンプトに、**host-agent 経路**（`--emit-payload` / routine pipeline）では payload に、それぞれ出力言語ディレクティブ（「出力言語は X」）を付与して実現する（[ADR-0021 D5](./adr/0021-i18n-strategy.md)・[#358](https://github.com/ozzy-labs/feedradar/issues/358)）。
 - **CLI の文言** — コマンドの help / usage・エラーメッセージ・結果通知・進捗フェーズマーカーが locale 化される。schema バリデーションエラーは zod v4 ネイティブの locale 機構で切り替わる（[ADR-0021 D8](./adr/0021-i18n-strategy.md)）。
 
 > 現時点の i18n は全メッセージを網羅的に翻訳したものではなく、上記の user-facing surface（help / エラー・結果通知・進捗マーカー、生成ファイル、レポート出力言語）が対象。コード内コメント・ADR・schema description・debug 寄りの内部ログは i18n 対象外で日本語のまま（[ADR-0021 D2](./adr/0021-i18n-strategy.md)）。
