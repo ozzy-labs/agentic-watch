@@ -747,17 +747,18 @@ API が offset cap (例: `(page+1) * size <= 10000`) を実装していて inner
 facets:
   year:                                  # facet 名 (任意の文字列、複数 entry は Phase 1 では未サポート)
     type: range                          # range | enum
-    range: [2004, current-year]          # inclusive [start, end]。end は数値 or `current-year` sentinel
+    range: [2004, current-year]          # inclusive [start, end]。両端とも数値 or 相対年トークン
     step: 1                              # positive integer (default 1)
     param: tags.id                       # inject 先 query param 名
     template: "whats-new-v2#year#{}"     # `{}` プレースホルダ必須 (facet 値を埋め込む)
 ```
 
-range の上端 (`end`) は数値リテラル (`[2004, 2026]`) のほか、`current-year` sentinel (`[2004, current-year]`) を受け付ける ([#257](https://github.com/ozzy-labs/feedradar/issues/257))。sentinel は fetch 時に現在のカレンダー年へ解決されるため、年 (時刻) 軸の facet recipe が年境界でサイレントに新着を取りこぼす問題を防ぐ:
+range の**両端**は数値リテラル (`[2004, 2026]`) のほか、相対年トークン `current-year` / `current-year-<N>` (N 年前) を受け付ける ([#257](https://github.com/ozzy-labs/feedradar/issues/257) で上端、[#352](https://github.com/ozzy-labs/feedradar/issues/352) で下端 + オフセット)。トークンは fetch 時に現在のカレンダー年へ解決されるため、年 (時刻) 軸の facet recipe が年境界でサイレントに新着を取りこぼす問題を防ぐ:
 
 - 数値ハードコード (`[2004, 2026]`) は、2027 年になると `…#year#2027` を一度もクエリせず新着を取りこぼす (エラーは出ない＝サイレント故障)。手動で上端を bump し続ける必要がある
 - `current-year` は実行時に現在年へ自動拡張するため bump 不要。out-of-range 年は 0 件即終了なので安全
-- 下端は数値リテラル固定 (AWS の初出年 2004 のように起点は不変なため)
+- 下端にも相対トークンを使える: `[current-year, current-year]` で「今年分のみ」、`[current-year-2, current-year]` で「直近 3 年」を、年が変わっても自動追随する形で書ける (backfill 後の日次運用で sweep 範囲を現行年に絞ると [#333](https://github.com/ozzy-labs/feedradar/issues/333) の `lastSeenIds` 肥大の緩和にもなる)
+- `start > end` の検証は両端が数値のときのみ (相対トークンは fetch 時解決のため。解決後に start > end となる範囲は 0 件 sweep として安全に扱う)
 - 既存の数値タプル recipe はそのまま動作する (後方互換)
 
 `type: enum` の例:

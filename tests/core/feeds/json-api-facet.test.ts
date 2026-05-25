@@ -343,6 +343,70 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
     expect(result.diag?.facetSweep?.testedValue).toBe(currentYear);
   });
 
+  it("sweeps `[current-year, current-year]` as the current year only (#352)", async () => {
+    // The LOWER bound now accepts the relative sentinel too, so "this year
+    // only" is expressible without hardcoding the year (and without the range
+    // silently drifting once the next year boundary arrives).
+    const currentYear = new Date().getFullYear();
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: ["current-year", "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return { status: 200, headers: { get: () => null }, text: async () => itemBody("cur", 1) };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(`y-${currentYear}`);
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("resolves a relative lower bound `current-year-2` to N years ago (#352)", async () => {
+    // `[current-year-2, current-year]` → the last 3 calendar years, auto-tracking
+    // wall-clock time. The `-<N>` offset applies to either endpoint.
+    const cy = new Date().getFullYear();
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: ["current-year-2", "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      // Distinct id prefix per year so the cross-facet lastSeenIds dedup keeps
+      // all three items.
+      const year = urlStr.match(/y-(\d+)/)?.[1] ?? "x";
+      return {
+        status: 200,
+        headers: { get: () => null },
+        text: async () => itemBody(`y${year}`, 1),
+      };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl });
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toContain(`y-${cy - 2}`);
+    expect(calls[1]).toContain(`y-${cy - 1}`);
+    expect(calls[2]).toContain(`y-${cy}`);
+    expect(result.items).toHaveLength(3);
+  });
+
   it("dry-run lands on a step-aligned value when step > 1 (#256)", async () => {
     // [2020, 2025] step 2 → real sweep visits 2020, 2022, 2024 (2025 is not a
     // multiple of step from start). The dry-run probe must pick 2024 (the

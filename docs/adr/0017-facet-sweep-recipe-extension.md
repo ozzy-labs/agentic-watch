@@ -90,10 +90,12 @@ facets:
 
 | field   | type                                 | 説明                                                                                                                                  |
 | ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `range` | `[number, number \| "current-year"]` | inclusive な start / end。end は数値 or `current-year` sentinel ([#257](https://github.com/ozzy-labs/feedradar/issues/257) follow-up) |
+| `range` | `[start, end]` (各要素 `number \| "current-year" \| "current-year-<N>"`) | inclusive な start / end。**両端**とも数値 or 相対年トークンを取れる ([#257](https://github.com/ozzy-labs/feedradar/issues/257) で上端、[#352](https://github.com/ozzy-labs/feedradar/issues/352) で下端 + オフセット) |
 | `step`  | `number` (default 1)                 | 正の整数                                                                                                                              |
 
 > **Follow-up ([#257](https://github.com/ozzy-labs/feedradar/issues/257)):** range の上端を数値ハードコードにすると、年 (時刻) 軸 facet が年境界で新着をサイレントに取りこぼす (例: 2027 年に `…#year#2027` を一度もクエリしない)。上端に `current-year` sentinel を許容し、fetch 時 (`generateFacetValues`) に現在のカレンダー年へ解決することで、手動 bump 不要で範囲が wall-clock に追随する。既存の数値タプルは後方互換でそのまま動作する。
+>
+> **Follow-up ([#352](https://github.com/ozzy-labs/feedradar/issues/352)):** 相対トークンを**両端**へ一般化し、`current-year-<N>` (N 年前) オフセットを追加した。`resolveRangeBound` が `current-year` / `current-year-<N>` を fetch 時に解決する。これにより `["current-year", "current-year"]` で「今年分のみ」、`["current-year-2", "current-year"]` で「直近 3 年」が、年が変わっても自動追随する形で書ける (backfill 後の日次運用で sweep 範囲を現行年に絞れる → [#333](https://github.com/ozzy-labs/feedradar/issues/333) の lastSeenIds 肥大の緩和にもなる)。`start > end` の静的検証は両端が数値のときのみ行う (相対トークンは fetch 時解決のため)。
 
 #### `type: enum` 固有
 

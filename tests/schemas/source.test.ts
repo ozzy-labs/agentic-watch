@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SourceFacetRangeSchema,
   SourceJsOptionsSchema,
   SourceSchema,
   SourceTriagePolicySchema,
@@ -141,6 +142,54 @@ describe("schemas/source - requireFields subset validation (#332)", () => {
       filters: { keywords: ["agents"], matchFields: ["title"] },
     });
     expect(result.filters.requireFields).toEqual([]);
+  });
+});
+
+describe("schemas/source - facet range relative bounds (#352)", () => {
+  const base = { type: "range" as const, param: "tags.id", template: "y#{}", step: 1 };
+
+  it("accepts a relative LOWER bound 'current-year' (#352)", () => {
+    const result = SourceFacetRangeSchema.parse({
+      ...base,
+      range: ["current-year", "current-year"],
+    });
+    expect(result.range).toEqual(["current-year", "current-year"]);
+  });
+
+  it("accepts a 'current-year-<N>' offset on either bound (#352)", () => {
+    const result = SourceFacetRangeSchema.parse({
+      ...base,
+      range: ["current-year-2", "current-year"],
+    });
+    expect(result.range).toEqual(["current-year-2", "current-year"]);
+  });
+
+  it("still accepts the legacy numeric and upper-only sentinel forms", () => {
+    expect(SourceFacetRangeSchema.safeParse({ ...base, range: [2004, 2026] }).success).toBe(true);
+    expect(
+      SourceFacetRangeSchema.safeParse({ ...base, range: [2004, "current-year"] }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an unknown relative token", () => {
+    const result = SourceFacetRangeSchema.safeParse({
+      ...base,
+      range: ["current-month", "current-year"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects start > end only when BOTH bounds are numeric (relative resolves at fetch time)", () => {
+    const numeric = SourceFacetRangeSchema.safeParse({ ...base, range: [2026, 2004] });
+    expect(numeric.success).toBe(false);
+    if (!numeric.success) {
+      expect(numeric.error.issues.some((i) => i.path.includes("range"))).toBe(true);
+    }
+    // A relative bound cannot be checked statically, so this parses (a degenerate
+    // resolved range is handled as a 0-iteration sweep by the adapter).
+    expect(
+      SourceFacetRangeSchema.safeParse({ ...base, range: ["current-year", 2004] }).success,
+    ).toBe(true);
   });
 });
 
