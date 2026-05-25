@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.5](https://github.com/ozzy-labs/feedradar/compare/v0.2.4...v0.2.5) (2026-05-25)
+
+
+### Features
+
+* **routine:** hint /routine-setup skill from generate output ([#373](https://github.com/ozzy-labs/feedradar/issues/373)) ([d045b46](https://github.com/ozzy-labs/feedradar/commit/d045b46bda905c3ba34fd0c87037c82c9c7f3b3f))
+* **routine:** routine-setup skill 本体＋init 配布 ([#372](https://github.com/ozzy-labs/feedradar/issues/372)) ([e67f29c](https://github.com/ozzy-labs/feedradar/commit/e67f29c712e5a1e47eb2924e31bb3cfb1f7b3d37))
+* **routine:** single-source bootstrap prompt and add --emit-bootstrap-prompt ([#370](https://github.com/ozzy-labs/feedradar/issues/370)) ([481de45](https://github.com/ozzy-labs/feedradar/commit/481de451a32ac6af21569edb86d098f696507a34))
+
+
+### Bug Fixes
+
+* **ci:** avoid SC2006 backticks in pack-verify node script comment ([#375](https://github.com/ozzy-labs/feedradar/issues/375)) ([fc7dae4](https://github.com/ozzy-labs/feedradar/commit/fc7dae430c5257d39215989f17b6d23e76eb5dbe))
+
 ## [0.2.4](https://github.com/ozzy-labs/feedradar/compare/v0.2.3...v0.2.4) (2026-05-25)
 
 
