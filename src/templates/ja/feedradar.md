@@ -138,7 +138,7 @@ JSON API は recipe ベースで、`kind: json-api` を選んで `pagination` �
 
 詳細・トラブルシュート（`Agent running [mm:ss]` で動いていないように見える時の対処等）は [docs/user-guide.md → 進捗表示 / verbose / quiet](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#進捗表示--verbose--quiet) を参照。
 
-定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。
+定期実行の雛形 (GitHub Actions / Claude Routines) は `radar init --with-actions` / `--with-routines` で初回 bootstrap として生成できます。後追いで cadence 切替 / 複数 workflow 共存 / `combined` (watch + 自動 research) を追加したい場合は `radar workflow generate <type>` を使います。`combined` は `--max-items` ハードキャップを YAML literal + CLI default の二重防御で焼き込むため、暴走 feed (publisher 側 bug / `--backfill` 事故) による LLM cost 爆発を設計レベルで遮断します。Claude Routines を使う場合、Claude Code なら Web UI への手貼りの代わりに `/routine-setup` skill で正本 YAML から登録 (再登録) を自動化できます ([docs/user-guide.md → Claude Code で登録を自動化する](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#claude-code-で登録を自動化するroutine-setup-skill))。
 
 ## このディレクトリのレイアウト
 

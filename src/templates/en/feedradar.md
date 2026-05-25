@@ -182,7 +182,10 @@ coexisting workflows / add `combined` (watch + automated research), use
 `radar workflow generate <type>`. `combined` bakes in the `--max-items` hard cap
 as double defense via a YAML literal + CLI default, so it blocks LLM cost
 explosions from a runaway feed (a publisher-side bug / a `--backfill` accident)
-at the design level.
+at the design level. For Claude Routines, Claude Code users can automate
+registration (and re-registration) from the committed YAML with the
+`/routine-setup` skill instead of hand-pasting into the Web UI; see
+[docs/user-guide.md -> Automating registration in Claude Code](https://github.com/ozzy-labs/feedradar/blob/main/docs/user-guide.md#claude-code-で登録を自動化するroutine-setup-skill).
 
 ## Layout of this directory
 
