@@ -25,17 +25,31 @@ filters: {
   excludeKeywords: string[];    // 一つでも一致したら除外（keywords より優先）
   matchMode: "word" | "substring" | "regex";  // 既定 "word"
   matchFields: Array<"title" | "summary" | "body" | "tags">;  // 既定 ["title", "summary"]
+  requireFields: Array<"title" | "summary" | "body" | "tags">; // 既定 [] (#332)
   caseSensitive: boolean;       // 既定 false
 }
 ```
 
 ### 評価順序
 
-1. 各 item の `matchFields` 内のテキストを連結した検索対象を作る
-2. `caseSensitive: false` の場合、検索対象とキーワード両方を lowercase 化
-3. `excludeKeywords` のいずれかが `matchMode` でヒット → 除外（最優先）
-4. `keywords` のいずれかが `matchMode` でヒット → 採用
-5. それ以外 → 採用しない
+> #332 で step 1 を「単一連結 haystack」から **matchField 単位の評価** に変更した。`requireFields` を指定しない場合の採用/除外の結果は従来と不変。ヒットした matchField を item の `matchedFields` に記録する。
+
+1. 各 item の `matchFields` ごとに検索対象テキストを用意する（adapter が提供しないフィールドは skip）
+2. `caseSensitive: false` の場合、各検索対象とキーワード両方を lowercase 化（regex は `i` フラグ）
+3. `excludeKeywords` のいずれかがどれかのフィールドで `matchMode` ヒット → 除外（最優先）
+4. `keywords` のいずれかがいずれかのフィールドでヒット → 採用。ヒットした keyword を `matchedKeywords` に、ヒットしたフィールドを `matchedFields`（`matchFields` 宣言順）に記録する
+5. `requireFields` が非空の場合、ヒットが `requireFields` のいずれかのフィールドで起きていなければ **除外**（#332 precision guard）
+6. それ以外 → 採用しない
+
+### `requireFields` の意味（#332）
+
+- `requireFields` は `matchFields` の **部分集合**でなければならない（schema が parse 時に検証）。`matchFields` に無いフィールドを指定すると常に全件除外になるため fail-fast する。
+- 既定は `[]`（制約なし＝従来挙動）。
+- 典型用途: `matchFields: [title, summary]` のまま `requireFields: [title]` を足すと、「本文（summary）でキーワードに言及しただけの他サービス記事」を抑制しつつ、`matchedFields` には summary ヒットの事実が残るので可視化と抑制を両立できる。
+
+### `matchedFields` の記録（#332）
+
+採用された item は `matchedFields: [<ヒットした matchField>...]` を持つ（`matchFields` 宣言順、重複なし）。`title` 非ヒット & `summary` のみのヒットは false-positive の典型なので、triage payload（`matched_fields` 属性）と `radar source test` 出力に渡して減点・点検材料にする。
 
 ### `matchMode` の意味
 

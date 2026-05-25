@@ -11,6 +11,7 @@ function makeItem(overrides: Partial<Item> = {}): Item {
     fetchedAt: "2026-05-12T00:00:00.000Z",
     summary: "Anthropic announced new Claude Code agents capabilities.",
     matchedKeywords: [],
+    matchedFields: [],
     status: "detected",
     ...overrides,
   };
@@ -22,6 +23,7 @@ function makeFilters(overrides: Partial<SourceFilters> = {}): SourceFilters {
     excludeKeywords: [],
     matchMode: "word",
     matchFields: ["title", "summary"],
+    requireFields: [],
     caseSensitive: false,
     ...overrides,
   };
@@ -218,6 +220,73 @@ describe("core/filter — matchFields scoping", () => {
       }),
     );
     expect(out).toBeNull();
+  });
+});
+
+describe("core/filter — matchedFields recording (#332)", () => {
+  it("records 'title' when only the title hits", () => {
+    const item = makeItem({ title: "agents launch", summary: "nothing relevant here" });
+    const out = evaluateFilter(item, makeFilters({ keywords: ["agents"] }));
+    expect(out).not.toBeNull();
+    expect(out?.matchedFields).toEqual(["title"]);
+  });
+
+  it("records 'summary' when only the summary hits", () => {
+    const item = makeItem({ title: "Plain headline", summary: "mentions agents in passing" });
+    const out = evaluateFilter(item, makeFilters({ keywords: ["agents"] }));
+    expect(out).not.toBeNull();
+    expect(out?.matchedFields).toEqual(["summary"]);
+  });
+
+  it("records both fields (matchFields order) when the keyword hits in each", () => {
+    const item = makeItem({ title: "agents rule", summary: "agents everywhere" });
+    const out = evaluateFilter(item, makeFilters({ keywords: ["agents"] }));
+    expect(out?.matchedFields).toEqual(["title", "summary"]);
+  });
+
+  it("dedups a field hit across multiple keywords", () => {
+    const item = makeItem({ title: "agents and claude", summary: "nothing else" });
+    const out = evaluateFilter(item, makeFilters({ keywords: ["agents", "claude"] }));
+    expect(out?.matchedKeywords).toEqual(["agents", "claude"]);
+    expect(out?.matchedFields).toEqual(["title"]);
+  });
+});
+
+describe("core/filter — requireFields precision guard (#332)", () => {
+  it("rejects a summary-only match when requireFields=[title]", () => {
+    const item = makeItem({ title: "Plain headline", summary: "mentions agents in passing" });
+    const out = evaluateFilter(
+      item,
+      makeFilters({ keywords: ["agents"], requireFields: ["title"] }),
+    );
+    expect(out).toBeNull();
+  });
+
+  it("accepts a title match when requireFields=[title]", () => {
+    const item = makeItem({ title: "agents launch", summary: "no keyword here" });
+    const out = evaluateFilter(
+      item,
+      makeFilters({ keywords: ["agents"], requireFields: ["title"] }),
+    );
+    expect(out).not.toBeNull();
+    expect(out?.matchedFields).toEqual(["title"]);
+  });
+
+  it("accepts when the hit lands in any one of several requireFields", () => {
+    const item = makeItem({ title: "Plain", summary: "agents in summary" });
+    const out = evaluateFilter(
+      item,
+      makeFilters({ keywords: ["agents"], requireFields: ["title", "summary"] }),
+    );
+    expect(out).not.toBeNull();
+    expect(out?.matchedFields).toEqual(["summary"]);
+  });
+
+  it("does not affect outcome when requireFields is empty (default)", () => {
+    const item = makeItem({ title: "Plain headline", summary: "mentions agents" });
+    const out = evaluateFilter(item, makeFilters({ keywords: ["agents"] }));
+    expect(out).not.toBeNull();
+    expect(out?.matchedFields).toEqual(["summary"]);
   });
 });
 

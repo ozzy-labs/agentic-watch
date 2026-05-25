@@ -21,6 +21,8 @@ filters:
   matchFields:                 # 既定 [title, summary]
     - title
     - summary
+  requireFields:               # 既定 [] (空=制約なし)。matchFields の部分集合 (#332)
+    - title                    # 例: title でヒットした item だけ採用 (summary 言及だけは落とす)
   caseSensitive: false         # 既定 false
 ```
 
@@ -30,32 +32,34 @@ Zod スキーマ実装: [`src/schemas/source.ts`](../../src/schemas/source.ts) �
 
 ADR-0006 §評価順序に従う。疑似コード:
 
+> #332 で step 1 を「単一連結 haystack」から **matchField 単位の評価** に変更した。`requireFields` を指定しない場合の採用/除外の結果は従来と不変。ヒットした matchField を `matchedFields` に記録する。
+
 ```python
 def evaluate(item, filters):
-    # 1. matchFields のテキストを連結（adapter が提供しないフィールドは silently skip）
-    haystack = "\n".join(item.field(f) for f in filters.matchFields if item.has(f))
+    # 1. matchField ごとに検索対象を用意（adapter が提供しないフィールドは silently skip）
+    #    2. case-insensitive なら各 haystack / keyword を lowercase（regex は i フラグ）
+    fields = [(f, normalize(item.field(f))) for f in filters.matchFields if item.has(f)]
 
-    # 2. case-insensitive なら lowercase 化
-    if not filters.caseSensitive:
-        haystack = haystack.lower()
-        keywords        = [k.lower() for k in filters.keywords]
-        excludeKeywords = [k.lower() for k in filters.excludeKeywords]
-    else:
-        keywords        = filters.keywords
-        excludeKeywords = filters.excludeKeywords
-
-    # 3. excludeKeywords ヒット → 除外（最優先）
+    # 3. excludeKeywords がどれかのフィールドでヒット → 除外（最優先）
     for kw in excludeKeywords:
-        if match(haystack, kw, filters.matchMode):
+        if any(match(h, kw, filters.matchMode) for _, h in fields):
             return DROP
 
     # 4. keywords が空 → 不採用（"keywords 未設定 = match 0 件" の安全側 default）
     if not keywords:
         return DROP
 
-    # 5. keywords のいずれかヒット → 採用（matchedKeywords にヒット内容を記録）
-    hits = [kw for kw in keywords if match(haystack, kw, filters.matchMode)]
-    return ACCEPT(matchedKeywords=hits) if hits else DROP
+    # 5. keywords のヒットを収集。matchedKeywords にヒット keyword、
+    #    matchedFields にヒットしたフィールド（matchFields 宣言順）を記録
+    hits, matchedFields = collect_hits(fields, keywords, filters.matchMode)
+    if not hits:
+        return DROP
+
+    # 6. requireFields が非空なら、ヒットがそのいずれかのフィールドで起きていること（#332）
+    if filters.requireFields and not (set(filters.requireFields) & set(matchedFields)):
+        return DROP
+
+    return ACCEPT(matchedKeywords=hits, matchedFields=matchedFields)
 ```
 
 実装: [`src/core/filter.ts`](../../src/core/filter.ts) の `evaluateFilter`。
@@ -99,7 +103,7 @@ def evaluate(item, filters):
 
 `html-js` adapter は selector の評価ロジックを `html` adapter と共有する (`_html-common.ts` / ADR-0010) ため、フィルタからは同じ field surface に見える。`json-feed` / `json-api` adapter（[ADR-0012](../adr/0012-json-api-adapter-and-recipe-strategy.md)）も Item schema の surface 制約（`body` / `tags` 非構造化）を踏襲し、tags は `raw` 経由でのみ保持される。
 
-`Item` schema には `body` / `tags` field が無いため、`filter.ts` の `buildHaystack` は両 field を **全 adapter で silently skip**（エラーにせず、その field を無いものとして扱う、`src/core/filter.ts` L57-61）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、将来 `Item` schema に `body` / `tags` を追加し adapter が surface し始めれば自動的に有効化される。例えば `html` adapter は `body` を `raw.body` として保持しているが、`Item` schema に body field が無いため `filter.ts` 側からは参照できない (`raw` は agent 渡し用の生データ袋であり、filter haystack の対象ではない)。
+`Item` schema には `body` / `tags` field が無いため、`filter.ts` の `fieldText` は両 field に対し `null` を返し **全 adapter で silently skip**（エラーにせず、その field を無いものとして扱う、`src/core/filter.ts` の `fieldText`）。これにより、複数 source kind を 1 つの YAML 設定で共有でき、将来 `Item` schema に `body` / `tags` を追加し adapter が surface し始めれば自動的に有効化される。例えば `html` adapter は `body` を `raw.body` として保持しているが、`Item` schema に body field が無いため `filter.ts` 側からは参照できない (`raw` は agent 渡し用の生データ袋であり、filter haystack の対象ではない)。
 
 ## Edge cases
 
@@ -112,6 +116,9 @@ def evaluate(item, filters):
 | `matchMode: regex` + 無効な regex | `RegExp` コンストラクタが throw。watch run はその source をエラーとして記録し他 source は続行 | 部分故障で全停止しない |
 | Summary が `undefined`（RSS 側に description 無し） | `summary` field は haystack から silently skip | RSS の現実は description 任意 |
 | 大文字小文字混在の summary + `caseSensitive: false` | haystack/keywords ともに `toLowerCase()` 後に評価 | ADR-0006 §評価順序 step 2 |
+| `requireFields: [title]` + summary のみヒット | **除外**（#332 precision guard）| title 非ヒットの本文言及だけの記事を落とす |
+| `requireFields: [title]` + title ヒット | 採用、`matchedFields: [title]` | 正当な title ヒットは通す |
+| `requireFields` に matchFields 外の値 | schema parse でエラー（部分集合違反） | 常に全件除外になる設定ミスを fail-fast |
 
 ## 採用 item の `matchedKeywords`
 
@@ -129,6 +136,10 @@ status: detected
 ```
 
 研究レポート生成時、`matchedKeywords` を agent に渡してフォーカスを絞らせることができる。
+
+## 採用 item の `matchedFields`（#332）
+
+採用された item は、どの matchField でヒットしたかを `matchedFields: [<field>...]`（`matchFields` 宣言順、重複なし）に持つ。`title` 非ヒット & `summary` のみのヒットは false-positive の典型なので、triage payload（`matched_fields` 属性）と `radar source test` 出力に渡して減点・点検材料にする。`requireFields` はこの判定を強制版にしたもの（summary のみヒットを採用段階で落とす）。
 
 ## 単体テストパターン
 
@@ -155,7 +166,10 @@ status: detected
 | matchFields | `["title"]` 指定で summary はスキップ | summary のみのヒットは reject |
 | matchFields | `["body", "tags"]` (RSS は提供しない) | silently skip して reject |
 | matchFields | フィールド連結は改行で区切る | "Claude" + "Code" の跨ぎを `\bClaude Code\b` でヒットさせない |
-| filterItems | バッチ呼び出し | match した item のみ返す + `matchedKeywords` 付与 |
+| matchedFields | title のみヒット / summary のみヒット / 両方 | `matchedFields` に該当フィールドを宣言順で記録（#332）|
+| requireFields | `[title]` + summary のみヒット | reject（precision guard, #332）|
+| requireFields | `[title]` + title ヒット | accept、`matchedFields: [title]` |
+| filterItems | バッチ呼び出し | match した item のみ返す + `matchedKeywords` / `matchedFields` 付与 |
 
 ### Item fixture (典型例)
 

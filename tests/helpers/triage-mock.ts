@@ -263,6 +263,7 @@ export function makeItem(overrides: Partial<Item> = {}): Item {
     url: overrides.url ?? "https://example.com/post/1",
     fetchedAt: overrides.fetchedAt ?? "2026-05-23T00:00:00.000Z",
     matchedKeywords: overrides.matchedKeywords ?? ["test"],
+    matchedFields: overrides.matchedFields ?? ["title"],
     status: overrides.status ?? "detected",
     injectionFlags: overrides.injectionFlags ?? [],
     summary: overrides.summary,

@@ -98,6 +98,7 @@ describe("cli/source", () => {
           excludeKeywords: ["deprecated"],
           matchMode: "word",
           matchFields: ["title", "summary"],
+          requireFields: [],
           caseSensitive: false,
         },
         // ADR-0009 M4: schema defaults all sources to `"untrusted"` so existing

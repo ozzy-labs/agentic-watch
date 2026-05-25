@@ -45,6 +45,16 @@ describe("core/triage/buildTriagePrompt — boundary marker structure", () => {
     expect(prompt).toContain('matched_keywords="GA,pricing"');
   });
 
+  it("exposes matched_fields as an opening-tag attribute (#332)", () => {
+    const item = makeItem({
+      id: "src-1-2026-05-23-fields",
+      matchedFields: ["summary"],
+      title: "test",
+    });
+    const prompt = buildTriagePrompt({ items: [item], policy: POLICY });
+    expect(prompt).toContain('matched_fields="summary"');
+  });
+
   it("places title / summary / raw inside the boundary, never outside it", () => {
     const item = makeItem({
       id: "src-1-2026-05-23-inside",

@@ -1504,6 +1504,8 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   "cli.source.testItemUrl": ({ url }: { url: string }): string => `     url:             ${url}`,
   "cli.source.testItemMatchedKeywords": ({ value }: { value: string }): string =>
     `     matchedKeywords: ${value}`,
+  "cli.source.testItemMatchedFields": ({ value }: { value: string }): string =>
+    `     matchedFields:   ${value}`,
   "cli.source.testItemContent": ({ value }: { value: string }): string =>
     `     content:         ${value}`,
   "cli.source.testMoreItems": ({ count }: { count: number }): string =>

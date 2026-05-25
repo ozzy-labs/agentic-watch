@@ -170,6 +170,21 @@ export const ItemSchema = z.object({
   summary: z.string().optional(),
   raw: z.unknown().optional(),
   matchedKeywords: z.array(z.string()).default([]),
+  /**
+   * Which `matchFields` actually produced a keyword hit (#332). Recorded by
+   * `src/core/filter.ts` so downstream consumers (triage payload, `radar
+   * source test`) can distinguish a title hit from a summary-only mention —
+   * the latter is a frequent false-positive source when `matchFields`
+   * includes `summary` (a body that merely *mentions* another service's
+   * keyword). Order follows the declaration order of `filters.matchFields`.
+   *
+   * Defaults to `[]` so items written before this field landed deserialize
+   * cleanly (the same load-side compat pattern as `matchedKeywords` /
+   * `injectionFlags`). Values are drawn from the `MatchField` enum but stored
+   * as plain strings to mirror `matchedKeywords` and avoid a load-time
+   * failure should the enum ever shrink.
+   */
+  matchedFields: z.array(z.string()).default([]),
   status: ItemStatusSchema.default("detected"),
   /**
    * Prompt-injection pattern labels that fired when the watcher scanned

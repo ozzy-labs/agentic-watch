@@ -54,6 +54,7 @@ export const RecipeFileSchema = z.object({
     excludeKeywords: [],
     matchMode: "word",
     matchFields: ["title", "summary"],
+    requireFields: [],
     caseSensitive: false,
   }),
   selectors: SourceSelectorsSchema.optional(),

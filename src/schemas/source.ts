@@ -72,13 +72,46 @@ export const SourceTriagePolicySchema = z.object({
 });
 export type SourceTriagePolicy = z.infer<typeof SourceTriagePolicySchema>;
 
-export const SourceFiltersSchema = z.object({
-  keywords: z.array(z.string()).default([]),
-  excludeKeywords: z.array(z.string()).default([]),
-  matchMode: MatchModeSchema.default("word"),
-  matchFields: z.array(MatchFieldSchema).default(["title", "summary"]),
-  caseSensitive: z.boolean().default(false),
-});
+export const SourceFiltersSchema = z
+  .object({
+    keywords: z.array(z.string()).default([]),
+    excludeKeywords: z.array(z.string()).default([]),
+    matchMode: MatchModeSchema.default("word"),
+    matchFields: z.array(MatchFieldSchema).default(["title", "summary"]),
+    /**
+     * Optional precision guard (#332 / ADR-0006). When non-empty, an item is
+     * accepted only if at least one include keyword hit landed in one of these
+     * fields. Use it to suppress the common false-positive where `matchFields`
+     * includes `summary` and another service's article merely *mentions* the
+     * keyword in its body (e.g. "X now integrates with Amazon Quick"): set
+     * `requireFields: [title]` so only a title hit qualifies, while still
+     * surfacing the matched summary context via `matchedFields`.
+     *
+     * Must be a subset of `matchFields` to be meaningful — a `requireFields`
+     * entry not present in `matchFields` is never evaluated and would silently
+     * reject everything, so the schema enforces the subset relation.
+     *
+     * Defaults to `[]` (no constraint): existing source YAMLs that omit the
+     * field keep their current accept-on-any-field behavior unchanged.
+     */
+    requireFields: z.array(MatchFieldSchema).default([]),
+    caseSensitive: z.boolean().default(false),
+  })
+  .superRefine((value, ctx) => {
+    // `requireFields` only makes sense as a subset of `matchFields`: a require
+    // entry not in `matchFields` is never evaluated and would silently reject
+    // every item. Fail-fast at parse time rather than producing a source that
+    // emits nothing (#332).
+    for (const f of value.requireFields) {
+      if (!value.matchFields.includes(f)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["requireFields"],
+          message: `requireFields entry '${f}' must also appear in matchFields`,
+        });
+      }
+    }
+  });
 export type SourceFilters = z.infer<typeof SourceFiltersSchema>;
 
 /**
@@ -423,6 +456,7 @@ export const SourceSchema = z
       excludeKeywords: [],
       matchMode: "word",
       matchFields: ["title", "summary"],
+      requireFields: [],
       caseSensitive: false,
     }),
     // `selectors` is required for `kind: html` and `kind: html-js`, ignored

@@ -1208,6 +1208,14 @@ export async function testSource(
         value: item.matchedKeywords.length > 0 ? item.matchedKeywords.join(",") : none,
       }),
     );
+    // Show which matchField produced the hit (#332). A summary-only line here
+    // flags a likely body-mention false-positive the user can suppress with
+    // `requireFields`.
+    log(
+      t("cli.source.testItemMatchedFields", {
+        value: item.matchedFields.length > 0 ? item.matchedFields.join(",") : none,
+      }),
+    );
     if (parsed.showContent) {
       const body =
         item.summary && item.summary.length > 0
