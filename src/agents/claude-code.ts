@@ -223,6 +223,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
           templateBody: req.templateBody,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -242,6 +243,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
           researchPath: req.researchPath,
           researchFrontmatter: req.researchFrontmatter,
           researchBody: req.researchBody,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -261,6 +263,7 @@ export function createClaudeCodeAdapter(options: ClaudeCodeAdapterOptions = {}):
           prevResearch: req.prevResearch,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;

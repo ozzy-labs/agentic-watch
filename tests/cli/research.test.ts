@@ -1508,6 +1508,30 @@ describe("cli/research", () => {
       expect(code).toBe(2);
       expect(captured.error.some((m) => m.includes("incompatible with --batch"))).toBe(true);
     });
+
+    // #358 / ADR-0021 §5: the host-agent payload carries the resolved-locale
+    // output-language directive so `--lang` follows through to host mode (the
+    // spawn path already gets it via the adapter argv prompt, #316).
+    it("embeds the Japanese output directive when --lang ja is given", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--emit-payload", "--lang", "ja"], {
+        cwd: workdir,
+        io,
+      });
+
+      expect(code).toBe(0);
+      expect(captured.log.join("\n")).toContain("Write the research report body in Japanese");
+    });
+
+    it("embeds the English output directive by default (locale=en)", async () => {
+      const workdir = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runResearch([SAMPLE_ITEM.id, "--emit-payload"], { cwd: workdir, io });
+
+      expect(code).toBe(0);
+      expect(captured.log.join("\n")).toContain("Write the research report body in English.");
+    });
   });
 
   describe("commit mode (--commit, #254)", () => {

@@ -938,6 +938,27 @@ describe("cli/review", () => {
       expect(code).toBe(2);
       expect(captured.error.some((m) => m.includes("missing <research-id>"))).toBe(true);
     });
+
+    // #358 / ADR-0021 §5: the host-agent payload carries the resolved-locale
+    // output-language directive so `--lang` follows through to host mode.
+    it("embeds the Japanese output directive when --lang ja is given", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload", "--lang", "ja"], {
+        cwd: workdir,
+        io,
+      });
+      expect(code).toBe(0);
+      expect(captured.log.join("\n")).toContain("Write the review block body in Japanese");
+    });
+
+    it("embeds the English output directive by default (locale=en)", async () => {
+      const { workdir } = await setupWorkspace();
+      const { io, captured } = captureIo();
+      const code = await runReview([RESEARCH_ID, "--emit-payload"], { cwd: workdir, io });
+      expect(code).toBe(0);
+      expect(captured.log.join("\n")).toContain("Write the review block body in English.");
+    });
   });
 
   describe("host-agent mode --commit (#254 / ADR-0019)", () => {

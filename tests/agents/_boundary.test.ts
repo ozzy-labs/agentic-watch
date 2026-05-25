@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   renderItemForPrompt,
   renderItemsForPrompt,
+  renderResearchPayloadBlock,
+  renderReviewPayloadBlock,
   renderTriagePayloadBlock,
+  renderUpdatePayloadBlock,
   reportLanguageDirective,
   resolveTrustLevel,
   wrapUntrusted,
 } from "../../src/agents/_boundary.js";
-import type { Item, TrustLevel } from "../../src/schemas/index.js";
+import type { Item, ResearchFrontmatter, TrustLevel } from "../../src/schemas/index.js";
 import { ItemSchema } from "../../src/schemas/index.js";
 
 /**
@@ -185,6 +188,113 @@ describe("agents/_boundary.renderTriagePayloadBlock (#279 / ADR-0019)", () => {
     expect(out).toContain("the radar CLI parses your JSON");
     // Boundary markers ride into both modes identically (ADR-0009 M1c).
     expect(out).toContain('<untrusted_item id="item-1"');
+  });
+});
+
+/**
+ * Host-agent payload output-language directive (#358, ADR-0021 §5).
+ *
+ * The spawn path supplies the directive via each adapter's argv prompt (#316),
+ * so spawn-mode payloads stay byte-identical to before (no directive line).
+ * Host mode has no argv channel, so the directive must ride inside the payload
+ * Constraints block. These tests pin: (a) host payloads carry the per-locale
+ * directive for research / review / update, and (b) spawn payloads never do
+ * (regression guard for the host-only gate).
+ */
+describe("agents/_boundary host payload locale directive (#358 / ADR-0021 §5)", () => {
+  const FRONTMATTER: ResearchFrontmatter = {
+    id: "research-001",
+    itemIds: [ITEM_A.id],
+    agent: "claude-code",
+    templateId: "default",
+    createdAt: "2026-05-10T02:00:00.000Z",
+    updatedAt: null,
+    reviewedAt: null,
+    reviewedBy: null,
+    supersedes: null,
+  };
+
+  describe("renderResearchPayloadBlock", () => {
+    const baseInput = {
+      agent: "claude-code" as const,
+      templateId: "default",
+      templateBody: "",
+      items: [ITEM_A],
+      outputPath: "/work/research/research-001_v1.md",
+    };
+
+    it("host mode embeds the Japanese directive for locale=ja", () => {
+      const out = renderResearchPayloadBlock({ ...baseInput, locale: "ja" });
+      expect(out).toContain("Write the research report body in Japanese");
+    });
+
+    it("host mode embeds the English directive for locale=en", () => {
+      const out = renderResearchPayloadBlock({ ...baseInput, locale: "en" });
+      expect(out).toContain("Write the research report body in English.");
+    });
+
+    it("spawn mode omits the directive entirely (argv prompt carries it)", () => {
+      const ja = renderResearchPayloadBlock({ ...baseInput, locale: "ja" }, "spawn");
+      const en = renderResearchPayloadBlock({ ...baseInput, locale: "en" }, "spawn");
+      expect(ja).not.toContain("Write the research report body");
+      expect(en).not.toContain("Write the research report body");
+    });
+  });
+
+  describe("renderReviewPayloadBlock", () => {
+    const baseInput = {
+      agent: "claude-code" as const,
+      templateId: "default",
+      templateBody: "",
+      researchPath: "/work/research/research-001_v1.md",
+      researchFrontmatter: FRONTMATTER,
+      researchBody: "## Summary\nbody",
+    };
+
+    it("host mode embeds the Japanese directive for locale=ja", () => {
+      const out = renderReviewPayloadBlock({ ...baseInput, locale: "ja" });
+      expect(out).toContain("Write the review block body in Japanese");
+    });
+
+    it("host mode embeds the English directive for locale=en", () => {
+      const out = renderReviewPayloadBlock({ ...baseInput, locale: "en" });
+      expect(out).toContain("Write the review block body in English.");
+    });
+
+    it("spawn mode omits the directive entirely (argv prompt carries it)", () => {
+      const ja = renderReviewPayloadBlock({ ...baseInput, locale: "ja" }, "spawn");
+      const en = renderReviewPayloadBlock({ ...baseInput, locale: "en" }, "spawn");
+      expect(ja).not.toContain("Write the review block body");
+      expect(en).not.toContain("Write the review block body");
+    });
+  });
+
+  describe("renderUpdatePayloadBlock", () => {
+    const baseInput = {
+      agent: "claude-code" as const,
+      templateId: "default",
+      templateBody: "",
+      prevResearch: { frontmatter: FRONTMATTER, body: "## Summary\nbody" },
+      items: [ITEM_A],
+      outputPath: "/work/research/research-001_v2.md",
+    };
+
+    it("host mode embeds the Japanese directive for locale=ja", () => {
+      const out = renderUpdatePayloadBlock({ ...baseInput, locale: "ja" });
+      expect(out).toContain("Write the updated research report body in Japanese");
+    });
+
+    it("host mode embeds the English directive for locale=en", () => {
+      const out = renderUpdatePayloadBlock({ ...baseInput, locale: "en" });
+      expect(out).toContain("Write the updated research report body in English.");
+    });
+
+    it("spawn mode omits the directive entirely (argv prompt carries it)", () => {
+      const ja = renderUpdatePayloadBlock({ ...baseInput, locale: "ja" }, "spawn");
+      const en = renderUpdatePayloadBlock({ ...baseInput, locale: "en" }, "spawn");
+      expect(ja).not.toContain("Write the updated research report body");
+      expect(en).not.toContain("Write the updated research report body");
+    });
   });
 });
 

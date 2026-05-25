@@ -258,6 +258,7 @@ export function createCodexCliAdapter(options: CodexCliAdapterOptions = {}): Age
           templateBody: req.templateBody,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -282,6 +283,7 @@ export function createCodexCliAdapter(options: CodexCliAdapterOptions = {}): Age
           researchPath: req.researchPath,
           researchFrontmatter: req.researchFrontmatter,
           researchBody: req.researchBody,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -306,6 +308,7 @@ export function createCodexCliAdapter(options: CodexCliAdapterOptions = {}): Age
           prevResearch: req.prevResearch,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;

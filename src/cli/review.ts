@@ -922,6 +922,7 @@ export async function runReview(
         researchPath,
         researchFrontmatter: preFm,
         researchBody,
+        locale,
       }),
     );
     return 0;

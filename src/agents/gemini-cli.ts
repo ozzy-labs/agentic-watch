@@ -263,6 +263,7 @@ export function createGeminiCliAdapter(options: GeminiCliAdapterOptions = {}): A
           templateBody: req.templateBody,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -287,6 +288,7 @@ export function createGeminiCliAdapter(options: GeminiCliAdapterOptions = {}): A
           researchPath: req.researchPath,
           researchFrontmatter: req.researchFrontmatter,
           researchBody: req.researchBody,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -311,6 +313,7 @@ export function createGeminiCliAdapter(options: GeminiCliAdapterOptions = {}): A
           prevResearch: req.prevResearch,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;

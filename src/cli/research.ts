@@ -694,6 +694,8 @@ async function runResearchEmitPayload(params: {
   template: ResearchTemplate;
   now: Date;
   triageGroup?: string;
+  /** Resolved report-output locale (#316); embedded as the host-mode directive (#358). */
+  locale: Locale;
   log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
@@ -710,6 +712,7 @@ async function runResearchEmitPayload(params: {
     template,
     now,
     triageGroup,
+    locale,
     log,
     warn,
     error,
@@ -736,6 +739,7 @@ async function runResearchEmitPayload(params: {
       templateBody: template.body,
       items,
       outputPath: prepared.outputPath,
+      locale,
     }),
   );
   return 0;
@@ -1133,6 +1137,7 @@ export async function runResearch(
       template,
       now: new Date(),
       triageGroup: parsed.triageGroup,
+      locale,
       log,
       warn,
       error,
