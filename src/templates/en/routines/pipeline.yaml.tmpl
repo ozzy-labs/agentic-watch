@@ -183,7 +183,7 @@ instructions: |
      ```bash
      # Read-only: count the items still awaiting human triage review. Do NOT
      # transition or dismiss them.
-     radar items list --status triaged_unsure --json | jq length
+     radar items list --status triaged_unsure --field id | wc -l
      ```
 
 {{landingStep}}
