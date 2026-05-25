@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.3](https://github.com/ozzy-labs/feedradar/compare/v0.2.2...v0.2.3) (2026-05-25)
+
+
+### Features
+
+* **feeds:** accept relative year tokens on both facet range bounds ([#352](https://github.com/ozzy-labs/feedradar/issues/352)) ([#354](https://github.com/ozzy-labs/feedradar/issues/354)) ([6956526](https://github.com/ozzy-labs/feedradar/commit/6956526261a91671e734d2a14c1537d5089cbc30))
+* **feeds:** record matchedFields and add requireFields filter guard ([#332](https://github.com/ozzy-labs/feedradar/issues/332)) ([#347](https://github.com/ozzy-labs/feedradar/issues/347)) ([f2c7878](https://github.com/ozzy-labs/feedradar/commit/f2c78784e6e60ebff3fbf7fcf99459a1086bfa29))
+* **routine:** generate に --prompt-mode bootstrap を追加（Web UI 再貼り付け不要・実行時に正本 YAML を読む） ([#348](https://github.com/ozzy-labs/feedradar/issues/348)) ([cff5fbb](https://github.com/ozzy-labs/feedradar/commit/cff5fbbc6a556efba33e1ddd7db6bcd448099db2))
+* **routine:** handle triaged_digest / triaged_unsure in pipeline routine instructions ([#346](https://github.com/ozzy-labs/feedradar/issues/346)) ([9070a27](https://github.com/ozzy-labs/feedradar/commit/9070a272058ced1a5d366ef176f98024637aee06))
+* **state:** add prune command and maxSeenIds FIFO cap ([#333](https://github.com/ozzy-labs/feedradar/issues/333)) ([#349](https://github.com/ozzy-labs/feedradar/issues/349)) ([c6c2c67](https://github.com/ozzy-labs/feedradar/commit/c6c2c672ce4bf4d82eab18ea333d8cd1477cf4b8))
+
+
+### Bug Fixes
+
+* **watcher:** skip state write when only lastFetchedAt would advance ([#344](https://github.com/ozzy-labs/feedradar/issues/344)) ([8837e0a](https://github.com/ozzy-labs/feedradar/commit/8837e0a7769ddf7b8a31bc18f0286029786fd898))
+
 ## [0.2.2](https://github.com/ozzy-labs/feedradar/compare/v0.2.1...v0.2.2) (2026-05-24)
 
 
