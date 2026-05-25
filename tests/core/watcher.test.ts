@@ -2,6 +2,7 @@ import { access, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import type { FetchLike } from "../../src/core/feeds/types.js";
 import type { ProgressReporter } from "../../src/core/progress.js";
 import {
@@ -801,5 +802,101 @@ describe("watchRun quiet-run state write skip (#326)", () => {
     const newId = result.detected.blog?.[0]?.id;
     if (!newId) throw new Error("unreachable: detected.blog length checked above");
     expect(onDisk).toContain(newId);
+  });
+});
+
+describe("watchRun maxSeenIds FIFO cap (#333)", () => {
+  let workdir: string;
+
+  beforeEach(async () => {
+    workdir = await mkdtemp(join(tmpdir(), "feedradar-watcher-cap-"));
+    await mkdir(join(workdir, "sources"), { recursive: true });
+    await mkdir(join(workdir, "state"), { recursive: true });
+    await mkdir(join(workdir, "items"), { recursive: true });
+  });
+
+  async function writeCappedSource(id: string, maxSeenIds: number): Promise<void> {
+    const yaml = [
+      `id: ${id}`,
+      "kind: rss",
+      `url: https://example.com/${id}.xml`,
+      "tags: []",
+      `maxSeenIds: ${maxSeenIds}`,
+      "filters:",
+      "  keywords:",
+      "    - agents",
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "sources", `${id}.yaml`), yaml, "utf8");
+  }
+
+  it("trims persisted lastSeenIds to the newest N (oldest dropped first)", async () => {
+    await writeCappedSource("blog", 5);
+    // Seed 10 old ids; a run appends the feed's two ids (a + b), pushing the
+    // total to 12 before the cap. With maxSeenIds=5 the newest 5 survive.
+    const oldIds = Array.from({ length: 10 }, (_, i) => `old-${i}`);
+    const seeded = [
+      "sourceId: blog",
+      'lastFetchedAt: "2026-05-24T00:00:00.000Z"',
+      "lastSeenIds:",
+      ...oldIds.map((id) => `  - ${id}`),
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "state", "blog.yaml"), seeded, "utf8");
+
+    const io = silentIo();
+    const result = await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+
+    expect(result.errors).toEqual([]);
+    // Projected (in-memory) state is already capped.
+    expect(result.states.blog?.lastSeenIds).toHaveLength(5);
+
+    // On disk: capped to 5, and the oldest seeded ids were dropped.
+    const parsed = parseYaml(await readFile(join(workdir, "state", "blog.yaml"), "utf8")) as {
+      lastSeenIds: string[];
+    };
+    expect(parsed.lastSeenIds).toHaveLength(5);
+    expect(parsed.lastSeenIds).not.toContain("old-0");
+    expect(parsed.lastSeenIds).not.toContain("old-4");
+    // The trailing window survives, including the newly fetched feed ids.
+    expect(parsed.lastSeenIds).toContain("old-9");
+    const newId = result.detected.blog?.[0]?.id;
+    if (!newId) throw new Error("unreachable: detected.blog length checked above");
+    expect(parsed.lastSeenIds).toContain(newId);
+  });
+
+  it("leaves lastSeenIds unbounded when maxSeenIds is omitted (regression)", async () => {
+    await writeSource(workdir, "blog");
+    const oldIds = Array.from({ length: 10 }, (_, i) => `old-${i}`);
+    const seeded = [
+      "sourceId: blog",
+      'lastFetchedAt: "2026-05-24T00:00:00.000Z"',
+      "lastSeenIds:",
+      ...oldIds.map((id) => `  - ${id}`),
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "state", "blog.yaml"), seeded, "utf8");
+
+    const io = silentIo();
+    const result = await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+
+    // No cap: every seeded id plus the newly fetched ones are retained.
+    expect(result.states.blog?.lastSeenIds.length ?? 0).toBeGreaterThan(10);
+    const parsed = parseYaml(await readFile(join(workdir, "state", "blog.yaml"), "utf8")) as {
+      lastSeenIds: string[];
+    };
+    expect(parsed.lastSeenIds).toContain("old-0");
   });
 });

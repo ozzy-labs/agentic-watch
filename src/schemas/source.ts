@@ -481,6 +481,15 @@ export const SourceSchema = z
     // `json-api` adapter. Single-facet only in Phase 1 — multi-facet is
     // schema-allowed for forward-compat but the adapter throws at runtime.
     facets: SourceFacetsSchema.optional(),
+    // `maxSeenIds` caps how many ids `state/<id>.yaml` retains in `lastSeenIds`
+    // (#333). Facet sweeps (ADR-0017) record every fetched id — including the
+    // ~99% that fail the keyword filter — so the list grows unbounded (observed
+    // 20,958 ids / 1.1MB), bloating every clone/diff/commit in the
+    // git-managed-state workflow. When set, the watcher trims to the newest N
+    // ids FIFO (oldest dropped first) after each run. Optional: existing source
+    // YAMLs that omit it keep the current unbounded behavior, so nothing
+    // changes until a recipe/source opts in. Must be a positive integer.
+    maxSeenIds: z.number().int().positive().optional(),
     // `trustLevel` defaults to `"untrusted"` so existing source YAMLs (which
     // omit the field entirely) keep their current treatment. Per ADR-0009 M4
     // this is schema-only; policy branches that read `trustLevel` arrive in a

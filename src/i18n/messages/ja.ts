@@ -91,6 +91,7 @@ export const ja: Messages = {
   "cli.summary.init": "ワークスペースを初期化する (sources/items/state/research/templates)",
   "cli.summary.source": "フィードソースを管理する (add | list | recipes | remove | test)",
   "cli.summary.watch": "ソースを取得しフィルタ済みアイテムを生成する (run)",
+  "cli.summary.state": "ソースごとの監視 state を管理する (prune)",
   "cli.summary.research": "AI エージェントでアイテムから Markdown 調査レポートを生成する",
   "cli.summary.triage": "検出済みアイテムを LLM でトリアージする",
   "cli.summary.dismiss": "検出済みアイテムを却下する (単一 id / 複数 id / --batch)",
@@ -1559,4 +1560,50 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     agent: string;
   }): string => `ソース '${sourceId}' の ${count} 件を ${agent} で triage 中`,
   "cli.triage.confirmApply": "これらの判定を適用しますか? [y/N]",
+
+  // --- state prune (#333) ---------------------------------------------------
+  "cli.state.help": `使い方: radar state prune <source> --keep <N>
+
+state/<source>.yaml の lastSeenIds を新しい順に N 件だけ残して切り詰める (FIFO・古いものから削除)。
+facet sweep で肥大化した state ファイルを縮小する用途。
+
+オプション:
+  --keep <N>          新しい順に N 件残し、残りを削除する (必須)
+  --older-than <dur>  未対応 (lastSeenIds は id ごとの時刻を持たない)
+  -h, --help          このヘルプを表示する`,
+  "cli.state.parseError": ({ reason }: { reason: string }): string => `state prune: ${reason}`,
+  "cli.state.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `state: 不明なサブコマンド '${sub}'`,
+  "cli.state.missingSource": "state prune: <source> が指定されていません",
+  "cli.state.keepRequired": "state prune: --keep <N> は必須です",
+  "cli.state.olderThanUnsupported":
+    "state prune: --older-than は未対応です (lastSeenIds は id ごとの時刻を持ちません)。--keep <N> を使ってください",
+  "cli.state.invalidKeepInteger": ({ raw }: { raw: string }): string =>
+    `state prune: --keep には整数を指定してください ('${raw}' が指定されました)`,
+  "cli.state.invalidKeepPositive": ({ raw }: { raw: string }): string =>
+    `state prune: --keep には正の整数を指定してください ('${raw}' が指定されました)`,
+  "cli.state.sourceNotFound": ({ sourceId }: { sourceId: string }): string =>
+    `state prune: ソース '${sourceId}' の state が見つかりません (state/${sourceId}.yaml)`,
+  "cli.state.pruneNoop": ({
+    sourceId,
+    count,
+    keep,
+  }: {
+    sourceId: string;
+    count: number;
+    keep: number;
+  }): string =>
+    `state prune: '${sourceId}' は既に ${count} 件 (--keep ${keep} 以下) のため切り詰め不要です`,
+  "cli.state.pruneDone": ({
+    sourceId,
+    before,
+    after,
+    dropped,
+  }: {
+    sourceId: string;
+    before: number;
+    after: number;
+    dropped: number;
+  }): string =>
+    `state prune: '${sourceId}' の lastSeenIds を ${before} -> ${after} に切り詰めました (${dropped} 件削除)`,
 };

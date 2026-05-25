@@ -18,7 +18,7 @@ import {
   probePlaywright,
 } from "./playwright-check.js";
 import type { ProgressReporter } from "./progress.js";
-import { loadSourceState, saveSourceState } from "./state.js";
+import { capSeenIds, loadSourceState, saveSourceState } from "./state.js";
 
 async function pathExists(p: string): Promise<boolean> {
   try {
@@ -567,12 +567,25 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
       }
     }
 
+    // Apply the per-source FIFO cap (#333) before persisting. `seenIds` is
+    // ordered oldest-first (previousState ids first, then any genuinely new
+    // fetched ids appended — re-adding an existing id does not reorder a Set),
+    // so `capSeenIds` keeps the newest N and drops the oldest. This is the sole
+    // persistence point for `lastSeenIds` (json-api's facet adapter never
+    // returns it), so trimming here bounds the firehose growth across every
+    // kind. When `maxSeenIds` is unset the list is returned unchanged.
+    //
+    // The trim also interacts correctly with the #326 no-op-commit guard
+    // below: dropping ids changes `lastSeenIds` (a functional field), so
+    // `stateChangedBeyondLastFetchedAt` returns true and the trimmed state is
+    // persisted — the very first capped run shrinks the on-disk file.
+    const cappedSeenIds = capSeenIds(Array.from(seenIds), source.maxSeenIds);
     const nextState: SourceState = {
       sourceId: source.id,
       lastFetchedAt: nextStatePatch.lastFetchedAt ?? previousState.lastFetchedAt,
       lastEtag: nextStatePatch.lastEtag ?? previousState.lastEtag,
       lastModified: nextStatePatch.lastModified ?? previousState.lastModified,
-      lastSeenIds: Array.from(seenIds),
+      lastSeenIds: cappedSeenIds,
     };
     // In dry-run mode we still surface the would-be state through
     // `result.states` so callers can introspect the projected delta, but we

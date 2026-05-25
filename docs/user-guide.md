@@ -780,6 +780,29 @@ facets:
 - **`lastSeenIds` は global**: facet 値を跨ぐ item ID の重複は想定しない (AWS What's New のように item.id が unique である API を前提とする)
 - **`source test` (dry-run)**: 単一の facet 値のみ fetch して終了 (selector adoption preview を保ちつつコスト膨張を防ぐ)。range facet は**上端 (最新年)** を test 対象とする ([#256](https://github.com/ozzy-labs/feedradar/issues/256))。これにより recency 系 recipe (例: `aws-whats-new` の year sweep) で、過去年ではなく最新コンテンツに対してキーワード検証ができる (`current-year` sentinel も解決される)。enum facet は「最新」概念が無いため先頭値を test する。どの値を test したかは警告として表示される: `facet sweep 有効: year=2026 のみ test 中（全 N 件の facet 値は walk しない）`。全 facet 値の確認は `radar watch run --backfill` を使う
 
+##### `lastSeenIds` の肥大化対策（#333）
+
+facet 全 sweep は AWS What's New 全件（フィルタにヒットしない記事も含む）の id を `lastSeenIds` に記録するため、`state/<id>.yaml` が単調増加する（実測で 20,958 件 / 1.1MB）。state は git 管理 + 定期実行のたびに fresh clone で運ばれる前提なので、サイズ増加は毎回の clone / diff / commit コストに直結する。これを抑えるための 2 つの仕組み:
+
+- **自動 FIFO 上限（`maxSeenIds`）**: source の YAML に `maxSeenIds: <N>` を設定すると、`watch run` のたびに `lastSeenIds` を新しい順に N 件へ切り詰める（古い id から FIFO で落とす）。facet sweep は publishedAt 降順取得なので、十分古い id が再出現することは稀＝FIFO で安全なケースが多い。未設定なら従来どおり無制限（既存の source YAML はそのまま動く）。
+
+  ```yaml
+  # sources/aws-whats-new.yaml
+  id: aws-whats-new
+  kind: json-api
+  maxSeenIds: 5000   # lastSeenIds を最新 5000 件に保つ
+  # ...
+  ```
+
+- **手動 prune（`radar state prune`）**: 既に肥大化した state を縮小する。`maxSeenIds` を後から追加しても既蓄積分は減らないため、初回だけ手動で切り詰める用途。
+
+  ```bash
+  radar state prune aws-whats-new --keep 5000
+  # → state prune: 'aws-whats-new' trimmed lastSeenIds 20958 -> 5000 (15958 dropped)
+  ```
+
+  `--older-than <dur>` は未対応（`lastSeenIds` は id ごとの時刻を持たないため。圧縮表現を含む案は別 ADR で検討）。
+
 ##### Phase 1 の制限
 
 - **単一 facet のみ**: schema は record shape (`Record<string, Facet>`) を受け付けるが、adapter は `length > 1` で runtime error を出す。multi-facet (year × category 等) の composition rules は future ADR で扱う
@@ -1112,6 +1135,19 @@ export RADAR_FETCH_HOST_ALLOWLIST=127.0.0.1,192.168.1.5,localhost
 - IPv6 は `[::1]` でも `::1` でもよい (角括弧は内部で剥がす)
 - `RADAR_FETCH_HOST_ALLOWLIST` を恒久的に設定すると SSRF 防御が無効になる host が増えるため、**testing scope 限定** で使うこと。production / 公開 source 運用では未設定が既定
 - DNS rebinding (公開 DNS が `127.0.0.1` を返す攻撃) は防げない (URL hostname literal のみ check)
+
+### `radar state prune <source> --keep <N>`
+
+`state/<source>.yaml` の `lastSeenIds` を新しい順に N 件だけ残して切り詰める（FIFO・古いものから削除）。facet 全 sweep などで肥大化した state ファイルを手動で縮小する用途。
+
+```bash
+radar state prune aws-whats-new --keep 5000
+# → state prune: 'aws-whats-new' trimmed lastSeenIds 20958 -> 5000 (15958 dropped)
+```
+
+- `--older-than <dur>` は未対応（`lastSeenIds` は id ごとの時刻を持たないため）
+- 今後の増分を恒常的に抑えるには source YAML に `maxSeenIds: <N>` を設定して `watch run` 時の自動 FIFO 上限を有効化する
+- 詳細・背景は [facet sweep の `lastSeenIds` 肥大化対策](#lastseenids-の肥大化対策333) を参照
 
 ### `radar research <item-id> [--agent <agent-id>] [--template <id>]`
 
