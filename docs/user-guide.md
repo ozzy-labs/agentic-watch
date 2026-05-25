@@ -3011,12 +3011,43 @@ routine には設定を宣言的に流し込む公開 API が無い（GET も無
    - **`/schedule`（CLI / 対話）**: Claude Code の `/schedule` から schedule トリガーを管理できる
    - **`/fire`（外部から手動起動）**: 登録済み routine を API で「今すぐ 1 回」起動する。`radar routine fire <trig_id>` ヘルパが使える（token は環境変数からのみ読む）。詳細は「[routine を外部から起動する（`/fire`）](#routine-を外部から起動するfire)」を参照
 
+### Claude Code で登録を自動化する（`/routine-setup` skill）
+
+上の「適用手順」の 2〜3（Web UI の各欄への手貼り＋`routine_id` 書き戻し）は、毎回ほぼ同じだが取り違えやすい手作業になる。**Claude Code を使っているなら `/routine-setup` skill でこの登録／再登録を自動化できる**（[ADR-0020 §register 経路](adr/0020-claude-routines-generation.md)・[ADR-0007 Revision (e)](adr/0007-skill-bundling-and-init-distribution.md)）。
+
+> **Claude Code 専用**: `/routine-setup` は claude.ai の `RemoteTrigger` API（`/v1/code/triggers`）を呼ぶが、これは **Claude Code セッション内でのみ**利用できる（OAuth トークンが harness によって in-process で注入される）。`radar` CLI の機能ではないため、Codex / Gemini / Copilot からは使えない（Claude Routines が Claude 製品である以上の制約）。skill は `radar init --with-routines` で `.claude/skills/routine-setup/SKILL.md` として配布される。
+
+**使い方**: 正本 YAML を生成・コミットしたあと、Claude Code で次を実行する:
+
+```text
+/routine-setup .claude/routines/feedradar-pipeline.yaml
+```
+
+skill は正本 YAML を単一ソースとして、上の手順 2〜3 に相当する作業を 1 コマンドにまとめる:
+
+1. YAML から `name` / `model` / `repo` / `cron`＋`timezone` / `routine_id` / `status` / auto-merge 可否を抽出し、`sources/*.yaml` から feed ホスト（network allowlist 用）を収集する
+2. **bootstrap プロンプト本文**を `radar routine generate <type> --prompt-mode bootstrap --emit-bootstrap-prompt` で生成器から取得して API body に使う（skill 内で手組みしないため、Web UI 貼付登録とプロンプトが drift しない）
+3. cron を **UTC へ変換**してユーザーに確認する（API の `cron_expression` は UTC、YAML は `timezone` 基準。例: 6:00 Asia/Tokyo = 21:00 UTC → `0 21 * * *`）
+4. environment を選び、`routine_id` が空なら `create`（`enabled: false`）／既存なら `update`（冪等な再適用）
+5. 発行された `routine_id` と `status: active` を YAML に書き戻す PR を作る
+
+**残る人手 = Web UI 専用の 2 点**（skill でも自動化できない一線。[ADR-0020 §register 経路でも消せない一線](adr/0020-claude-routines-generation.md)）:
+
+- **`Allow unrestricted branch pushes` トグル ON**: `--output-mode auto-merge` の routine を有効化する場合のみ必要。RemoteTrigger API は `allow_unrestricted_git_push` body フィールドを受け付けない（HTTP 400）ため、Web UI で 1 回トグルを ON にする人手が残る。PR 出力（既定）の routine では不要
+- **routine の削除**: RemoteTrigger 経由の delete 経路は提供しない。削除は Web UI 専用
+
+**cost cap との関係**: routine の blast radius（1 回の run で触る item 数）は正本 YAML の `instructions:` に焼き込まれた **`--max-items`** で縛られる。`/routine-setup` はこの cost cap を含む YAML を**そのまま**登録するだけで、上限を勝手に引き上げることはない。大きく回したい場合は `radar routine generate ... --max-items <N>` で正本を作り直してから再登録する。
+
+**bootstrap prompt mode との関係**: `--prompt-mode bootstrap`（前述「[再貼り付け不要](#--prompt-mode-bootstrap再貼り付け不要)」）で生成した routine は、登録される本文が短い bootstrap プロンプトになり、**実行時に正本 YAML の `instructions:` を読む**。そのため `instructions:` を更新しても再登録は不要で、リポへのコミットだけで実行内容が追随する。`/routine-setup` はこの bootstrap プロンプトを生成器から取得して登録するので、skill で登録した routine と Web UI に貼り付けた routine が同一プロンプトになる。
+
 ### routine workflow のトラブルシュート
 
 | 症状 | 原因 / 対処 |
 |---|---|
 | `Error: cron expression invalid` / sub-hourly が拒否される | routine の最小実行間隔は 1 時間。`*/5 * * * *` のような分単位 cron は生成時に拒否される。`"0 * * * *"`（毎時）以上の粒度で指定する |
-| 生成 YAML を Web UI に貼ったが反映されない | `.claude/routines/*.yaml` は **自動同期されない**（正本はリポ、適用は手作業）。Web UI の各欄に手で貼り直す。複数行は `yq -r '.<field>'` で抽出する |
+| 生成 YAML を Web UI に貼ったが反映されない | `.claude/routines/*.yaml` は **自動同期されない**（正本はリポ、適用は手作業）。Web UI の各欄に手で貼り直す。複数行は `yq -r '.<field>'` で抽出する。Claude Code を使っているなら手貼りの代わりに `/routine-setup` で登録を自動化できる（前述「[Claude Code で登録を自動化する](#claude-code-で登録を自動化するroutine-setup-skill)」） |
+| `/routine-setup` を実行したい / 見当たらない | Claude Code 専用 skill（`RemoteTrigger` API は Claude Code セッション内でのみ呼べる）。`.claude/skills/routine-setup/SKILL.md` が無い場合は `radar init --with-routines` で配布される。Codex / Gemini / Copilot からは使えない |
+| `/routine-setup` 登録後も auto-merge routine が main に着地しない | skill では `Allow unrestricted branch pushes` トグルを ON にできない（Web UI 専用・API は 400）。Web UI で 1 回トグルを ON にする（下行と同じ。PR 出力 routine では不要） |
 | routine が main に直接 push しようとして失敗 / 期待と違う | 仕様。既定の出力ゲートで `claude/*` ブランチか PR に限定されている。main 反映は人間が PR をレビュー・マージする。無人で main に着地させたい場合は `radar routine generate pipeline --output-mode auto-merge` で opt-in する（自 PR を squash-merge。前述「[共通オプション](#共通オプション)」の `--output-mode`） |
 | `--output-mode auto-merge` の routine が main に着地しない / push が拒否される | `permissions.allow_unrestricted_git_push: true` だけでは不十分。Web UI の「Allow unrestricted branch pushes」トグルも ON にする（RemoteTrigger API は当該フィールドを受け付けないため、YAML だけでは有効化できない）。生成時の stderr 警告も参照 |
 | 2 つの routine（または routine ＋ GHA）が同じ branch で commit を競合 | 同一 workspace への二重起動。前述「[並行実行の運用注意](#並行実行の運用注意)」のとおり 1 workspace = 1 系統に絞るか、cron 時刻をずらす |
