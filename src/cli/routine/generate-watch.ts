@@ -66,9 +66,21 @@ export type PromptMode = (typeof PROMPT_MODES)[number];
  *
  * `name` is the routine name and `path` is the rendered routine's relative
  * path; both are interpolated into the prompt body. Returns the lines joined by
- * `\n` (no trailing newline) so callers can either log each line or print the
- * block verbatim.
+ * `\n` (no trailing newline), **left-aligned with zero leading indent** (#377):
+ * this body is machine-consumed verbatim by `--emit-bootstrap-prompt` (it
+ * becomes the routine's `message.content`), so it must carry no leading
+ * whitespace. The Web UI paste view (`printPromptModePaste`) re-adds a display
+ * indent on top of this canonical text for human readability under the numbered
+ * steps.
  */
+/**
+ * Display-only indent the Web UI paste view prepends to each canonical bootstrap
+ * prompt line so the block reads cleanly under the numbered step header (#377).
+ * The 7-space width matches the surrounding `pasteStep3Bootstrap` numbering.
+ * The machine-consumed `--emit-bootstrap-prompt` surface does NOT apply this.
+ */
+export const BOOTSTRAP_PASTE_INDENT = "       ";
+
 export function buildBootstrapPrompt(
   values: { name: string; path: string },
   t: Translator,
@@ -94,8 +106,11 @@ export function buildBootstrapPrompt(
  * has to be pasted into its own Web UI field).
  *
  * The bootstrap prompt body is built by `buildBootstrapPrompt` (the single
- * source of truth), guaranteeing the pasted text matches
- * `--emit-bootstrap-prompt` byte-for-byte.
+ * source of truth). The paste view indents each body line by
+ * {@link BOOTSTRAP_PASTE_INDENT} so it reads cleanly under the numbered step
+ * header; the canonical body itself stays left-aligned for the machine-consumed
+ * `--emit-bootstrap-prompt` surface (#377). So the paste block equals the
+ * emitted body **after stripping that display indent** (no longer byte-for-byte).
  *
  * `path` is the rendered routine's relative path; `name` is the routine name
  * (interpolated into the bootstrap prompt body).
@@ -109,10 +124,12 @@ export function printPromptModePaste(
   if (promptMode === "bootstrap") {
     log(t("cli.routine.pasteStep3Bootstrap"));
     log("");
-    // The bootstrap prompt body is the single-sourced block; log it verbatim so
-    // it matches `--emit-bootstrap-prompt` line-for-line.
+    // The bootstrap prompt body is the single-sourced, left-aligned block.
+    // Indent each line by BOOTSTRAP_PASTE_INDENT for the Web UI paste view so it
+    // reads cleanly under the numbered step header (#377). The canonical body
+    // stays left-aligned for the machine-consumed `--emit-bootstrap-prompt`.
     for (const line of buildBootstrapPrompt(values, t).split("\n")) {
-      log(line);
+      log(`${BOOTSTRAP_PASTE_INDENT}${line}`);
     }
     log("");
     log(t("cli.routine.pasteStep3BootstrapSetup"));
@@ -660,8 +677,10 @@ export async function runGenerateWatchRoutine(
 
   // --emit-bootstrap-prompt (#365): print ONLY the bootstrap prompt body
   // (read-only — no YAML written, no paste guidance) so the `routine-setup`
-  // Claude skill can fetch the exact same prompt the generator would paste,
+  // Claude skill can register it verbatim as the routine's `message.content`,
   // sourced from the single `buildBootstrapPrompt` helper (epic #363 G3). The
+  // body is left-aligned with zero leading indent for that machine consumption
+  // (#377); the Web UI paste view re-adds a display indent separately. The
   // `path` matches the generator's `destRel`: a relative `--output` is used
   // verbatim, an absolute one is rebased onto `cwd`.
   if (parsed.emitBootstrapPrompt) {
