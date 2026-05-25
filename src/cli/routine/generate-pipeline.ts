@@ -9,6 +9,9 @@ import {
   isSafeRoutinePath,
   isSubHourlyCron,
   isValidCron,
+  PROMPT_MODES,
+  type PromptMode,
+  printPromptModePaste,
   type RoutineIO,
   renderNetworkAccessBlock,
   SUPPORTED_MODELS,
@@ -299,6 +302,12 @@ export interface GeneratePipelineRoutineOptions {
   maxItems: number;
   /** Landing mode for the step-8 commit (#301). Defaults to `pr`. */
   outputMode: OutputMode;
+  /**
+   * What to paste into the Web UI Prompt field (#327). Defaults to `inline`
+   * (full instructions). Does NOT change the generated YAML — only the
+   * completion stdout's paste guidance.
+   */
+  promptMode?: PromptMode;
   output: string;
   force: boolean;
   /**
@@ -332,11 +341,17 @@ export async function generatePipelineRoutine(
 ): Promise<GeneratePipelineRoutineResult> {
   const { cwd, name, repository, cron, timezone, model, maxItems, outputMode, output, force } =
     options;
+  const promptMode: PromptMode = options.promptMode ?? "inline";
   const locale: Locale = options.locale ?? "en";
   const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
+  if (!(PROMPT_MODES as readonly string[]).includes(promptMode)) {
+    throw new Error(
+      `invalid --prompt-mode '${promptMode}' (expected one of: ${PROMPT_MODES.join(" | ")})`,
+    );
+  }
   if (!(OUTPUT_MODES as readonly string[]).includes(outputMode)) {
     throw new Error(
       `invalid --output-mode '${outputMode}' (expected one of: ${OUTPUT_MODES.join(" | ")})`,
@@ -418,9 +433,7 @@ export async function generatePipelineRoutine(
   log(t("cli.routine.pasteNoApi"));
   log(t("cli.routine.pasteStep1"));
   log(t("cli.routine.pasteStep2"));
-  log(t("cli.routine.pasteStep3"));
-  log(t("cli.routine.pasteYqInstructions", { path: destRel }));
-  log(t("cli.routine.pasteYqSetupScript", { path: destRel }));
+  printPromptModePaste(promptMode, { path: destRel, name }, t, log);
   log(t("cli.routine.pasteStep4"));
   log("");
   log(t("cli.routine.scheduleNote1"));
@@ -451,6 +464,7 @@ interface ParsedFlags {
   model: SupportedModel;
   maxItems: number;
   outputMode: OutputMode;
+  promptMode: PromptMode;
   output: string;
   force: boolean;
   help: boolean;
@@ -470,6 +484,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
   let model: SupportedModel = "claude-sonnet-4-6";
   let maxItems = PIPELINE_DEFAULT_MAX_ITEMS;
   let outputMode: OutputMode = "pr";
+  let promptMode: PromptMode = "inline";
   let output: string | undefined;
   let force = false;
   let help = false;
@@ -536,6 +551,17 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
       outputMode = value as OutputMode;
       continue;
     }
+    if (a === "--prompt-mode") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(PROMPT_MODES as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --prompt-mode expects one of: ${PROMPT_MODES.join(" | ")}, got '${value}'`,
+        );
+      }
+      promptMode = value as PromptMode;
+      continue;
+    }
     if (a === "--output") {
       const value = args[++i];
       if (value === undefined) throw new Error(`option ${a} requires a value`);
@@ -560,6 +586,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
     model,
     maxItems,
     outputMode,
+    promptMode,
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
     help,
@@ -632,6 +659,7 @@ export async function runGeneratePipelineRoutine(
       model: parsed.model,
       maxItems: parsed.maxItems,
       outputMode: parsed.outputMode,
+      promptMode: parsed.promptMode,
       output: parsed.output,
       force: parsed.force,
       locale,

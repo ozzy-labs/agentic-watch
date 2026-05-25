@@ -8,6 +8,7 @@ import {
   isSafeRoutinePath,
   isSubHourlyCron,
   isValidCron,
+  PROMPT_MODES,
   parseGenerateWatchRoutineArgs,
   renderNetworkAccessBlock,
   renderWatchRoutineTemplate,
@@ -190,6 +191,7 @@ describe("cli/routine/generate-watch", () => {
       expect(parsed.cron).toBe("0 * * * *");
       expect(parsed.timezone).toBe("UTC");
       expect(parsed.model).toBe("claude-sonnet-4-6");
+      expect(parsed.promptMode).toBe("inline");
       expect(parsed.output).toBe(join(".claude", "routines", "feedradar-watch.yaml"));
       expect(parsed.force).toBe(false);
     });
@@ -231,6 +233,23 @@ describe("cli/routine/generate-watch", () => {
     it("every SUPPORTED_MODELS value parses", () => {
       for (const m of SUPPORTED_MODELS) {
         expect(parseGenerateWatchRoutineArgs(["--model", m]).model).toBe(m as SupportedModel);
+      }
+    });
+
+    it("accepts --prompt-mode bootstrap and rejects an unknown mode (#327)", () => {
+      expect(parseGenerateWatchRoutineArgs(["--prompt-mode", "bootstrap"]).promptMode).toBe(
+        "bootstrap",
+      );
+      expect(parseGenerateWatchRoutineArgs(["--prompt-mode", "inline"]).promptMode).toBe("inline");
+      expect(() => parseGenerateWatchRoutineArgs(["--prompt-mode", "external"])).toThrow(
+        /--prompt-mode expects one of: inline \| bootstrap/,
+      );
+      expect(() => parseGenerateWatchRoutineArgs(["--prompt-mode"])).toThrow(/requires a value/);
+    });
+
+    it("every PROMPT_MODES value parses (#327)", () => {
+      for (const m of PROMPT_MODES) {
+        expect(parseGenerateWatchRoutineArgs(["--prompt-mode", m]).promptMode).toBe(m);
       }
     });
   });
@@ -373,6 +392,54 @@ describe("cli/routine/generate-watch", () => {
       expect(joined).toContain("`/schedule <description>`");
       expect(joined).toContain("Allow unrestricted branch");
     });
+
+    it("inline prompt-mode (default) tells the user to yq the full instructions (#327)", async () => {
+      await run({ promptMode: "inline" });
+      const joined = logs.join("\n");
+      // Inline: extract the whole instructions block into the Web UI Prompt.
+      expect(joined).toContain("yq -r '.instructions'");
+      expect(joined).toContain("yq -r '.environment.setup_script'");
+      // No bootstrap prompt body.
+      expect(joined).not.toContain("You are the `feedradar-watch` routine.");
+      expect(joined).not.toMatch(/no Web UI re-paste/);
+    });
+
+    it("bootstrap prompt-mode prints a SHORT prompt, not the full instructions (#327)", async () => {
+      await run({ promptMode: "bootstrap" });
+      const joined = logs.join("\n");
+      // Bootstrap: a short prompt to paste; routine reads the committed YAML.
+      expect(joined).toContain("You are the `feedradar-watch` routine.");
+      expect(joined).toContain("Read `.claude/routines/feedradar-watch.yaml`");
+      expect(joined).toContain("`instructions:` block");
+      expect(joined).toContain("AskUserQuestion is NOT available");
+      expect(joined).toContain("no Web UI re-paste");
+      // The Setup script field still needs its own yq extraction.
+      expect(joined).toContain("yq -r '.environment.setup_script'");
+      // But the Instructions field is NOT the full-instructions yq line.
+      expect(joined).not.toContain("yq -r '.instructions'");
+    });
+
+    it("bootstrap mode leaves the generated YAML instructions block intact (#327)", async () => {
+      // The runtime source of truth must stay in the file in BOTH modes — only
+      // the Web UI paste guidance differs.
+      await run({ promptMode: "bootstrap" });
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-watch.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("instructions:");
+      expect(written).toContain("radar watch run");
+      expect(written).toContain("claude/watch/");
+      // The bootstrap prose is a stdout-only artifact; it must NOT be injected
+      // into the YAML file.
+      expect(written).not.toContain("no Web UI re-paste");
+    });
+
+    it("rejects an invalid promptMode at the core level (#327)", async () => {
+      await expect(run({ promptMode: "external" as unknown as "inline" })).rejects.toThrow(
+        /invalid --prompt-mode/,
+      );
+    });
   });
 
   describe("runRoutine (dispatcher)", () => {
@@ -436,7 +503,36 @@ describe("cli/routine/generate-watch", () => {
     it("supports `generate watch --help` (exit 0)", async () => {
       const code = await runRoutine(["generate", "watch", "--help"], { cwd: workdir, io: io() });
       expect(code).toBe(0);
-      expect(logs.join("\n")).toContain("routine generate watch");
+      const joined = logs.join("\n");
+      expect(joined).toContain("routine generate watch");
+      // #327: the new --prompt-mode option is documented in help.
+      expect(joined).toContain("--prompt-mode <mode>");
+      expect(joined).toContain("inline | bootstrap");
+    });
+
+    it("dispatches `generate watch --prompt-mode bootstrap` end-to-end (#327)", async () => {
+      const code = await runRoutine(
+        ["generate", "watch", "--repo", "acme/widgets", "--prompt-mode", "bootstrap"],
+        { cwd: workdir, io: io() },
+      );
+      expect(code, `stderr: ${errors.join("\n")}`).toBe(0);
+      const joined = logs.join("\n");
+      expect(joined).toContain("You are the `feedradar-watch` routine.");
+      // The YAML still carries the full instructions block.
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-watch.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("radar watch run");
+    });
+
+    it("surfaces an unknown --prompt-mode through the dispatcher (exit 2) (#327)", async () => {
+      const code = await runRoutine(["generate", "watch", "--prompt-mode", "external"], {
+        cwd: workdir,
+        io: io(),
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("--prompt-mode expects one of: inline | bootstrap");
     });
   });
 });

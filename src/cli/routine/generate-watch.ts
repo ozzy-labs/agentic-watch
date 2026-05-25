@@ -32,6 +32,66 @@ export const SUPPORTED_MODELS = [
 export type SupportedModel = (typeof SUPPORTED_MODELS)[number];
 
 /**
+ * What the generator tells the user to paste into the Web UI **Prompt /
+ * Instructions** field (#327). This does NOT change the generated YAML — the
+ * `instructions:` block always stays in the file as the runtime source of
+ * truth (ADR-0020). It only switches the completion stdout's paste guidance:
+ *
+ * - `inline` (default): the current behavior — paste the full multi-line
+ *   `instructions:` block, extracted with `yq -r '.instructions'`. The Web UI
+ *   Prompt is self-contained (ADR-0020 "prompt is self-contained"), at the
+ *   cost of re-pasting whenever `instructions:` changes.
+ * - `bootstrap` (opt-in): paste a SHORT bootstrap prompt that tells the routine
+ *   to read `.claude/routines/<name>.yaml` and follow its top-level
+ *   `instructions:` block at run time. Instructions then track repo commits
+ *   with NO Web UI re-paste, trading away some self-contained-ness.
+ *
+ * The default is `inline` so existing behavior is unchanged; `bootstrap` is
+ * strictly opt-in (Issue #327).
+ */
+export const PROMPT_MODES = ["inline", "bootstrap"] as const;
+export type PromptMode = (typeof PROMPT_MODES)[number];
+
+/**
+ * Print the Web UI **Prompt / Instructions** paste guidance for the chosen
+ * `promptMode` (#327). Shared by the `watch` and `pipeline` generators so the
+ * two stay in lockstep.
+ *
+ * In `inline` mode this is the current "extract the full instructions with yq"
+ * guidance. In `bootstrap` mode it prints a short bootstrap prompt (the exact
+ * text to paste) that instructs the routine to read the committed YAML and
+ * follow its `instructions:` block at run time. In BOTH modes the
+ * Setup-script `yq` extraction line is still printed (the setup script always
+ * has to be pasted into its own Web UI field).
+ *
+ * `path` is the rendered routine's relative path; `name` is the routine name
+ * (interpolated into the bootstrap prompt body).
+ */
+export function printPromptModePaste(
+  promptMode: PromptMode,
+  values: { path: string; name: string },
+  t: Translator,
+  log: (m: string) => void,
+): void {
+  if (promptMode === "bootstrap") {
+    log(t("cli.routine.pasteStep3Bootstrap"));
+    log("");
+    log(t("cli.routine.bootstrapPromptLine1", { name: values.name }));
+    log(t("cli.routine.bootstrapPromptLine2", { path: values.path }));
+    log(t("cli.routine.bootstrapPromptLine3"));
+    log(t("cli.routine.bootstrapPromptLine4"));
+    log("");
+    log(t("cli.routine.pasteStep3BootstrapSetup"));
+    log(t("cli.routine.pasteYqSetupScript", { path: values.path }));
+    log(t("cli.routine.bootstrapReuseNote"));
+    return;
+  }
+  log(t("cli.routine.pasteStep3"));
+  log(t("cli.routine.pasteYqInstructions", { path: values.path }));
+  log(t("cli.routine.pasteYqSetupScript", { path: values.path }));
+}
+
+/**
  * Collect the distinct outbound hosts a routine must reach to fetch the
  * workspace's subscribed feeds.
  *
@@ -267,6 +327,12 @@ export interface GenerateWatchRoutineOptions {
   output: string;
   force: boolean;
   /**
+   * What to paste into the Web UI Prompt field (#327). Defaults to `inline`
+   * (full instructions). Does NOT change the generated YAML — only the
+   * completion stdout's paste guidance.
+   */
+  promptMode?: PromptMode;
+  /**
    * UI locale selecting the per-locale template subtree
    * (`<templatesRoot>/<locale>/routines/`). Defaults to `en` (#315). Only the
    * `notes:` / `instructions:` prose and comments differ; the cron / model /
@@ -297,11 +363,17 @@ export async function generateWatchRoutine(
   options: GenerateWatchRoutineOptions,
 ): Promise<GenerateWatchRoutineResult> {
   const { cwd, name, repository, cron, timezone, model, output, force } = options;
+  const promptMode: PromptMode = options.promptMode ?? "inline";
   const locale: Locale = options.locale ?? "en";
   const t = createTranslator(locale);
   const log = options.io?.log ?? ((m: string) => console.log(m));
   const warn = options.io?.warn ?? ((m: string) => console.warn(m));
 
+  if (!(PROMPT_MODES as readonly string[]).includes(promptMode)) {
+    throw new Error(
+      `invalid --prompt-mode '${promptMode}' (expected one of: ${PROMPT_MODES.join(" | ")})`,
+    );
+  }
   if (!isValidCron(cron)) {
     throw new Error(
       `invalid --cron expression '${cron}' (expected 5-field POSIX cron, e.g. "0 * * * *")`,
@@ -358,9 +430,7 @@ export async function generateWatchRoutine(
   log(t("cli.routine.pasteNoApi"));
   log(t("cli.routine.pasteStep1"));
   log(t("cli.routine.pasteStep2"));
-  log(t("cli.routine.pasteStep3"));
-  log(t("cli.routine.pasteYqInstructions", { path: destRel }));
-  log(t("cli.routine.pasteYqSetupScript", { path: destRel }));
+  printPromptModePaste(promptMode, { path: destRel, name }, t, log);
   log(t("cli.routine.pasteStep4"));
   log("");
   log(t("cli.routine.scheduleNote1"));
@@ -382,6 +452,7 @@ interface ParsedFlags {
   cron: string;
   timezone: string;
   model: SupportedModel;
+  promptMode: PromptMode;
   output: string;
   force: boolean;
   help: boolean;
@@ -399,6 +470,7 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
   let cron = "0 * * * *"; // hourly — the Routines minimum interval.
   let timezone = "UTC";
   let model: SupportedModel = "claude-sonnet-4-6";
+  let promptMode: PromptMode = "inline";
   let output: string | undefined;
   let force = false;
   let help = false;
@@ -444,6 +516,17 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
       model = value as SupportedModel;
       continue;
     }
+    if (a === "--prompt-mode") {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`option ${a} requires a value`);
+      if (!(PROMPT_MODES as readonly string[]).includes(value)) {
+        throw new Error(
+          `option --prompt-mode expects one of: ${PROMPT_MODES.join(" | ")}, got '${value}'`,
+        );
+      }
+      promptMode = value as PromptMode;
+      continue;
+    }
     if (a === "--output") {
       const value = args[++i];
       if (value === undefined) throw new Error(`option ${a} requires a value`);
@@ -466,6 +549,7 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
     cron,
     timezone,
     model,
+    promptMode,
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
     help,
@@ -531,6 +615,7 @@ export async function runGenerateWatchRoutine(
       cron: parsed.cron,
       timezone: parsed.timezone,
       model: parsed.model,
+      promptMode: parsed.promptMode,
       output: parsed.output,
       force: parsed.force,
       locale,

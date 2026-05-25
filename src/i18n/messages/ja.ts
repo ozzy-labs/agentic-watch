@@ -623,6 +623,11 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   --timezone <tz>       スケジュールのタイムゾーン (デフォルト: "UTC")
   --model <name>        ${models}
                         (デフォルト: claude-sonnet-4-6)
+  --prompt-mode <mode>  inline | bootstrap (デフォルト: inline)。'bootstrap' は完了時に
+                        Web UI へ貼る短いプロンプトを出力する (ルーティンは実行時に
+                        コミット済み YAML から instructions を読むため、編集ごとの
+                        再貼り付けが不要)。どちらのモードでも生成 YAML の
+                        instructions ブロックは変わらない。
   --output <path>       .claude/routines/ 配下の出力ファイル
                         (デフォルト: .claude/routines/<name>.yaml)
   --force, -f           既存の出力ファイルを上書きする
@@ -656,6 +661,11 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   --output-mode <mode>  pr | auto-merge (デフォルト: pr)。'auto-merge' はルーティン自身の
                         PR を main へ squash マージする (Web UI の 'Allow unrestricted
                         branch pushes' トグルが必要)。
+  --prompt-mode <mode>  inline | bootstrap (デフォルト: inline)。'bootstrap' は完了時に
+                        Web UI へ貼る短いプロンプトを出力する (ルーティンは実行時に
+                        コミット済み YAML から instructions を読むため、編集ごとの
+                        再貼り付けが不要)。どちらのモードでも生成 YAML の
+                        instructions ブロックは変わらない。
   --output <path>       .claude/routines/ 配下の出力ファイル
                         (デフォルト: .claude/routines/<name>.yaml)
   --force, -f           既存の出力ファイルを上書きする
@@ -1377,6 +1387,21 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     `       yq -r '.instructions'             ${path}`,
   "cli.routine.pasteYqSetupScript": ({ path }: { path: string }): string =>
     `       yq -r '.environment.setup_script' ${path}`,
+  // --prompt-mode bootstrap (#327)
+  "cli.routine.pasteStep3Bootstrap":
+    "  3. Instructions 欄には、この短い bootstrap プロンプトを貼り付けます (prompt-mode bootstrap):",
+  "cli.routine.bootstrapPromptLine1": ({ name }: { name: string }): string =>
+    `       You are the \`${name}\` routine.`,
+  "cli.routine.bootstrapPromptLine2": ({ path }: { path: string }): string =>
+    `       Read \`${path}\` in this repository and faithfully execute its top-level`,
+  "cli.routine.bootstrapPromptLine3":
+    "       `instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
+  "cli.routine.bootstrapPromptLine4":
+    "       and local MCP servers are NOT available in this environment.",
+  "cli.routine.pasteStep3BootstrapSetup":
+    "     複数行の Setup script フィールドは yq で抽出します:",
+  "cli.routine.bootstrapReuseNote":
+    "     (bootstrap プロンプト: 以降の instructions 変更はリポへのコミットで反映され、Web UI への再貼り付けは不要です。)",
   "cli.routine.pasteStep4":
     "  4. 登録後、発行された routine_id (trig_xxxx) を YAML に書き戻し、status: active を設定します。",
   "cli.routine.scheduleNote1":
