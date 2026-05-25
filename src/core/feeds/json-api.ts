@@ -337,7 +337,7 @@ function elementToItem(
   const summary = coerceString(summaryResolved.value);
   const body = selectors.body ? coerceString(selectOne(selectors.body, element)) : undefined;
   // `selectors.tags` is recognized by the schema but currently silently passed
-  // through into `raw` only. The filter pipeline (`buildHaystack`) does not
+  // through into `raw` only. The filter pipeline (`evaluateFilter`) does not
   // structurally read `Item.tags` for any adapter, so surfacing tags
   // structurally here would not improve filtering. Keep them inside `raw`
   // (already attached below) until a future filter extension consumes them.

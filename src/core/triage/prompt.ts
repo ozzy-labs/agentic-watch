@@ -65,9 +65,17 @@ function escapeAttribute(value: string): string {
 /**
  * Render a single item's untrusted half (title + summary + raw) wrapped in
  * the per-item `<untrusted_item>` boundary. Trusted metadata (id / sourceId /
- * matchedKeywords) is exposed as attributes on the opening tag — outside the
- * boundary — so the agent can use those values as routing hints (e.g. for
- * the `id` field of the returned JSON) without crossing the trust boundary.
+ * matchedKeywords / matchedFields) is exposed as attributes on the opening
+ * tag — outside the boundary — so the agent can use those values as routing
+ * hints (e.g. for the `id` field of the returned JSON) without crossing the
+ * trust boundary.
+ *
+ * `matched_fields` (#332) tells the agent *where* the keyword hit landed. When
+ * it contains only `summary` (and not `title`), the item is a body-mention
+ * candidate — a frequent false-positive class (an article that merely
+ * references another service's keyword in its summary). The agent is
+ * instructed to weigh a summary-only hit lower than a title hit so these get
+ * caught at triage instead of leaking into research.
  *
  * Optional fields (`summary`, `raw`) are omitted from the block rather than
  * rendered as `(none)` so the prompt stays compact and a missing summary is
@@ -77,6 +85,7 @@ function renderItemBlock(item: Item): string {
   const idAttr = escapeAttribute(item.id);
   const sourceAttr = escapeAttribute(item.sourceId);
   const keywordsAttr = escapeAttribute(item.matchedKeywords.join(","));
+  const fieldsAttr = escapeAttribute(item.matchedFields.join(","));
 
   const untrustedLines: string[] = [`title: ${item.title}`];
   if (item.summary !== undefined) {
@@ -87,7 +96,7 @@ function renderItemBlock(item: Item): string {
   }
 
   return [
-    `<untrusted_item id="${idAttr}" source="${sourceAttr}" matched_keywords="${keywordsAttr}">`,
+    `<untrusted_item id="${idAttr}" source="${sourceAttr}" matched_keywords="${keywordsAttr}" matched_fields="${fieldsAttr}">`,
     untrustedLines.join("\n"),
     "</untrusted_item>",
   ].join("\n");
@@ -164,6 +173,11 @@ export function buildTriagePrompt({ items, policy }: BuildTriagePromptOptions): 
     "    invent new ids, do not duplicate ids.",
     '  - Set "group" only when "decision" is "digest". Omit otherwise.',
     '  - Keep "reason" under 200 characters. It is shown to the operator as-is.',
+    "  - The matched_fields attribute lists which fields the keyword matched in.",
+    '    When it is only "summary" (the keyword does NOT appear in the title),',
+    "    the item likely only mentions the keyword in passing — weigh it lower",
+    "    and prefer dismiss / unsure unless the summary clearly makes it the",
+    "    main subject.",
     "</triage_request>",
   ].join("\n");
 }
