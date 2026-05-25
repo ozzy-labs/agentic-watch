@@ -2895,7 +2895,7 @@ radar routine generate <type> [options]
 | `<type>` | 用途 | spawn | 出力 |
 |---|---|---|---|
 | `watch` | `radar watch run` のみを定期実行（detection だけ） | しない | `claude/*` or PR（items/state 更新） |
-| `pipeline` | watch → triage → research → review を自セッションで順次（1 件ずつ・件数上限付き） | しない | `claude/*` or PR |
+| `pipeline` | watch → triage → research（`triaged_research` を 1 件ずつ + `triaged_digest` を group ごとに集約）→ review を自セッションで順次（件数上限付き）。`triaged_unsure` は dismiss せずキュー深度を報告 | しない | `claude/*` or PR |
 
 出力先は既定で `.claude/routines/<name>.yaml`（`--output` で上書き可）。既存ファイル保護 + `--force` 上書きは `workflow generate` / bundled skills と同じ挙動。生成された YAML は `status: draft` で出るので、Web UI に登録して `routine_id` を書き戻し `status: active` にする（適用手順は後述）。
 
@@ -2914,7 +2914,7 @@ radar routine generate <type> [options]
 `pipeline` のみ追加で次の 2 つを持つ:
 
 - `--max-items N`（既定 `10`）: triage の `--max-items` と items の `--limit` を一括で駆動する（前述「[件数上限](#件数上限暴走防止)」）。
-- `--output-mode pr | auto-merge`（既定 `pr`）: 着地モード。既定の `pr` は `claude/pipeline/...` ブランチ＋PR を開いて止まる（人間が review・merge する。安全既定）。**`auto-merge`** は同じ PR を開いた後に `gh pr merge --squash` で **自分の PR を main に squash-merge** する opt-in モード（GHA の [`--output-mode direct-commit`](#--output-mode-pr--direct-commit) と対称だが、`direct-commit` が PR を介さず main へ直 push するのに対し、こちらは必ず PR を経由するため名前を分ける）。pipeline は step 5 で `radar review` 済みなので review-complete な PR の前提を満たす。`auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは**必要だが不十分**で、Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けない）。無人 AI 出力が無レビューで default ブランチに着地する点に留意（[#301](https://github.com/ozzy-labs/feedradar/issues/301)）。
+- `--output-mode pr | auto-merge`（既定 `pr`）: 着地モード。既定の `pr` は `claude/pipeline/...` ブランチ＋PR を開いて止まる（人間が review・merge する。安全既定）。**`auto-merge`** は同じ PR を開いた後に `gh pr merge --squash` で **自分の PR を main に squash-merge** する opt-in モード（GHA の [`--output-mode direct-commit`](#--output-mode-pr--direct-commit) と対称だが、`direct-commit` が PR を介さず main へ直 push するのに対し、こちらは必ず PR を経由するため名前を分ける）。pipeline は step 6 で `radar review` 済みなので review-complete な PR の前提を満たす。`auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは**必要だが不十分**で、Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けない）。無人 AI 出力が無レビューで default ブランチに着地する点に留意（[#301](https://github.com/ozzy-labs/feedradar/issues/301)）。
 
 ```bash
 # watch routine を毎時で生成
