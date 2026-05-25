@@ -629,6 +629,11 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
                         コミット済み YAML から instructions を読むため、編集ごとの
                         再貼り付けが不要)。どちらのモードでも生成 YAML の
                         instructions ブロックは変わらない。
+  --emit-bootstrap-prompt
+                        bootstrap プロンプト本文のみを stdout に出力して終了する
+                        (read-only: YAML を書かず、貼り付け案内も出さない)。
+                        bootstrap prompt-mode が貼り付ける文面と同一で、
+                        /routine-setup skill が登録ボディの作成に使う。
   --output <path>       .claude/routines/ 配下の出力ファイル
                         (デフォルト: .claude/routines/<name>.yaml)
   --force, -f           既存の出力ファイルを上書きする
@@ -667,6 +672,11 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
                         コミット済み YAML から instructions を読むため、編集ごとの
                         再貼り付けが不要)。どちらのモードでも生成 YAML の
                         instructions ブロックは変わらない。
+  --emit-bootstrap-prompt
+                        bootstrap プロンプト本文のみを stdout に出力して終了する
+                        (read-only: YAML を書かず、貼り付け案内も出さない)。
+                        bootstrap prompt-mode が貼り付ける文面と同一で、
+                        /routine-setup skill が登録ボディの作成に使う。
   --output <path>       .claude/routines/ 配下の出力ファイル
                         (デフォルト: .claude/routines/<name>.yaml)
   --force, -f           既存の出力ファイルを上書きする

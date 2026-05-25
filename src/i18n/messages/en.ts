@@ -705,6 +705,11 @@ Options:
                         (the routine reads its instructions from the committed
                         YAML at run time — no re-paste on edits). The generated
                         YAML's instructions block is unchanged either way.
+  --emit-bootstrap-prompt
+                        Print ONLY the bootstrap prompt body to stdout and exit
+                        (read-only: writes no YAML, prints no paste guidance).
+                        Same text the bootstrap prompt-mode would paste; used by
+                        the /routine-setup skill to fill the registration body.
   --output <path>       Output file under .claude/routines/
                         (default: .claude/routines/<name>.yaml)
   --force, -f           Overwrite existing output file
@@ -744,6 +749,11 @@ Options:
                         (the routine reads its instructions from the committed
                         YAML at run time — no re-paste on edits). The generated
                         YAML's instructions block is unchanged either way.
+  --emit-bootstrap-prompt
+                        Print ONLY the bootstrap prompt body to stdout and exit
+                        (read-only: writes no YAML, prints no paste guidance).
+                        Same text the bootstrap prompt-mode would paste; used by
+                        the /routine-setup skill to fill the registration body.
   --output <path>       Output file under .claude/routines/
                         (default: .claude/routines/<name>.yaml)
   --force, -f           Overwrite existing output file

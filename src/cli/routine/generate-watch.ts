@@ -53,6 +53,35 @@ export const PROMPT_MODES = ["inline", "bootstrap"] as const;
 export type PromptMode = (typeof PROMPT_MODES)[number];
 
 /**
+ * Build the bootstrap prompt body (#327 / #365): the 4-line SHORT prompt the
+ * routine reads to learn it must `Read` the committed YAML and follow its
+ * `instructions:` block at run time.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for the bootstrap prompt text. Both the
+ * generator's Web UI paste guidance (`printPromptModePaste`) and the
+ * `--emit-bootstrap-prompt` CLI surface (which the `routine-setup` Claude skill
+ * calls to fill the RemoteTrigger create-body) derive their prompt from here,
+ * so the two can never drift (epic #363 G3). The lines are sourced from the
+ * `cli.routine.bootstrapPromptLine1-4` i18n strings — the only canonical copy.
+ *
+ * `name` is the routine name and `path` is the rendered routine's relative
+ * path; both are interpolated into the prompt body. Returns the lines joined by
+ * `\n` (no trailing newline) so callers can either log each line or print the
+ * block verbatim.
+ */
+export function buildBootstrapPrompt(
+  values: { name: string; path: string },
+  t: Translator,
+): string {
+  return [
+    t("cli.routine.bootstrapPromptLine1", { name: values.name }),
+    t("cli.routine.bootstrapPromptLine2", { path: values.path }),
+    t("cli.routine.bootstrapPromptLine3"),
+    t("cli.routine.bootstrapPromptLine4"),
+  ].join("\n");
+}
+
+/**
  * Print the Web UI **Prompt / Instructions** paste guidance for the chosen
  * `promptMode` (#327). Shared by the `watch` and `pipeline` generators so the
  * two stay in lockstep.
@@ -63,6 +92,10 @@ export type PromptMode = (typeof PROMPT_MODES)[number];
  * follow its `instructions:` block at run time. In BOTH modes the
  * Setup-script `yq` extraction line is still printed (the setup script always
  * has to be pasted into its own Web UI field).
+ *
+ * The bootstrap prompt body is built by `buildBootstrapPrompt` (the single
+ * source of truth), guaranteeing the pasted text matches
+ * `--emit-bootstrap-prompt` byte-for-byte.
  *
  * `path` is the rendered routine's relative path; `name` is the routine name
  * (interpolated into the bootstrap prompt body).
@@ -76,10 +109,11 @@ export function printPromptModePaste(
   if (promptMode === "bootstrap") {
     log(t("cli.routine.pasteStep3Bootstrap"));
     log("");
-    log(t("cli.routine.bootstrapPromptLine1", { name: values.name }));
-    log(t("cli.routine.bootstrapPromptLine2", { path: values.path }));
-    log(t("cli.routine.bootstrapPromptLine3"));
-    log(t("cli.routine.bootstrapPromptLine4"));
+    // The bootstrap prompt body is the single-sourced block; log it verbatim so
+    // it matches `--emit-bootstrap-prompt` line-for-line.
+    for (const line of buildBootstrapPrompt(values, t).split("\n")) {
+      log(line);
+    }
     log("");
     log(t("cli.routine.pasteStep3BootstrapSetup"));
     log(t("cli.routine.pasteYqSetupScript", { path: values.path }));
@@ -455,6 +489,13 @@ interface ParsedFlags {
   promptMode: PromptMode;
   output: string;
   force: boolean;
+  /**
+   * `--emit-bootstrap-prompt` (#365): print ONLY the bootstrap prompt body to
+   * stdout and exit, writing no YAML and printing no paste guidance. Lets the
+   * `routine-setup` Claude skill fetch the exact same prompt the generator
+   * would paste, so the two never drift (epic #363 G3).
+   */
+  emitBootstrapPrompt: boolean;
   help: boolean;
 }
 
@@ -473,12 +514,17 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
   let promptMode: PromptMode = "inline";
   let output: string | undefined;
   let force = false;
+  let emitBootstrapPrompt = false;
   let help = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-h" || a === "--help") {
       help = true;
+      continue;
+    }
+    if (a === "--emit-bootstrap-prompt") {
+      emitBootstrapPrompt = true;
       continue;
     }
     if (a === "--name") {
@@ -552,6 +598,7 @@ export function parseGenerateWatchRoutineArgs(args: string[]): ParsedFlags {
     promptMode,
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
+    emitBootstrapPrompt,
     help,
   };
 }
@@ -604,6 +651,18 @@ export async function runGenerateWatchRoutine(
 
   if (parsed.help) {
     printGenerateWatchRoutineHelp(t, log);
+    return 0;
+  }
+
+  // --emit-bootstrap-prompt (#365): print ONLY the bootstrap prompt body
+  // (read-only — no YAML written, no paste guidance) so the `routine-setup`
+  // Claude skill can fetch the exact same prompt the generator would paste,
+  // sourced from the single `buildBootstrapPrompt` helper (epic #363 G3). The
+  // `path` matches the generator's `destRel`: a relative `--output` is used
+  // verbatim, an absolute one is rebased onto `cwd`.
+  if (parsed.emitBootstrapPrompt) {
+    const promptPath = isAbsolute(parsed.output) ? relative(cwd, parsed.output) : parsed.output;
+    log(buildBootstrapPrompt({ name: parsed.name, path: promptPath }, t));
     return 0;
   }
 
