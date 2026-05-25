@@ -96,6 +96,54 @@ describe("schemas/source - maxSeenIds (#333)", () => {
   });
 });
 
+describe("schemas/source - requireFields subset validation (#332)", () => {
+  const base = {
+    id: "aws",
+    kind: "rss" as const,
+    url: "https://example.com/feed.xml",
+  };
+
+  it("rejects a requireFields entry not present in matchFields (subset violation)", () => {
+    // docs/design/filter-spec.md promises a parse-time error for this misconfig:
+    // a requireFields value outside matchFields is never evaluated and would
+    // silently reject every item, so the schema fail-fasts instead.
+    const result = SourceSchema.safeParse({
+      ...base,
+      filters: {
+        keywords: ["agents"],
+        matchFields: ["title"],
+        requireFields: ["summary"],
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.includes("requireFields"));
+      expect(issue).toBeDefined();
+      expect(issue?.message).toContain("must also appear in matchFields");
+    }
+  });
+
+  it("accepts requireFields that is a subset of matchFields", () => {
+    const result = SourceSchema.parse({
+      ...base,
+      filters: {
+        keywords: ["agents"],
+        matchFields: ["title", "summary"],
+        requireFields: ["title"],
+      },
+    });
+    expect(result.filters.requireFields).toEqual(["title"]);
+  });
+
+  it("accepts an empty requireFields (default — no constraint)", () => {
+    const result = SourceSchema.parse({
+      ...base,
+      filters: { keywords: ["agents"], matchFields: ["title"] },
+    });
+    expect(result.filters.requireFields).toEqual([]);
+  });
+});
+
 describe("schemas/source - kind: html-js (ADR-0010)", () => {
   const baseHtmlJs = {
     id: "spa-changelog",
