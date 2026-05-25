@@ -339,8 +339,12 @@ export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema
  * wall-clock time without manual recipe bumps.
  */
 export const FACET_RANGE_CURRENT_YEAR = "current-year";
-/** Matches `current-year` or `current-year-<N>` (N = non-negative integer offset). */
-export const FACET_RANGE_RELATIVE_RE = /^current-year(?:-(\d+))?$/;
+/**
+ * Matches `current-year` or `current-year-<N>` (N = non-negative integer
+ * offset). Derived from {@link FACET_RANGE_CURRENT_YEAR} so the canonical token
+ * literal lives in exactly one place (the base token has no regex metachars).
+ */
+export const FACET_RANGE_RELATIVE_RE = new RegExp(`^${FACET_RANGE_CURRENT_YEAR}(?:-(\\d+))?$`);
 export const FacetRangeBoundSchema = z.union([
   z.number(),
   z
