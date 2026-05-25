@@ -71,6 +71,7 @@ i18n の対象は **user-facing（エンドユーザーが CLI 出力 / 生成�
 
 - プロンプト本体は per-locale で分岐させない（英語正本 1 本）。
 - **レポートの出力言語のみ locale に追従**させる。adapter 契約に `locale` を追加し、プロンプトに**出力言語ディレクティブ**（「出力言語は X」）を付与する。
+- **agent が綴る user-facing prose も locale に追従**させる（[#376](https://github.com/ozzy-labs/feedradar/issues/376)）。spawn しない自セッション routine（[ADR-0020](./0020-claude-routines-generation.md)）の `pipeline` では、research / review レポート本文（上記）だけでなく、agent が手順内で自由文として綴る **PR タイトル / 本文・実行サマリー・commit message body** も設定 locale の言語で出力する。`radar routine generate pipeline --lang <非 en>` が生成 `instructions:` の `## Hard constraints` に locale 出力ディレクティブ（`buildLocaleOutputDirective`）を焼き込んで担保する。ただし **Conventional Commits の subject 行（型）は英語のまま**で、追従するのは本文・その他自由文のみ。bootstrap プロンプト自体は言語ニュートラル（[#365](https://github.com/ozzy-labs/feedradar/issues/365)）に保ち、locale 指定は生成 `instructions:` 側が担う。なお GHA `combined-with-triage`（[ADR-0014](./0014-workflow-generate-and-auto-research-safety.md)）の PR 本文は workflow step がテンプレ文字列で per-locale 生成するため agent 自由文ではなく、本ディレクティブの対象外。
 - 根拠: triage プロンプトの JSON parse 安定性と保守コスト。プロンプトを 2 本持つと分岐が増え、triage の構造化出力が言語ごとに drift するリスクが上がる。
 
 この D5 と後述 D6 は**混同しやすい**ため、ADR で明確に区別する（D6 のワークスペース運用ドキュメントは per-locale 対象だが、D5 のエンジン SKILL / プロンプトは英語正本 1 本）。
