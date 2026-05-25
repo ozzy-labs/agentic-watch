@@ -518,6 +518,8 @@ async function runUpdateEmitPayload(params: {
   researchId: string;
   agent: AgentId;
   templateId: string;
+  /** Resolved report-output locale (#316); embedded as the host-mode directive (#358). */
+  locale: Locale;
   log: (m: string) => void;
   warn: (m: string) => void;
   error: (m: string) => void;
@@ -525,7 +527,7 @@ async function runUpdateEmitPayload(params: {
   /** Translator for the user-facing progress phase labels (#313). */
   t: Translator;
 }): Promise<number> {
-  const { cwd, researchId, agent, templateId, log, warn, error, progress, t } = params;
+  const { cwd, researchId, agent, templateId, locale, log, warn, error, progress, t } = params;
   const prepared = await prepareUpdate({ cwd, researchId, warn, error, progress, t });
   if ("exitCode" in prepared) return prepared.exitCode;
 
@@ -547,6 +549,7 @@ async function runUpdateEmitPayload(params: {
       prevResearch: { frontmatter: prepared.prevFm, body: prepared.prevBody },
       items: prepared.linkedItems,
       outputPath: prepared.outputPath,
+      locale,
     }),
   );
   return 0;
@@ -843,6 +846,7 @@ export async function runUpdate(
       researchId: parsed.researchId,
       agent,
       templateId,
+      locale,
       log,
       warn,
       error,

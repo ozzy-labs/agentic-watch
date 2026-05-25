@@ -235,6 +235,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
           templateBody: req.templateBody,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -259,6 +260,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
           researchPath: req.researchPath,
           researchFrontmatter: req.researchFrontmatter,
           researchBody: req.researchBody,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
@@ -283,6 +285,7 @@ export function createCopilotAdapter(options: CopilotAdapterOptions = {}): Agent
           prevResearch: req.prevResearch,
           items: req.items,
           outputPath: req.outputPath,
+          locale: req.locale,
         },
         "spawn",
       )}\n`;
