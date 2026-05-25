@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-24）— 親 epic [#277](https://github.com/ozzy-labs/feedradar/issues/277) の起点 ADR。`radar routine generate <type>` サブコマンドの設計判断と、Claude Routines 環境特有のセーフティ方針を記録する。後続 sub-issue（[#279](https://github.com/ozzy-labs/feedradar/issues/279) triage 自セッション入口 / [#280](https://github.com/ozzy-labs/feedradar/issues/280) `routine generate watch` / [#284](https://github.com/ozzy-labs/feedradar/issues/284) フルパイプライン routine / [#281](https://github.com/ozzy-labs/feedradar/issues/281) YAML 統一・パス修正 / [#282](https://github.com/ozzy-labs/feedradar/issues/282) `/fire` 連携 / [#283](https://github.com/ozzy-labs/feedradar/issues/283) docs）の起点として固定する。
+Accepted（2026-05-24、Revised 2026-05-25）— 親 epic [#277](https://github.com/ozzy-labs/feedradar/issues/277) の起点 ADR。`radar routine generate <type>` サブコマンドの設計判断と、Claude Routines 環境特有のセーフティ方針を記録する。後続 sub-issue（[#279](https://github.com/ozzy-labs/feedradar/issues/279) triage 自セッション入口 / [#280](https://github.com/ozzy-labs/feedradar/issues/280) `routine generate watch` / [#284](https://github.com/ozzy-labs/feedradar/issues/284) フルパイプライン routine / [#281](https://github.com/ozzy-labs/feedradar/issues/281) YAML 統一・パス修正 / [#282](https://github.com/ozzy-labs/feedradar/issues/282) `/fire` 連携 / [#283](https://github.com/ozzy-labs/feedradar/issues/283) docs）の起点として固定する。**Revised 2026-05-25**（epic [#363](https://github.com/ozzy-labs/feedradar/issues/363) / [#364](https://github.com/ozzy-labs/feedradar/issues/364)）で、Claude セッションからの **register 経路（RemoteTrigger 経由の `/routine-setup` skill）** とその境界を §「register 経路（`/routine-setup` skill）」に追記。
 
 > Post-merge review は welcome。指摘がある場合は follow-up issue で起票してください。
 
@@ -167,6 +167,39 @@ routine の正本 YAML は宣言的 apply API を持たず、ユーザーが Web
 - モデルが正本 YAML の `instructions:` ブロックを読んで follow する前提で、instructions-as-prompt より僅かに間接的（end-to-end の動作は実証済みだが直接性は劣る）。
 - 以上より、**既定は `inline`（現状維持）・bootstrap は明示 opt-in** とする。bootstrap を選ぶかは「再貼り付け摩擦の削減」と「Prompt 欄の self-contained 性」のどちらを取るかのユーザー判断に委ねる。
 
+### register 経路（`/routine-setup` skill） — Revised 2026-05-25
+
+D1 で「配布 CLI としては『正本生成 → ユーザーが Web UI に手で適用』が唯一の形」と定めたが、これは**宣言的に設定を流し込む公開 API が無い**ことが前提だった。一方 Claude Routines は Claude 製品であり、RemoteTrigger（claude.ai `/v1/code/triggers`）は **Claude Code harness 内でのみ**呼べる（OAuth トークンの in-process 注入）。本 Revision は、この harness 機能を使って Claude セッションから routine を register/update する経路を追記する（skill 本体の実装は [#366](https://github.com/ozzy-labs/feedradar/issues/366)、ADR-0007 への配布登録は [ADR-0007 Revision (e)](./0007-skill-bundling-and-init-distribution.md)）。
+
+#### register 経路の形
+
+`.claude/skills/routine-setup/SKILL.md`（`init --with-routines` で配布する Claude 専用 skill）を `/routine-setup` で発火すると、Claude セッションが正本 routine YAML から決定論的に登録を実行する:
+
+1. 正本 YAML（`.claude/routines/<name>.yaml`）を読み、`name` / `model` / `repo` / `cron`+`timezone` / `routine_id` / `status` / auto-merge を抽出し、`sources/*.yaml` から feed ホスト（network allowlist）を収集する
+2. bootstrap プロンプトは **skill 内で手組みせず**、生成器と同一の単一ソース（`radar routine generate <type> --prompt-mode bootstrap --emit-bootstrap-prompt`、[#365](https://github.com/ozzy-labs/feedradar/issues/365)）から取得する（drift 防止）
+3. cron（例 `0 6 * * *` + `timezone: Asia/Tokyo`）を RemoteTrigger 用に UTC へ変換する（例 `0 21 * * *`）
+4. environment を選択（`RemoteTrigger list` で既存を提示）
+5. `routine_id` 空 → `create`（`enabled: false`）/ 既存 → `update`（冪等再適用）。**`allow_unrestricted_git_push` は body に入れない**（RemoteTrigger API は当該フィールドを受け付けず HTTP 400 `Extra inputs are not permitted` になるため）
+6. 発行された `routine_id` + `status: active` を正本 YAML へ書き戻す（branch 保護下のため PR 経由）
+
+これにより、D8 が軽減した「`instructions:` 再貼り付け摩擦」に加え、register/re-register 自体の手作業（create body 手組み・cron 変換・id 書き戻し）も 1 コマンドへ集約される。
+
+#### D1 は維持する（skill は CLI ではなく harness 機能）
+
+本 Revision は **D1 を改訂しない**。D1 の「配布 CLI では『正本生成 → Web UI 手適用』が唯一の形」は引き続き有効である:
+
+- `routine-setup` は **`radar` CLI のサブコマンドではなく**、Claude Code harness の skill 機能（RemoteTrigger の in-process 注入トークンに依存）である。配布 CLI（`radar`）自身は依然として宣言的 apply API を持たず、`routine generate` は正本を吐くだけ（D1 のまま）。
+- よって skill は D1 の文面（**配布 CLI** に関する制約）に抵触しない。register 経路はあくまで Claude 製品固有の **harness サーフェス**として D1 と並立する。他 agent（Codex / Gemini / Copilot）からは RemoteTrigger を呼べないため、この経路は Claude 専用に閉じる。
+
+#### register 経路でも消せない一線（Web UI 専用）
+
+skill は register 手作業の大半を集約するが、以下 2 点は **依然 Web UI 専用**で skill からは実行できない（epic [#363](https://github.com/ozzy-labs/feedradar/issues/363) の背景・[ADR-0007 Revision (e)](./0007-skill-bundling-and-init-distribution.md) と一致）:
+
+- **`Allow unrestricted branch pushes` トグル ON**: auto-merge（D3a-1）に必要だが、RemoteTrigger API は `allow_unrestricted_git_push` body フィールドを受け付けない（HTTP 400）。よって YAML / skill では有効化できず、Web UI のトグルを別途 ON にする人手が残る（D3a-1 の stderr 警告と一致）。
+- **routine の削除**: RemoteTrigger 経由の delete 経路は提供せず、削除は Web UI 専用とする。
+
+skill はこの 2 点以外（create/update・id 書き戻し）を 1 コマンドに集約し、残る人手を「トグル 1 回（auto-merge 利用時のみ）」に収束させる。
+
 ### triage 自セッション入口の payload / commit 契約
 
 triage には自セッション入口が無い（spawn 専用、[ADR-0018](./0018-triage-extension.md)）。routine の `pipeline` type が triage を自セッションで回すには、research / review と同型の prepare / commit 2-call を triage にも新設する（[#279](https://github.com/ozzy-labs/feedradar/issues/279)）。ただし triage は **per-item の `TriageDecision` を書く別形**であり、research のレポートファイル契約とは異なるため、本 ADR で形を確定させる:
@@ -267,8 +300,14 @@ routine の フルパイプライン type 名を GHA と同じ `combined-with-tr
   - [#281](https://github.com/ozzy-labs/feedradar/issues/281) routine 形式を YAML 統一・`.claude/routines/` にパス修正（破壊的）
   - [#282](https://github.com/ozzy-labs/feedradar/issues/282) `/fire`（外部からの起動）連携
   - [#283](https://github.com/ozzy-labs/feedradar/issues/283) routine workflow のドキュメント整備
+- register 経路（Revised 2026-05-25）:
+  - epic [#363](https://github.com/ozzy-labs/feedradar/issues/363) — `radar init` が `routine-setup` skill を配布し register 経路を提供する epic
+  - [#364](https://github.com/ozzy-labs/feedradar/issues/364) — 本 ADR への register 経路追記 ＋ [ADR-0007 Revision (e)](./0007-skill-bundling-and-init-distribution.md)
+  - [#365](https://github.com/ozzy-labs/feedradar/issues/365) — bootstrap プロンプトの単一ソース化（`--emit-bootstrap-prompt`）。register 経路の bootstrap drift 防止の前提
+  - [#366](https://github.com/ozzy-labs/feedradar/issues/366) — `routine-setup` skill 本体 ＋ `radar init` 配布（`--with-routines` gating）
 - 関連 ADR:
   - [ADR-0004 Schedule Strategy](./0004-schedule-strategy.md) — `init --with-routines` の起点。routine はサブスク枠で完結・fresh clone 前提・OAuth 禁止。本 ADR で出力形式・パスを `.claude/routines/*.yaml` へ寄せる
+  - [ADR-0007 Skill Bundling and `init` Distribution](./0007-skill-bundling-and-init-distribution.md) — Revision (e) で `routine-setup` skill を 11 個目の bundled asset として配布登録（`--with-routines` opt-in、「薄い wrapper のみ」不変条件の初の例外）
   - [ADR-0009 Untrusted External Content Handling](./0009-untrusted-external-content-handling.md) — M1c 境界マーカー / M2a / M2b / M3b self-check guidance を routine の自セッション実行時にも継続適用。D5b host allowlist で通信先を購読フィードに限定
   - [ADR-0014 Workflow Generate と自動 research セーフティ](./0014-workflow-generate-and-auto-research-safety.md) — GHA = spawn + API キーの対表。件数上限を literal 化で担保する思想（D3）を routine にも継承
   - [ADR-0018 LLM-based Triage Extension](./0018-triage-extension.md) — triage の `--max-items` / `<policy>` boundary / per-item `TriageDecision`。triage 自セッション入口の payload / commit 契約の前提
