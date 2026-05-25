@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.6](https://github.com/ozzy-labs/feedradar/compare/v0.2.5...v0.2.6) (2026-05-25)
+
+
+### Bug Fixes
+
+* **routine:** left-align --emit-bootstrap-prompt output ([#377](https://github.com/ozzy-labs/feedradar/issues/377)) ([#378](https://github.com/ozzy-labs/feedradar/issues/378)) ([38c9a73](https://github.com/ozzy-labs/feedradar/commit/38c9a731c362bcabfc5e24aa870c6fb1e55fa454))
+* **routine:** localize agent-authored prose in pipeline routine ([#376](https://github.com/ozzy-labs/feedradar/issues/376)) ([#379](https://github.com/ozzy-labs/feedradar/issues/379)) ([df76dc2](https://github.com/ozzy-labs/feedradar/commit/df76dc2e2c6ddcb913687d13d7be96f1ff53edf2))
+
 ## [0.2.5](https://github.com/ozzy-labs/feedradar/compare/v0.2.4...v0.2.5) (2026-05-25)
 
 
