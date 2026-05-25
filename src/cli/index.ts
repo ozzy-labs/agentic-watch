@@ -12,6 +12,7 @@ import { researchCommand } from "./research.js";
 import { reviewCommand } from "./review.js";
 import { routineCommand } from "./routine.js";
 import { sourceCommand } from "./source.js";
+import { stateCommand } from "./state.js";
 import { triageCommand } from "./triage.js";
 import { undismissCommand } from "./undismiss.js";
 import { updateCommand } from "./update.js";
@@ -64,6 +65,7 @@ const commands: Command[] = [
   initCommand,
   sourceCommand,
   watchCommand,
+  stateCommand,
   researchCommand,
   triageCommand,
   dismissCommand,

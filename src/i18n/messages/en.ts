@@ -151,6 +151,7 @@ export const en = {
   "cli.summary.init": "Initialize a workspace (sources/items/state/research/templates)",
   "cli.summary.source": "Manage feed sources (add | list | recipes | remove | test)",
   "cli.summary.watch": "Fetch sources and produce filtered items (run)",
+  "cli.summary.state": "Manage per-source watch state (prune)",
   "cli.summary.research": "Generate Markdown research reports from items via an AI agent",
   "cli.summary.triage": "LLM-based triage of detected items",
   "cli.summary.dismiss": "Mark detected items as dismissed (single id, multiple ids, or --batch)",
@@ -1646,6 +1647,63 @@ Options:
     agent: string;
   }): string => `Triaging ${count} item(s) from source '${sourceId}' via ${agent}`,
   "cli.triage.confirmApply": "Apply these decisions? [y/N]",
+
+  // --- state prune (#333) ---------------------------------------------------
+  /** `radar state` / `radar state prune` help text. */
+  "cli.state.help": `Usage: radar state prune <source> --keep <N>
+
+Trim state/<source>.yaml lastSeenIds to its newest N ids (FIFO; oldest dropped first).
+Use it to shrink a state file that has already grown large from facet sweeps.
+
+Options:
+  --keep <N>          Keep the newest N ids; drop the rest (required)
+  --older-than <dur>  Not supported (lastSeenIds carries no per-id timestamps)
+  -h, --help          Show this help`,
+  /** stderr line when arg parsing fails (unknown flag / missing value). */
+  "cli.state.parseError": ({ reason }: { reason: string }): string => `state prune: ${reason}`,
+  /** stderr line for an unrecognized `state` subcommand. */
+  "cli.state.unknownSubcommand": ({ sub }: { sub: string }): string =>
+    `state: unknown subcommand '${sub}'`,
+  /** stderr line when `<source>` positional is missing. */
+  "cli.state.missingSource": "state prune: missing <source>",
+  /** stderr line when neither `--keep` nor a supported mode is given. */
+  "cli.state.keepRequired": "state prune: --keep <N> is required",
+  /** stderr line when `--older-than` is used (deliberately unimplemented). */
+  "cli.state.olderThanUnsupported":
+    "state prune: --older-than is not supported (lastSeenIds carries no per-id timestamps); use --keep <N>",
+  /** stderr line when `--keep` is not an integer. */
+  "cli.state.invalidKeepInteger": ({ raw }: { raw: string }): string =>
+    `state prune: --keep expects an integer, got '${raw}'`,
+  /** stderr line when `--keep` is not a positive integer. */
+  "cli.state.invalidKeepPositive": ({ raw }: { raw: string }): string =>
+    `state prune: --keep expects a positive integer, got '${raw}'`,
+  /** stderr line when state/<source>.yaml does not exist. */
+  "cli.state.sourceNotFound": ({ sourceId }: { sourceId: string }): string =>
+    `state prune: no state found for source '${sourceId}' (state/${sourceId}.yaml)`,
+  /** Summary line when the list is already within the keep window (no write). */
+  "cli.state.pruneNoop": ({
+    sourceId,
+    count,
+    keep,
+  }: {
+    sourceId: string;
+    count: number;
+    keep: number;
+  }): string =>
+    `state prune: '${sourceId}' already has ${count} id(s) (<= --keep ${keep}); nothing to trim`,
+  /** Summary line after a successful trim + write. */
+  "cli.state.pruneDone": ({
+    sourceId,
+    before,
+    after,
+    dropped,
+  }: {
+    sourceId: string;
+    before: number;
+    after: number;
+    dropped: number;
+  }): string =>
+    `state prune: '${sourceId}' trimmed lastSeenIds ${before} -> ${after} (${dropped} dropped)`,
 } as const;
 
 /** Union of all valid message keys. */

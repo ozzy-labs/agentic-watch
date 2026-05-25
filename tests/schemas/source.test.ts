@@ -63,6 +63,39 @@ describe("schemas/source - trustLevel (ADR-0009 M4)", () => {
   });
 });
 
+describe("schemas/source - maxSeenIds (#333)", () => {
+  it("leaves maxSeenIds undefined when omitted (unbounded, current behavior)", () => {
+    const result = SourceSchema.parse({
+      id: "aws",
+      kind: "rss",
+      url: "https://example.com/feed.xml",
+    });
+    expect(result.maxSeenIds).toBeUndefined();
+  });
+
+  it("accepts a positive integer maxSeenIds", () => {
+    const result = SourceSchema.parse({
+      id: "aws",
+      kind: "rss",
+      url: "https://example.com/feed.xml",
+      maxSeenIds: 500,
+    });
+    expect(result.maxSeenIds).toBe(500);
+  });
+
+  it("rejects a zero / negative / non-integer maxSeenIds", () => {
+    for (const bad of [0, -1, 1.5]) {
+      const result = SourceSchema.safeParse({
+        id: "aws",
+        kind: "rss",
+        url: "https://example.com/feed.xml",
+        maxSeenIds: bad,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+});
+
 describe("schemas/source - kind: html-js (ADR-0010)", () => {
   const baseHtmlJs = {
     id: "spa-changelog",

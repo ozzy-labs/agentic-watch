@@ -36,6 +36,31 @@ export async function loadSourceState(stateDir: string, sourceId: string): Promi
   return SourceStateSchema.parse(candidate);
 }
 
+/**
+ * Apply a FIFO (keep-newest) cap to a `lastSeenIds` list.
+ *
+ * `lastSeenIds` is append-only at the persistence layer: new ids are pushed to
+ * the *end* and already-seen ids keep their original position (re-adding to a
+ * `Set` does not move them), so the array is ordered oldest-first. When `max`
+ * is a positive integer and the list exceeds it, we keep the trailing `max`
+ * entries (the most recently appended ids) and drop the oldest from the front.
+ *
+ * This is safe for the facet-sweep firehose (ADR-0017) that motivated the cap:
+ * facets are walked publishedAt-descending, so an id old enough to fall out of
+ * the trailing window is very unlikely to reappear in a later sweep. If it
+ * somehow does, the worst case is re-emitting one already-seen item — not data
+ * loss.
+ *
+ * `max` undefined / non-positive disables the cap and returns the input
+ * unchanged (existing source YAMLs that omit `maxSeenIds` keep their current
+ * unbounded behavior).
+ */
+export function capSeenIds(ids: string[], max?: number): string[] {
+  if (max === undefined || !Number.isInteger(max) || max <= 0) return ids;
+  if (ids.length <= max) return ids;
+  return ids.slice(ids.length - max);
+}
+
 /** Persist a source's state, creating the directory if needed. */
 export async function saveSourceState(stateDir: string, state: SourceState): Promise<void> {
   const validated = SourceStateSchema.parse(state);

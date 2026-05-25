@@ -979,6 +979,13 @@ export const jsonApiAdapter: FeedAdapter = {
     // combined state of N facet values, and re-using last-run's ETag
     // would 304-out the next sweep. Per-facet ETag is future work.
     const aggregatedItems: Item[] = [];
+    // `aggregatedSeen` is the *in-sweep* dedup/early-stop set, NOT a persisted
+    // value: the facet adapter's returned `state` omits `lastSeenIds` (see the
+    // `return` below), so the watcher — the sole persistence point — applies
+    // the `maxSeenIds` FIFO cap (#333) when it builds `nextState`. We
+    // deliberately do NOT trim `aggregatedSeen` here: it drives the per-facet
+    // early-stop ("stop paging once we hit an already-seen id"), so dropping
+    // ids mid-sweep would defeat that heuristic and re-emit already-seen items.
     const aggregatedSeen = new Set<string>(options.state?.lastSeenIds ?? []);
     let aggregatedDiag: FeedFetchDiag | undefined;
     let aggregatedNotModified = true;
