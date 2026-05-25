@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { FetchLike } from "../../src/core/feeds/types.js";
 import type { ProgressReporter } from "../../src/core/progress.js";
-import { shouldEnableProgress, watchRun } from "../../src/core/watcher.js";
+import {
+  shouldEnableProgress,
+  stateChangedBeyondLastFetchedAt,
+  watchRun,
+} from "../../src/core/watcher.js";
 import type { Source } from "../../src/schemas/index.js";
 
 /**
@@ -622,5 +626,180 @@ describe("watchRun progress integration (#198)", () => {
     });
     // Legacy 1-line per source summary.
     expect(logs.some((m) => m.includes("'aws' fetched 1 items"))).toBe(true);
+  });
+});
+
+describe("stateChangedBeyondLastFetchedAt (#326)", () => {
+  const base = {
+    sourceId: "blog",
+    lastFetchedAt: "2026-05-24T00:00:00.000Z",
+    lastEtag: '"v1"',
+    lastModified: "Wed, 21 Oct 2015 07:28:00 GMT",
+    lastSeenIds: ["a", "b"],
+  };
+
+  it("returns false when only lastFetchedAt advances", () => {
+    expect(
+      stateChangedBeyondLastFetchedAt(base, { ...base, lastFetchedAt: "2026-05-25T00:00:00.000Z" }),
+    ).toBe(false);
+  });
+
+  it("returns false for an identical state", () => {
+    expect(stateChangedBeyondLastFetchedAt(base, { ...base })).toBe(false);
+  });
+
+  it("returns true when lastEtag changes", () => {
+    expect(stateChangedBeyondLastFetchedAt(base, { ...base, lastEtag: '"v2"' })).toBe(true);
+  });
+
+  it("returns true when lastModified changes", () => {
+    expect(
+      stateChangedBeyondLastFetchedAt(base, {
+        ...base,
+        lastModified: "Thu, 22 Oct 2015 07:28:00 GMT",
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true when lastSeenIds grows", () => {
+    expect(stateChangedBeyondLastFetchedAt(base, { ...base, lastSeenIds: ["a", "b", "c"] })).toBe(
+      true,
+    );
+  });
+
+  it("returns true when a lastSeenIds entry changes value", () => {
+    expect(stateChangedBeyondLastFetchedAt(base, { ...base, lastSeenIds: ["a", "z"] })).toBe(true);
+  });
+});
+
+describe("watchRun quiet-run state write skip (#326)", () => {
+  let workdir: string;
+
+  beforeEach(async () => {
+    workdir = await mkdtemp(join(tmpdir(), "feedradar-watcher-quiet-"));
+    await mkdir(join(workdir, "sources"), { recursive: true });
+    await mkdir(join(workdir, "state"), { recursive: true });
+    await mkdir(join(workdir, "items"), { recursive: true });
+  });
+
+  it("does not rewrite the state file when only lastFetchedAt would advance (304)", async () => {
+    await writeSource(workdir, "blog");
+    // Seed an existing state file that already records the current etag and the
+    // ids the feed will report. A 304 run bumps only lastFetchedAt, so the
+    // write must be skipped and the on-disk bytes must stay identical.
+    const seeded = [
+      "sourceId: blog",
+      'lastFetchedAt: "2026-05-24T00:00:00.000Z"',
+      "lastEtag: '\"v1\"'",
+      "lastSeenIds:",
+      "  - a",
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "state", "blog.yaml"), seeded, "utf8");
+
+    const io = silentIo();
+    const result = await watchRun({
+      cwd: workdir,
+      // 304 Not Modified: adapter returns no items and the same etag, bumping
+      // only lastFetchedAt.
+      fetch: fetchReturning("", 304, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+
+    expect(result.errors).toEqual([]);
+    // Projected state still surfaces (for `source test` etc.).
+    expect(result.states.blog).toBeDefined();
+    // …but the file on disk is byte-identical to the seed (no rewrite).
+    const onDisk = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
+    expect(onDisk).toBe(seeded);
+  });
+
+  it("does not rewrite the state file on a 200 run whose content is unchanged", async () => {
+    await writeSource(workdir, "blog");
+    // First run: seed state from a real fetch (writes etag + lastSeenIds).
+    const io = silentIo();
+    await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+    const afterFirst = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
+
+    // Second run: identical body + identical etag. The only thing that would
+    // change is lastFetchedAt, so the write must be skipped.
+    await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+    const afterSecond = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
+
+    expect(afterSecond).toBe(afterFirst);
+  });
+
+  it("writes the state file when the etag changes", async () => {
+    await writeSource(workdir, "blog");
+    const seeded = [
+      "sourceId: blog",
+      'lastFetchedAt: "2026-05-24T00:00:00.000Z"',
+      "lastEtag: '\"v1\"'",
+      "lastSeenIds:",
+      "  - a",
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "state", "blog.yaml"), seeded, "utf8");
+
+    const io = silentIo();
+    // 304 keeps content but reports a new etag → functional change → write.
+    await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning("", 304, { ETag: '"v2"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+
+    const onDisk = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
+    expect(onDisk).not.toBe(seeded);
+    expect(onDisk).toContain('"v2"');
+  });
+
+  it("writes the state file when new items grow lastSeenIds", async () => {
+    await writeSource(workdir, "blog");
+    // Seed with an etag that will NOT match the next fetch, and a lastSeenIds
+    // set that does not yet contain the feed's matching item id ("a").
+    const seeded = [
+      "sourceId: blog",
+      'lastFetchedAt: "2026-05-24T00:00:00.000Z"',
+      "lastEtag: '\"old\"'",
+      "lastSeenIds:",
+      "  - z",
+      "",
+    ].join("\n");
+    await writeFile(join(workdir, "state", "blog.yaml"), seeded, "utf8");
+
+    const io = silentIo();
+    const result = await watchRun({
+      cwd: workdir,
+      fetch: fetchReturning(RSS, 200, { ETag: '"v1"' }) as never,
+      log: io.log,
+      warn: io.warn,
+      error: io.error,
+    });
+
+    expect(result.detected.blog).toHaveLength(1);
+    const onDisk = await readFile(join(workdir, "state", "blog.yaml"), "utf8");
+    expect(onDisk).not.toBe(seeded);
+    // The new ids are now persisted alongside the seeded one.
+    expect(onDisk).toContain("- z");
+    const newId = result.detected.blog?.[0]?.id;
+    if (!newId) throw new Error("unreachable: detected.blog length checked above");
+    expect(onDisk).toContain(newId);
   });
 });
