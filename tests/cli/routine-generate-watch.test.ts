@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  BOOTSTRAP_PASTE_INDENT,
   buildBootstrapPrompt,
   collectSourceHosts,
   generateWatchRoutine,
@@ -279,7 +280,23 @@ describe("cli/routine/generate-watch", () => {
       expect(prompt).toContain("AskUserQuestion is NOT available");
     });
 
-    it("matches the bootstrap paste-mode block byte-for-byte (en + ja) (#365)", () => {
+    it("returns a LEFT-ALIGNED body with zero leading indent (en + ja) (#377)", () => {
+      for (const locale of ["en", "ja"] as const) {
+        const t = createTranslator(locale);
+        const prompt = buildBootstrapPrompt(
+          { name: "feedradar-watch", path: ".claude/routines/feedradar-watch.yaml" },
+          t,
+        );
+        for (const line of prompt.split("\n")) {
+          // Machine-consumed body must carry no leading whitespace.
+          expect(line).not.toMatch(/^\s/);
+        }
+        // The first line begins immediately with the directive text.
+        expect(prompt.startsWith("You are the")).toBe(true);
+      }
+    });
+
+    it("the paste-mode block equals the body once its display indent is stripped (en + ja) (#377)", () => {
       for (const locale of ["en", "ja"] as const) {
         const t = createTranslator(locale);
         const values = { name: "feedradar-watch", path: ".claude/routines/feedradar-watch.yaml" };
@@ -290,9 +307,15 @@ describe("cli/routine/generate-watch", () => {
         const pasteLines: string[] = [];
         printPromptModePaste("bootstrap", values, t, (m) => pasteLines.push(m));
         const blanks = pasteLines.map((l, i) => (l === "" ? i : -1)).filter((i) => i >= 0);
-        const body = pasteLines.slice(blanks[0] + 1, blanks[1]).join("\n");
+        const bodyLines = pasteLines.slice(blanks[0] + 1, blanks[1]);
 
-        expect(body).toBe(emitted);
+        // Paste view indents every body line with the display indent (#377).
+        for (const line of bodyLines) {
+          expect(line.startsWith(BOOTSTRAP_PASTE_INDENT)).toBe(true);
+        }
+        // Stripping that indent recovers the canonical, left-aligned body.
+        const dedented = bodyLines.map((l) => l.slice(BOOTSTRAP_PASTE_INDENT.length)).join("\n");
+        expect(dedented).toBe(emitted);
       }
     });
   });
@@ -615,7 +638,7 @@ describe("cli/routine/generate-watch", () => {
       ).rejects.toThrow();
     });
 
-    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body (en + ja) (#365)", async () => {
+    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body once dedented (en + ja) (#365, #377)", async () => {
       for (const lang of ["en", "ja"] as const) {
         // 1. Capture the --emit-bootstrap-prompt output.
         const emitLogs: string[] = [];
@@ -649,11 +672,31 @@ describe("cli/routine/generate-watch", () => {
         const stepIdx = genLogs.indexOf(t("cli.routine.pasteStep3Bootstrap"));
         expect(stepIdx).toBeGreaterThanOrEqual(0);
         // genLogs[stepIdx + 1] is the blank separator; the body is the next 4.
-        const pasteBody = genLogs.slice(stepIdx + 2, stepIdx + 6).join("\n");
+        const pasteBodyLines = genLogs.slice(stepIdx + 2, stepIdx + 6);
+        // The paste view indents each line; the emit body is left-aligned (#377).
+        const pasteBody = pasteBodyLines
+          .map((l) => l.slice(BOOTSTRAP_PASTE_INDENT.length))
+          .join("\n");
 
-        // 3. The emit output must equal the paste body byte-for-byte.
+        // 3. The emit output equals the paste body after stripping the display indent.
         expect(emitted).toBe(pasteBody);
       }
+    });
+
+    it("--emit-bootstrap-prompt output has zero leading whitespace on every line (#377)", async () => {
+      const emitLogs: string[] = [];
+      const code = await runRoutine(
+        ["generate", "watch", "--emit-bootstrap-prompt", "--name", "my-routine"],
+        { cwd: workdir, io: { log: (m) => emitLogs.push(m), error: () => {} } },
+      );
+      expect(code).toBe(0);
+      const emitted = emitLogs.join("\n");
+      expect(emitted.length).toBeGreaterThan(0);
+      for (const line of emitted.split("\n")) {
+        // Machine-consumed (routine message.content): no leading indent leaks.
+        expect(line).not.toMatch(/^\s/);
+      }
+      expect(emitted.startsWith("You are the `my-routine` routine.")).toBe(true);
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   renderPipelineRoutineTemplate,
 } from "../../src/cli/routine/generate-pipeline.js";
 import {
+  BOOTSTRAP_PASTE_INDENT,
   PROMPT_MODES,
   SUPPORTED_MODELS,
   type SupportedModel,
@@ -673,7 +674,7 @@ describe("cli/routine/generate-pipeline", () => {
       ).rejects.toThrow();
     });
 
-    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body (en + ja) (#365)", async () => {
+    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body once dedented (en + ja) (#365, #377)", async () => {
       for (const lang of ["en", "ja"] as const) {
         // 1. Capture the --emit-bootstrap-prompt output.
         const emitLogs: string[] = [];
@@ -705,11 +706,31 @@ describe("cli/routine/generate-pipeline", () => {
         const stepIdx = genLogs.indexOf(t("cli.routine.pasteStep3Bootstrap"));
         expect(stepIdx).toBeGreaterThanOrEqual(0);
         // genLogs[stepIdx + 1] is the blank separator; the body is the next 4.
-        const pasteBody = genLogs.slice(stepIdx + 2, stepIdx + 6).join("\n");
+        const pasteBodyLines = genLogs.slice(stepIdx + 2, stepIdx + 6);
+        // The paste view indents each line; the emit body is left-aligned (#377).
+        const pasteBody = pasteBodyLines
+          .map((l) => l.slice(BOOTSTRAP_PASTE_INDENT.length))
+          .join("\n");
 
-        // 3. The emit output must equal the paste body byte-for-byte.
+        // 3. The emit output equals the paste body after stripping the display indent.
         expect(emitted).toBe(pasteBody);
       }
+    });
+
+    it("--emit-bootstrap-prompt output has zero leading whitespace on every line (#377)", async () => {
+      const emitLogs: string[] = [];
+      const code = await runRoutine(
+        ["generate", "pipeline", "--emit-bootstrap-prompt", "--name", "my-pipe"],
+        { cwd: workdir, io: { log: (m) => emitLogs.push(m), error: () => {} } },
+      );
+      expect(code).toBe(0);
+      const emitted = emitLogs.join("\n");
+      expect(emitted.length).toBeGreaterThan(0);
+      for (const line of emitted.split("\n")) {
+        // Machine-consumed (routine message.content): no leading indent leaks.
+        expect(line).not.toMatch(/^\s/);
+      }
+      expect(emitted.startsWith("You are the `my-pipe` routine.")).toBe(true);
     });
   });
 });

@@ -1507,14 +1507,18 @@ Options:
   // the EXACT text to paste — it must read as a direct second-person command.
   "cli.routine.pasteStep3Bootstrap":
     "  3. For the Instructions field, paste this SHORT bootstrap prompt (prompt-mode bootstrap):",
+  // Canonical bootstrap prompt body — LEFT-ALIGNED (no leading indent). This is
+  // the machine-consumed text (`--emit-bootstrap-prompt` → routine `message.content`),
+  // so it must carry zero leading whitespace (#377). The Web UI paste view re-adds
+  // a display indent in `printPromptModePaste`.
   "cli.routine.bootstrapPromptLine1": ({ name }: { name: string }): string =>
-    `       You are the \`${name}\` routine.`,
+    `You are the \`${name}\` routine.`,
   "cli.routine.bootstrapPromptLine2": ({ path }: { path: string }): string =>
-    `       Read \`${path}\` in this repository and faithfully execute its top-level`,
+    `Read \`${path}\` in this repository and faithfully execute its top-level`,
   "cli.routine.bootstrapPromptLine3":
-    "       `instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
+    "`instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
   "cli.routine.bootstrapPromptLine4":
-    "       and local MCP servers are NOT available in this environment.",
+    "and local MCP servers are NOT available in this environment.",
   "cli.routine.pasteStep3BootstrapSetup":
     "     For the multi-line Setup script field, extract it with yq:",
   "cli.routine.bootstrapReuseNote":

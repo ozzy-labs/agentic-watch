@@ -669,8 +669,9 @@ export async function runGeneratePipelineRoutine(
 
   // --emit-bootstrap-prompt (#365): print ONLY the bootstrap prompt body
   // (read-only — no YAML written, no paste guidance), single-sourced from
-  // `buildBootstrapPrompt` so it matches the generator's bootstrap paste output
-  // byte-for-byte (epic #363 G3). `path` matches the generator's `destRel`.
+  // `buildBootstrapPrompt` (epic #363 G3). Left-aligned with zero leading indent
+  // for machine consumption (#377); the Web UI paste view re-adds a display
+  // indent. `path` matches the generator's `destRel`.
   if (parsed.emitBootstrapPrompt) {
     const promptPath = isAbsolute(parsed.output) ? relative(cwd, parsed.output) : parsed.output;
     log(buildBootstrapPrompt({ name: parsed.name, path: promptPath }, t));

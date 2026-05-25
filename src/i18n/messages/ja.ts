@@ -1402,14 +1402,18 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   // --prompt-mode bootstrap (#327)
   "cli.routine.pasteStep3Bootstrap":
     "  3. Instructions 欄には、この短い bootstrap プロンプトを貼り付けます (prompt-mode bootstrap):",
+  // bootstrap プロンプト本文の正本 — 左寄せ (行頭インデントなし)。機械消費
+  // (`--emit-bootstrap-prompt` → routine の `message.content`) で使うため、行頭空白は
+  // ゼロでなければならない (#377)。Web UI 貼付表示の表示用インデントは
+  // `printPromptModePaste` 側で付与する。
   "cli.routine.bootstrapPromptLine1": ({ name }: { name: string }): string =>
-    `       You are the \`${name}\` routine.`,
+    `You are the \`${name}\` routine.`,
   "cli.routine.bootstrapPromptLine2": ({ path }: { path: string }): string =>
-    `       Read \`${path}\` in this repository and faithfully execute its top-level`,
+    `Read \`${path}\` in this repository and faithfully execute its top-level`,
   "cli.routine.bootstrapPromptLine3":
-    "       `instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
+    "`instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
   "cli.routine.bootstrapPromptLine4":
-    "       and local MCP servers are NOT available in this environment.",
+    "and local MCP servers are NOT available in this environment.",
   "cli.routine.pasteStep3BootstrapSetup":
     "     複数行の Setup script フィールドは yq で抽出します:",
   "cli.routine.bootstrapReuseNote":
