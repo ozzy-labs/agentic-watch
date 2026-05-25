@@ -103,7 +103,7 @@ jobs:
               'dist/claude-skills/review/SKILL.md',
               'dist/claude-skills/update/SKILL.md',
               'dist/claude-skills/dismiss/SKILL.md',
-              // Claude-only register skill (opt-in via `radar init --with-routines`;
+              // Claude-only register skill (opt-in via 'radar init --with-routines';
               // ADR-0007 Revision (e) / #366). Bundled from src/claude-skills/.
               'dist/claude-skills/routine-setup/SKILL.md',
               'dist/gemini-commands/research.toml',
