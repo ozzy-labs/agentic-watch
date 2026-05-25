@@ -54,15 +54,8 @@ repositories:
 environment:
   # Environment セクションのラベル（Web UI 上の表示名）
   name: <env-name>
-  # Network access mode: Trusted / Custom / Full (Web UI: Environment > Network access).
-  #   Trusted (Default): only a curated host allowlist; ANY other host gets
-  #     403 (x-deny-reason: host_not_allowed) — cannot fetch arbitrary feeds.
-  #   Custom: you supply the allowlist — use this, scoped to your subscribed feeds.
-  #   Full: unrestricted egress — avoid (ADR-0020 D3c / ADR-0009 D5b limit
-  #     outbound to sources/*.yaml hosts).
-  # In the Web UI Custom network access allowlist, add each subscribed-feed host
-  # this routine must fetch (the hostnames from your sources/*.yaml `url:` fields).
-  network_access: custom
+  # trusted / none / open
+  network_access: trusted
   # 環境変数の名前のみ列挙する。値は絶対に書かない（Web UI 側の secret として登録）。
   variables: []
   # Web UI: Setup script。ローカル検証用に
@@ -92,15 +85,8 @@ environment:
     #   pnpm install --frozen-lockfile  # Node (pnpm)
     #   bundle install --jobs=4         # Ruby
 
-# Web UI: Trigger（配列。schedule / api / github を併用可能）
-#
-# 外部からの /fire トリガー（ADR-0020）。下の `- type: api` のコメントを外すと、
-# CI や webhook、`radar routine fire` から手動でこのルーチンを起動できる。
-# per-routine の bearer token は Web UI で 1 回だけ発行・表示される
-# （Regenerate / Revoke も Web UI）。token はこのファイルには書かない。起動例:
-#   radar routine fire <routine_id>     # token は FEEDRADAR_ROUTINE_FIRE_TOKEN から読む
+# Web UI: Trigger（配列。schedule / api / github を将来併用可能）
 triggers:
-  # - type: api
   - type: scheduled
     # 5 フィールドの cron 式（最小実行間隔は 1 時間）
     cron: "0 23 * * *"
