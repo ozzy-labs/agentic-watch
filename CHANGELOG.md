@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.4](https://github.com/ozzy-labs/feedradar/compare/v0.2.3...v0.2.4) (2026-05-25)
+
+
+### Features
+
+* **agents:** emit locale output directive in host-agent payloads ([#358](https://github.com/ozzy-labs/feedradar/issues/358)) ([#361](https://github.com/ozzy-labs/feedradar/issues/361)) ([81f53ae](https://github.com/ozzy-labs/feedradar/commit/81f53aebad5120b6c8b69b35d8207d595ea6b2cd))
+
+
+### Bug Fixes
+
+* **routine:** make pipeline step 7 jq-free ([#359](https://github.com/ozzy-labs/feedradar/issues/359)) ([8452d33](https://github.com/ozzy-labs/feedradar/commit/8452d330e8843b5f874e43cb072cba7ceb14dc51))
+
 ## [0.2.3](https://github.com/ozzy-labs/feedradar/compare/v0.2.2...v0.2.3) (2026-05-25)
 
 
