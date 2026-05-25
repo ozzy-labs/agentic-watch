@@ -7,6 +7,7 @@ import {
   buildLocaleOutputDirective,
   buildOutputGateConstraint,
   buildPipelineLandingStep,
+  buildSessionLocaleDirective,
   generatePipelineRoutine,
   PIPELINE_DEFAULT_MAX_ITEMS,
   parseGeneratePipelineRoutineArgs,
@@ -50,6 +51,7 @@ describe("cli/routine/generate-pipeline", () => {
         outputGateConstraint: "  - gate",
         outputGateNote: "  note",
         localeOutputDirective: "",
+        sessionLocaleDirective: "",
         allowUnrestrictedGitPush: false,
       });
       expect(out).toContain("name: my-pipe");
@@ -171,6 +173,11 @@ describe("cli/routine/generate-pipeline", () => {
         parseGeneratePipelineRoutineArgs(["--emit-bootstrap-prompt"]).emitBootstrapPrompt,
       ).toBe(true);
     });
+
+    it("--localize-session is a boolean flag, default false (#382)", () => {
+      expect(parseGeneratePipelineRoutineArgs([]).localizeSession).toBe(false);
+      expect(parseGeneratePipelineRoutineArgs(["--localize-session"]).localizeSession).toBe(true);
+    });
   });
 
   describe("buildPipelineLandingStep / buildOutputGateConstraint", () => {
@@ -219,6 +226,28 @@ describe("cli/routine/generate-pipeline", () => {
       // Conventional Commits subject line stays English.
       expect(directive).toContain("chore(pipeline):");
       expect(directive).toContain("英語");
+    });
+  });
+
+  // #382: OPT-IN directive that also localizes the session's OWN narration /
+  // logs / reasoning. Unlike buildLocaleOutputDirective (auto for locale != en),
+  // this is emitted ONLY when --localize-session is passed AND locale != en, so
+  // the English-canonical bootstrap prompt / reasoning default is preserved.
+  describe("buildSessionLocaleDirective", () => {
+    it("returns empty when the opt-in flag is off (even for ja)", () => {
+      expect(buildSessionLocaleDirective("ja", createTranslator("ja"), false)).toBe("");
+    });
+
+    it("returns empty for locale 'en' even when the flag is on (English is the default)", () => {
+      expect(buildSessionLocaleDirective("en", createTranslator("en"), true)).toBe("");
+    });
+
+    it("emits a localized hard-constraint bullet for ja when the flag is on", () => {
+      const directive = buildSessionLocaleDirective("ja", createTranslator("ja"), true);
+      expect(directive.startsWith("  - ")).toBe(true);
+      // Targets the session's own narration / reasoning, not just output artifacts.
+      expect(directive).toContain("ナレーション");
+      expect(directive).toContain("推論");
     });
   });
 
@@ -380,6 +409,37 @@ describe("cli/routine/generate-pipeline", () => {
         // #357: jq is not installed on the Routines cloud VM — keep both locales
         // jq-free.
         expect(yaml).not.toMatch(/\bjq\b/);
+      }
+    });
+
+    // #382: the OPT-IN --localize-session directive lands in the ja instructions
+    // ONLY when localizeSession is true, and never for en. It is independent of
+    // (and additional to) the #376 output-prose directive.
+    it("emits the session-locale directive only for ja + localizeSession (opt-in)", async () => {
+      await run({ output: ".claude/routines/ja-on.yaml", locale: "ja", localizeSession: true });
+      await run({ output: ".claude/routines/ja-off.yaml", locale: "ja", localizeSession: false });
+      await run({ output: ".claude/routines/en-on.yaml", locale: "en", localizeSession: true });
+      const jaOn = await readFile(join(workdir, ".claude", "routines", "ja-on.yaml"), "utf8");
+      const jaOff = await readFile(join(workdir, ".claude", "routines", "ja-off.yaml"), "utf8");
+      const enOn = await readFile(join(workdir, ".claude", "routines", "en-on.yaml"), "utf8");
+
+      const jaSession = createTranslator("ja")("cli.routine.sessionLocaleDirective");
+      // ja + opt-in: session directive present, alongside the #376 output directive.
+      expect(jaOn).toContain(jaSession);
+      expect(jaOn).toContain(createTranslator("ja")("cli.routine.localeOutputDirective"));
+      // ja default (flag off): #376 output directive stays, but NO session directive.
+      expect(jaOff).toContain(createTranslator("ja")("cli.routine.localeOutputDirective"));
+      expect(jaOff).not.toContain(jaSession);
+      // en + opt-in: no session directive (English is the default session language),
+      // and no stray blank line where the placeholder collapsed.
+      expect(enOn).not.toContain(createTranslator("en")("cli.routine.sessionLocaleDirective"));
+      expect(enOn).not.toContain(jaSession);
+      expect(enOn).toMatch(
+        /Use Conventional Commits with the `chore\(pipeline\):` prefix\.\n\n# Web UI: Model/,
+      );
+      // No placeholder leaks in any variant.
+      for (const yaml of [jaOn, jaOff, enOn]) {
+        expect(yaml).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
       }
     });
 
