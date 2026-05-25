@@ -83,6 +83,7 @@ radar routine generate pipeline --repo <owner>/<repo> --cron "0 */6 * * *" --max
 - 出力先は既定で `.claude/routines/<name>.yaml`（`--output` で上書き可、`--force` で既存上書き）。
 - 生成 YAML は `status: draft` で出る。安全策（`permissions.allow_unrestricted_git_push: false` / `behavior.auto_fix_pull_requests: false` / `connectors: []`・件数上限の literal 焼き込み）はあらかじめ埋まっている。
 - type・オプション一覧・FeedRadar 固有の安全策は [`docs/user-guide.md` §routine workflow](../../docs/user-guide.md#routine-workflow) を参照。
+- 自分のリポでは GitHub の **`delete_branch_on_merge: true`** を有効にするのを推奨（auto-merge 構成で merged PR の `claude/*` ブランチが自動削除され、orphan ブランチの蓄積を防げる）。
 
 生成後は下記「[手動 / 生成 共通の続き](#手動--生成-共通の続き)」へ進む。
 
