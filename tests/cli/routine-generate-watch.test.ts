@@ -436,6 +436,25 @@ describe("cli/routine/generate-watch", () => {
       expect(joined).toContain("Allow unrestricted branch");
     });
 
+    it("points Claude Code users at the /routine-setup skill (en, #367)", async () => {
+      await run({ locale: "en" });
+      const joined = logs.join("\n");
+      // The completion guidance offers the skill as an automation alternative to
+      // the manual Web UI registration flow above.
+      expect(joined).toContain("/routine-setup");
+      expect(joined).toContain("Claude Code");
+      expect(joined).toContain("RemoteTrigger");
+      expect(joined).toContain("Claude-only alternative");
+    });
+
+    it("points Claude Code users at the /routine-setup skill (ja, #367)", async () => {
+      await run({ locale: "ja" });
+      const joined = logs.join("\n");
+      // The slash-command name stays verbatim; the prose is localized.
+      expect(joined).toContain("/routine-setup");
+      expect(joined).toContain("Claude 専用");
+    });
+
     it("inline prompt-mode (default) tells the user to yq the full instructions (#327)", async () => {
       await run({ promptMode: "inline" });
       const joined = logs.join("\n");
