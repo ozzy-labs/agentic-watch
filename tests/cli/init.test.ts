@@ -361,6 +361,140 @@ describe("cli/init", () => {
     });
   });
 
+  describe("routine-setup skill (.claude/skills/routine-setup, opt-in via --with-routines)", () => {
+    // ADR-0007 Revision (e) / #366: the routine-setup Claude skill ships in
+    // lockstep with the routine YAML scaffold (opt-in via --with-routines),
+    // NOT default-on and NOT governed by --no-claude-skills.
+    const SKILL_REL = ".claude/skills/routine-setup/SKILL.md";
+
+    it("does NOT distribute routine-setup by default (no --with-routines)", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(
+        await pathExists(join(workdir, ".claude", "skills", "routine-setup", "SKILL.md")),
+      ).toBe(false);
+      const entries = [...result.copiedFiles, ...result.skippedFiles].filter((p) =>
+        p.startsWith(".claude/skills/routine-setup/"),
+      );
+      expect(entries).toEqual([]);
+    });
+
+    it("--with-routines distributes .claude/skills/routine-setup/SKILL.md", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      const dest = join(workdir, ".claude", "skills", "routine-setup", "SKILL.md");
+      expect(await pathExists(dest)).toBe(true);
+      const body = await readFile(dest, "utf8");
+      // Slash-command frontmatter contract.
+      expect(body).toMatch(/name:\s*routine-setup/);
+      expect(body).toMatch(/description:/);
+      // The step-3 prompt is single-sourced from the generator (G3), not
+      // hand-written here.
+      expect(body).toContain("--emit-bootstrap-prompt");
+      expect(result.copiedFiles).toContain(SKILL_REL);
+    });
+
+    it("distributes routine-setup even when --no-claude-skills is set (different channel)", async () => {
+      // --no-claude-skills suppresses the default-on discovery wrappers, NOT
+      // the opt-in routine-setup skill (ADR-0007 Revision (e)).
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        withRoutines: true,
+        noClaudeSkills: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(
+        await pathExists(join(workdir, ".claude", "skills", "routine-setup", "SKILL.md")),
+      ).toBe(true);
+      expect(result.copiedFiles).toContain(SKILL_REL);
+      // The default-on discovery wrappers are still suppressed.
+      expect(await pathExists(join(workdir, ".claude", "skills", "research", "SKILL.md"))).toBe(
+        false,
+      );
+    });
+
+    it("protects an existing routine-setup SKILL.md without --force", async () => {
+      const dest = join(workdir, ".claude", "skills", "routine-setup", "SKILL.md");
+      await mkdir(join(workdir, ".claude", "skills", "routine-setup"), { recursive: true });
+      await writeFile(dest, "user-edited skill", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      expect(await readFile(dest, "utf8")).toBe("user-edited skill");
+      expect(result.skippedFiles).toContain(SKILL_REL);
+      expect(warnings.some((m) => m.includes(SKILL_REL))).toBe(true);
+    });
+
+    it("overwrites an existing routine-setup SKILL.md with --force", async () => {
+      const dest = join(workdir, ".claude", "skills", "routine-setup", "SKILL.md");
+      await mkdir(join(workdir, ".claude", "skills", "routine-setup"), { recursive: true });
+      await writeFile(dest, "user-edited skill", "utf8");
+
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: true,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        claudeSkillsRoot: BUNDLED_CLAUDE_SKILLS_ROOT,
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+
+      const body = await readFile(dest, "utf8");
+      expect(body).not.toBe("user-edited skill");
+      expect(body).toMatch(/name:\s*routine-setup/);
+      expect(result.copiedFiles).toContain(SKILL_REL);
+    });
+
+    it("warns and records a skip when the routine-setup bundle is missing", async () => {
+      const result = await initWorkspace({
+        cwd: workdir,
+        force: false,
+        skillsRoot: BUNDLED_SKILLS_ROOT,
+        templatesRoot: BUNDLED_TEMPLATES_ROOT,
+        // Point at a discovery-skills root that does not exist on disk.
+        claudeSkillsRoot: join(workdir, "__nope__"),
+        withRoutines: true,
+        warn: (m) => warnings.push(m),
+        info: () => undefined,
+      });
+      expect(
+        await pathExists(join(workdir, ".claude", "skills", "routine-setup", "SKILL.md")),
+      ).toBe(false);
+      expect(result.skippedFiles).toContain(SKILL_REL);
+    });
+  });
+
   describe("claude discovery skills (.claude/skills/ slash-command wrappers)", () => {
     // These wrappers are distinct from the engine SKILLs at .agents/skills/.
     // ADR-0007 (revised 2026-05-17): default-on for Claude Code discoverability,

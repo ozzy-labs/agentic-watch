@@ -283,6 +283,27 @@ const CLAUDE_DISCOVERY_SKILLS = ["research", "review", "update", "dismiss"] as c
 const GEMINI_COMMANDS = ["research", "review", "update", "dismiss"] as const;
 
 /**
+ * The `routine-setup` Claude Code skill: a procedure-bearing, Claude-only skill
+ * that registers a feedradar routine from its committed YAML via the
+ * RemoteTrigger API (claude.ai `/v1/code/triggers`, callable only inside a
+ * Claude Code session). It lands at `<cwd>/.claude/skills/routine-setup/SKILL.md`,
+ * bundled from `src/claude-skills/routine-setup/` like the discovery skills.
+ *
+ * Unlike `CLAUDE_DISCOVERY_SKILLS` (default-on thin wrappers over the `radar`
+ * CLI), `routine-setup` is the FIRST exception to the "`.claude/skills/` is a
+ * thin wrapper" invariant — it has no engine SKILL counterpart and embeds the
+ * registration procedure inline (ADR-0007 Revision (e)). Its bootstrap prompt is
+ * still single-sourced from `radar routine generate ... --emit-bootstrap-prompt`
+ * (#365) so it cannot drift from the Web-UI paste flow.
+ *
+ * Distribution is **opt-in, gated by `--with-routines`** (NOT default-on, and
+ * NOT covered by `--no-claude-skills`): the skill only makes sense for users who
+ * operate routines, so it ships in lockstep with the routine YAML scaffold,
+ * matching ADR-0004's opt-in routine scaffold (ADR-0007 Revision (e) / #366).
+ */
+const ROUTINE_SETUP_SKILL = "routine-setup" as const;
+
+/**
  * Schedule scaffolds that `init` may emit on opt-in flags.
  *
  * - `src`: bundled template path under `<templatesRoot>/`
@@ -651,6 +672,30 @@ export async function initWorkspace(options: InitOptions): Promise<InitResult> {
       warn,
       t,
     });
+
+    // The `routine-setup` Claude skill ships in lockstep with the routine YAML
+    // scaffold (opt-in, gated by --with-routines per ADR-0007 Revision (e) /
+    // #366). It is sourced from src/claude-skills/ (English-only, like the
+    // discovery skills) — NOT from the per-locale templates root — and is NOT
+    // suppressed by --no-claude-skills (that flag governs the default-on
+    // discovery wrappers, a different distribution channel).
+    const routineSetupSkillsRoot = options.claudeSkillsRoot ?? (await resolveClaudeSkillsRoot());
+    const src = join(routineSetupSkillsRoot, ROUTINE_SETUP_SKILL, "SKILL.md");
+    const destDir = join(cwd, ".claude", "skills", ROUTINE_SETUP_SKILL);
+    const dest = join(destDir, "SKILL.md");
+    const relDest = `.claude/skills/${ROUTINE_SETUP_SKILL}/SKILL.md`;
+    await mkdir(destDir, { recursive: true });
+
+    if (!(await pathExists(src))) {
+      warn(t("cli.init.bundledClaudeSkillNotFound", { src }));
+      skippedFiles.push(relDest);
+    } else if ((await pathExists(dest)) && !force) {
+      warn(t("cli.init.skippedExisting", { file: relDest }));
+      skippedFiles.push(relDest);
+    } else {
+      await copyFile(src, dest);
+      copiedFiles.push(relDest);
+    }
   }
 
   if (options.withActions) {

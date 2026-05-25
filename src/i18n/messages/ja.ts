@@ -1269,7 +1269,8 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   --lang <en|ja>         生成するレポートテンプレートとワークスペース文書の言語
                          (既定: en; RADAR_LANG も尊重; radar.config.yaml に永続化)
   --force                既存ファイルを上書きする
-  --with-routines        .claude/routines/watch-daily.yaml を生成する (Claude Routines の雛形)
+  --with-routines        .claude/routines/watch-daily.yaml (Claude Routines の雛形) と
+                         .claude/skills/routine-setup/SKILL.md (Claude 専用の登録 skill) を生成する
   --with-actions         .github/workflows/watch.yaml を生成する (GitHub Actions cron の雛形)
   --no-claude-skills     .claude/skills/ へのスラッシュコマンドラッパー書き込みをスキップする
                          (@ozzylabs/skills の Renovate preset がそのディレクトリを管理する場合に有用)
