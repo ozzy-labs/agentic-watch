@@ -43,7 +43,7 @@
 │    └─ injection-detector: ADR-0009 M1c regex pre-filter   │
 │  agents/         : 4 CLI アダプタ + _boundary wrap helper │
 │  schemas/        : Zod スキーマ (Source / Item / State / Research / Config) │
-│  cli/            : init / source / watch / research / dismiss / review / update / doctor / workflow │
+│  cli/            : init / source / watch / state / research / triage / dismiss / undismiss / items / review / update / doctor / workflow / routine │
 │  skills/         : engine SKILL bundle (research/review/update) │
 │  claude-skills/  : Claude Code slash-command 雛形         │
 │  gemini-commands/: Gemini CLI TOML slash-command 雛形     │
@@ -68,7 +68,7 @@ bundled-asset 5 ディレクトリ (`skills/` / `claude-skills/` / `gemini-comma
 | `core/injection-detector` | `src/core/injection-detector.ts` | ADR-0009 M1c の regex pre-filter + research frontmatter / log への audit 出力 |
 | `agents/` | `src/agents/` | 共通 `AgentAdapter`（[ADR-0001](./adr/0001-agent-adapter-interface.md)）+ 4 CLI 固有実装、`_boundary.ts` で untrusted コンテンツ wrap helper を提供（[ADR-0009](./adr/0009-untrusted-external-content-handling.md) M1c）。skill 呼び出しプロトコル: [`design/skill-design.md`](./design/skill-design.md) |
 | `schemas/` | `src/schemas/` | `Source` `Item` `SourceState` `Research` `Config` の Zod スキーマ。`Source.trustLevel` (`"trusted" \| "untrusted"`、default `"untrusted"`) で prompt injection 緩和の per-source policy 分岐に備える ([ADR-0009](./adr/0009-untrusted-external-content-handling.md))。`Config` は `radar.config.yaml` 用 |
-| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / research / dismiss / review / update / doctor / workflow)。`doctor.ts` は workspace / agent CLI / Playwright + Chromium / proxy / TLS の health check ([#114](https://github.com/ozzy-labs/feedradar/issues/114) / [#163](https://github.com/ozzy-labs/feedradar/issues/163))。`workflow.ts` + `workflow/generate-watch.ts` / `workflow/generate-combined.ts` は GitHub Actions workflow YAML の後追い生成 ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。watch / combined の 2 type を実装 (`research` / `review` 単独 type は Phase 2 / #191)。`research` の `--batch` モード ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a) は CLI の `--max-items` ハードキャップを workflow YAML literal と二重防御で固定する。`_progress.ts` は `--verbose` / `--quiet` フラグの共通パーサ ([ADR-0015](./adr/0015-progress-reporting-ux.md)) |
+| `cli/` | `src/cli/` | 各サブコマンド (init / source / watch / state / research / triage / dismiss / undismiss / items / review / update / doctor / workflow / routine)。`state.ts` は `radar state prune` で `lastSeenIds` を FIFO 削減 ([#333](https://github.com/ozzy-labs/feedradar/issues/333))。`triage.ts` は LLM triage ([ADR-0018](./adr/0018-triage-extension.md))、`routine.ts` は Claude Routine YAML の後追い生成 ([ADR-0020](./adr/0020-claude-routines-generation.md))。`doctor.ts` は workspace / agent CLI / Playwright + Chromium / proxy / TLS の health check ([#114](https://github.com/ozzy-labs/feedradar/issues/114) / [#163](https://github.com/ozzy-labs/feedradar/issues/163))。`workflow.ts` + `workflow/generate-watch.ts` / `workflow/generate-combined.ts` は GitHub Actions workflow YAML の後追い生成 ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md))。watch / combined の 2 type を実装 (`research` / `review` 単独 type は Phase 2 / #191)。`research` の `--batch` モード ([ADR-0014](./adr/0014-workflow-generate-and-auto-research-safety.md) D3a) は CLI の `--max-items` ハードキャップを workflow YAML literal と二重防御で固定する。`_progress.ts` は `--verbose` / `--quiet` フラグの共通パーサ ([ADR-0015](./adr/0015-progress-reporting-ux.md)) |
 
 ## データフロー
 
