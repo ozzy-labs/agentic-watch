@@ -86,11 +86,11 @@ routine の出力は **PR か `claude/*` ブランチに限定**し、**main 直
 
 `radar routine generate pipeline` の既定は **PR / `claude/*`（auto-merge なし）** のまま据え置く（上記ゲートが既定）。ただし、ユーザーが明示的に opt-in した場合に限り、pipeline routine が自分の PR を main に着地させる経路を用意する（[#301](https://github.com/ozzy-labs/feedradar/issues/301)。GHA 側の [`workflow generate combined-with-triage --output-mode pr|direct-commit`](./0014-workflow-generate-and-auto-research-safety.md)（[#258](https://github.com/ozzy-labs/feedradar/issues/258)）と対称）:
 
-- **`radar routine generate pipeline --output-mode auto-merge`**（既定は `pr`）を選ぶと、生成 YAML の instructions step 6 が `claude/pipeline/...` PR を開いた後に `git switch main` → `gh pr merge "${BRANCH}" --squash --delete-branch`（fail-soft）で **自分の PR を squash-merge して main に着地**させる。GHA の `direct-commit`（PR を介さず main へ直 push）とは異なり、**必ず PR を経由する**ため名前を `auto-merge` と分ける。
-- pipeline は step 5 で `radar review` 済みなので、auto-merge の前提（review-complete な PR）は自然に満たす。これが ADR-0009 の無レビュー反映ゲートを opt-in で緩める根拠になる。
+- **`radar routine generate pipeline --output-mode auto-merge`**（既定は `pr`）を選ぶと、生成 YAML の instructions の着地 step（[#331](https://github.com/ozzy-labs/feedradar/issues/331) で digest / unsure step を挿入したため step 8）が `claude/pipeline/...` PR を開いた後に `git switch main` → `gh pr merge "${BRANCH}" --squash --delete-branch`（fail-soft）で **自分の PR を squash-merge して main に着地**させる。GHA の `direct-commit`（PR を介さず main へ直 push）とは異なり、**必ず PR を経由する**ため名前を `auto-merge` と分ける。
+- pipeline は着地前の review step（[#331](https://github.com/ozzy-labs/feedradar/issues/331) 後は step 6）で `radar review` 済みなので、auto-merge の前提（review-complete な PR）は自然に満たす。これが ADR-0009 の無レビュー反映ゲートを opt-in で緩める根拠になる。
 - `auto-merge` は `permissions.allow_unrestricted_git_push: true` を要求するが、これは **必要条件であって十分条件ではない**。Web UI の「Allow unrestricted branch pushes」トグルも別途 ON にする必要がある（RemoteTrigger API は当該フィールドを受け付けないため、YAML だけでは有効化できない）。生成時に stderr 警告でこの点を明示する。
 - `--auto`（required check 前提のキューイング）ではなく **即時 `--squash`** を焼き込む。check の無いリポでは `gh pr merge --auto` が永久に merge されないため。
-- **`watch` には `--output-mode` を追加しない**: watch は detection のみで step 5 の review が無く、auto-merge すると未レビュー内容が main に乗るため、ゲート緩和は pipeline 限定とする。
+- **`watch` には `--output-mode` を追加しない**: watch は detection のみで pipeline のような review step が無く、auto-merge すると未レビュー内容が main に乗るため、ゲート緩和は pipeline 限定とする。
 - untrusted-content の blast radius（ADR-0009 / [ADR-0019](./0019-host-agent-execution-mode.md)）を踏まえ、**既定は据え置き**（auto-merge は明示 opt-in のユーザーのみ）。
 
 #### D3b. connector なし
