@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026-05-17 c、Revised 2026-05-22 d）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/FeedRadar/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/FeedRadar/issues/77))。**Revision (c)** で `.gemini/commands/` への Gemini CLI slash command TOMLs 配置 (default-on、`--no-gemini-commands` で opt-out) を追加し、engine SKILL を adapter spawn / interactive 両対応の **dual-mode** に拡張、**5 層構成** に到達 ([#78](https://github.com/ozzy-labs/FeedRadar/issues/78))。
+Accepted（2026-05-11、Revised 2026-05-17、Revised 2026-05-17 b、Revised 2026-05-17 c、Revised 2026-05-22 d、Revised 2026-05-25 e）— Phase 1 で同梱 + `.agents/skills/` 配置を確定。**Revision (a)** で `.claude/skills/` への slash-command wrapper 配置 (default-on、`--no-claude-skills` で opt-out) を追加 ([#75](https://github.com/ozzy-labs/FeedRadar/issues/75))。**Revision (b)** で `AGENTS.md` (agent-agnostic instructions、default-on、`--no-agents-md` で opt-out) を追加し、4 層構成に拡張 ([#77](https://github.com/ozzy-labs/FeedRadar/issues/77))。**Revision (c)** で `.gemini/commands/` への Gemini CLI slash command TOMLs 配置 (default-on、`--no-gemini-commands` で opt-out) を追加し、engine SKILL を adapter spawn / interactive 両対応の **dual-mode** に拡張、**5 層構成** に到達 ([#78](https://github.com/ozzy-labs/FeedRadar/issues/78))。**Revision (e)** で `.claude/skills/routine-setup/SKILL.md`（engine SKILL 対応物を持たない手順内蔵・Claude 専用 skill）を 11 個目の bundled asset として追加し、「`.claude/skills/` は薄い wrapper のみ」不変条件の初の例外を明文化 ([#363](https://github.com/ozzy-labs/feedradar/issues/363) epic / [#364](https://github.com/ozzy-labs/feedradar/issues/364))。
 
 ## Context
 
@@ -289,11 +289,12 @@ table を SSoT として参照できるようにする。
 | **templates/digest.md** | `<cwd>/templates/digest.md` | digest research のテンプレート雛形 (ADR-0011) | `src/templates/digest.md` | `--no-templates` (共通) |
 | **schedule scaffolds (Routines)** | `<cwd>/.claude/routines/watch-daily.yaml` | Claude Routines 定期実行雛形 (ADR-0004 / ADR-0020 で YAML 統一・パス修正) | `src/templates/routines/` | (opt-in: `--with-routines`) |
 | **schedule scaffolds (Actions)** | `<cwd>/.github/workflows/watch.yaml` | GitHub Actions 定期実行雛形 (ADR-0004) | `src/templates/workflows/watch.yaml` | (opt-in: `--with-actions`) |
+| **routine-setup skill** (Claude 専用・手順内蔵) | `<cwd>/.claude/skills/routine-setup/SKILL.md` | Claude Code interactive で `/routine-setup` として発火し、正本 routine YAML から RemoteTrigger 経由で routine を register/update する手順内蔵 skill (engine SKILL 対応物を**持たない**初の例外、後述 Revision (e)) | `src/claude-skills/routine-setup/` | (opt-in: `--with-routines`、Revision (e) / [#366](https://github.com/ozzy-labs/feedradar/issues/366)) |
 
-合計 **10 種類** の bundled asset を `init` が扱う (Revision (c) 時点の 5 層 +
+合計 **11 種類** の bundled asset を `init` が扱う (Revision (c) 時点の 5 層 +
 追加 4 種 [`CLAUDE.md` / `FEEDRADAR.md` / `templates/default.md` /
 `templates/digest.md`] + schedule scaffolds 2 つを Routines / Actions に分離して
-カウント)。
+カウント + Revision (e) の `routine-setup` skill)。
 
 ### 改訂 (d) が扱わないもの
 
@@ -314,6 +315,36 @@ table を SSoT として参照できるようにする。
 4. opt-out フラグを定義し table に明記
 
 このルールにより table の drift を構造的に防ぐ。
+
+## Revision (2026-05-25 e, [#363](https://github.com/ozzy-labs/feedradar/issues/363) epic / [#364](https://github.com/ozzy-labs/feedradar/issues/364))
+
+### 動機 (Revision e)
+
+`radar routine generate <type>`（[ADR-0020](./0020-claude-routines-generation.md)）は正本 routine YAML と Web UI 貼付用プロンプトを生成するところまでで、登録（register / re-register）は **Web UI への手作業**に委ねている（ADR-0020 D1）。実際に routine を登録し直すたびに、毎回ほぼ同じだが error-prone な手順（RemoteTrigger create body の手組み、cron の UTC 変換、`routine_id` の YAML 書き戻し 等）が発生する。
+
+これを 1 コマンドに集約する **`.claude/skills/routine-setup/SKILL.md`** を `init` で配布する（skill 本体の実装は [#366](https://github.com/ozzy-labs/feedradar/issues/366)、本 Revision は **ADR-0007 への配布登録**を確定する）。この skill は正本 YAML から決定論的に登録を実行する Claude Code 専用 skill であり、RemoteTrigger（claude.ai `/v1/code/triggers`）が **Claude Code harness 内でしか呼べない**（OAuth トークンの in-process 注入）ため、他 agent では成立しない。
+
+### 「`.claude/skills/` は薄い wrapper のみ」不変条件の初の例外
+
+Revision (a) 以降、`.claude/skills/` 層は一貫して **薄い wrapper**（slash command の発火点のみ、procedure 本体は engine SKILL `.agents/skills/` に閉じる）と定義してきた（§SSoT 維持の原則）。`routine-setup` は **この不変条件の初の例外**である:
+
+- **engine SKILL 対応物を持たない**: research / review / update / dismiss の Claude discovery SKILL は対応する engine SKILL（または `radar <subcommand>`）を wrap するだけだが、`routine-setup` は wrap すべき engine SKILL も `radar` サブコマンドも持たない。手順本体（YAML 読取 → body 構築 → cron 変換 → RemoteTrigger create/update → `routine_id` 書き戻し）を **SKILL.md 内に内蔵**する。
+- **Claude 専用で他 agent では成立しない**: RemoteTrigger は Claude Code harness 機能であり、Codex / Gemini / Copilot からは呼べない。よって engine SKILL（4 agent 共通 SSoT）には載せず、`.claude/skills/` 限定で配布するのが構造的に正しい。これは「procedure は engine SKILL に閉じる」原則を破るが、**そもそも engine 側に置けない（他 agent で動かない）Claude 製品固有の能力**であるための例外として許容する。
+- **SSoT の drift 懸念への対処**: 手順を内蔵すると wrapper 原則からの逸脱で drift リスクが生じるが、`routine-setup` が register 時に使う bootstrap プロンプトは **`routine-setup` 自身で再執筆せず**、`radar routine generate <type> --prompt-mode bootstrap --emit-bootstrap-prompt`（[#365](https://github.com/ozzy-labs/feedradar/issues/365)）を呼んで生成器と同一の単一ソースから取得する。これにより「Web UI 貼付で登録した routine」と「skill で登録した routine」が同一 bootstrap プロンプトになり、内蔵手順であっても bootstrap プロンプト本文の drift は防げる。
+
+### opt-out 方針 — `--with-routines` gating（opt-in）
+
+`routine-setup` skill の配布は、他の Claude discovery SKILL（default-on / `--no-claude-skills` で opt-out）とは扱いを変え、**routine YAML 雛形（schedule scaffolds, Routines）と対で `--with-routines` gating（opt-in）** とする（epic [#363](https://github.com/ozzy-labs/feedradar/issues/363) / skill 本体 [#366](https://github.com/ozzy-labs/feedradar/issues/366) の推奨案）:
+
+- **凝集度**: `routine-setup` は routine を運用するユーザーにのみ意味があり、routine YAML 雛形（`--with-routines`）と組で配布されるべき。research/review/update のような全 workspace 共通の skill とは性質が異なる。
+- **ADR-0004 整合**: routine scaffold（schedule scaffolds, Routines）が opt-in（`--with-routines`）であることと整合し、「routine を使うと宣言したユーザーにのみ register 手段も配る」一貫した surface になる。
+- **Renovate preset との衝突**: `@ozzylabs/skills` preset で `.claude/skills/` を集中管理している workspace では、既存の skip + warning パターン（§既存ファイル保護）にそのまま乗る。`<cwd>/.claude/skills/routine-setup/SKILL.md` が既に存在すれば skip + warning し、`--force` で上書き可能。`routine-setup` は org 横断の汎用 skill ではない（feedradar 固有・Claude 製品依存）ため preset 側に同名 skill が来ることは想定しないが、来た場合も user が preset / FeedRadar のどちらを優先するか選べる。
+
+### Revision (e) が解消しない事項
+
+- Revision (a)-(d) と同じく、ユーザー編集後の sync 問題は引き続き発生（`--force` または手 merge で対処）
+- register 経路でも消せない一線（`Allow unrestricted branch pushes` トグル ON / routine 削除は Web UI 専用）は残る。詳細は [ADR-0020](./0020-claude-routines-generation.md) の register 経路セクションを参照
+- skill 本体の実装・i18n 方針（英語単一）・`init` copy ロジックへの登録は [#366](https://github.com/ozzy-labs/feedradar/issues/366) で実施する
 
 ## Consequences
 
