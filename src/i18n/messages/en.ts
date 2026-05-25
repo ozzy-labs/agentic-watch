@@ -1353,6 +1353,7 @@ Options:
                          (default: en; also honors RADAR_LANG; persisted to radar.config.yaml)
   --force                Overwrite existing files
   --with-routines        Generate .claude/routines/watch-daily.yaml (Claude Routines scaffold)
+                         and .claude/skills/routine-setup/SKILL.md (Claude-only register skill)
   --with-actions         Generate .github/workflows/watch.yaml (GitHub Actions cron scaffold)
   --no-claude-skills     Skip writing slash-command wrappers to .claude/skills/
                          (useful if @ozzylabs/skills Renovate preset manages that directory)
