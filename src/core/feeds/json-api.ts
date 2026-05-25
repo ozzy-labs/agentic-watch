@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import type {
-  FacetRangeEnd,
+  FacetRangeBound,
   Item,
   Source,
   SourceFacet,
   SourceJsonApiSelectors,
   SourcePagination,
 } from "../../schemas/index.js";
-import { FACET_RANGE_CURRENT_YEAR, ItemSchema } from "../../schemas/index.js";
+import { FACET_RANGE_RELATIVE_RE, ItemSchema } from "../../schemas/index.js";
 import { fetchWithRetry } from "./_fetch.js";
 import { selectAll, selectOne } from "./_jsonpath.js";
 import { deriveItemId, deriveStableKey } from "./derive-id.js";
@@ -567,31 +567,38 @@ function applyFacetValue(rawUrl: string, facet: SourceFacet, value: string | num
 }
 
 /**
- * Resolve a range upper bound to a concrete number.
+ * Resolve a range bound to a concrete year.
  *
- * The `"current-year"` sentinel (#257) expands to the current calendar year
- * at fetch time so year-axis recipes auto-extend across year boundaries
- * instead of silently capping at a hardcoded upper bound. `now` is injected
- * for deterministic testing; it defaults to the wall clock.
+ * A bound is either a literal number or a relative year token (#257 / #352):
+ * `"current-year"` resolves to the current calendar year and
+ * `"current-year-<N>"` to N years ago. Relative bounds let year-axis recipes
+ * auto-track wall-clock time instead of silently capping at a hardcoded value.
+ * `now` is injected for deterministic testing; it defaults to the wall clock.
  */
-function resolveRangeEnd(end: FacetRangeEnd, now: Date = new Date()): number {
-  return end === FACET_RANGE_CURRENT_YEAR ? now.getFullYear() : end;
+function resolveRangeBound(bound: FacetRangeBound, now: Date = new Date()): number {
+  if (typeof bound === "number") return bound;
+  // The schema (`FacetRangeBoundSchema`) guarantees the token shape, so the
+  // match is non-null; the optional capture group is the offset (absent ⇒ 0 ⇒
+  // the current year).
+  const offset = FACET_RANGE_RELATIVE_RE.exec(bound)?.[1];
+  return now.getFullYear() - (offset ? Number.parseInt(offset, 10) : 0);
 }
 
 /**
  * Enumerate the facet values for a single facet spec.
  *
  * - `range`: `[start, end]` inclusive, walked with `step` (default 1).
- *   Schema guarantees `step > 0`. The upper bound may be the literal
- *   `"current-year"` sentinel, resolved here to the current calendar year
- *   (#257); when start > the resolved end the loop yields nothing (a future-
- *   dated start is a degenerate 0-item config, not an error).
+ *   Schema guarantees `step > 0`. EITHER bound may be a relative year token
+ *   (`"current-year"` / `"current-year-<N>"`), resolved here to a concrete
+ *   year (#257 / #352); when the resolved start > resolved end the loop yields
+ *   nothing (a degenerate 0-item config, not an error).
  * - `enum`: returns the explicit list verbatim (string or number).
  */
 function* generateFacetValues(facet: SourceFacet): Generator<string | number> {
   if (facet.type === "range") {
-    const [start, rawEnd] = facet.range;
-    const end = resolveRangeEnd(rawEnd);
+    const [rawStart, rawEnd] = facet.range;
+    const start = resolveRangeBound(rawStart);
+    const end = resolveRangeBound(rawEnd);
     const step = facet.step;
     for (let v = start; v <= end; v += step) yield v;
     return;
@@ -607,8 +614,9 @@ function* generateFacetValues(facet: SourceFacet): Generator<string | number> {
  */
 function countFacetValues(facet: SourceFacet): number {
   if (facet.type === "range") {
-    const [start, rawEnd] = facet.range;
-    const end = resolveRangeEnd(rawEnd);
+    const [rawStart, rawEnd] = facet.range;
+    const start = resolveRangeBound(rawStart);
+    const end = resolveRangeBound(rawEnd);
     if (start > end) return 0;
     return Math.floor((end - start) / facet.step) + 1;
   }
@@ -618,8 +626,8 @@ function countFacetValues(facet: SourceFacet): number {
 /**
  * Pick the single facet value to probe in dry-run mode (`source test`).
  *
- * - `range`: the resolved UPPER bound (latest year via {@link resolveRangeEnd},
- *   honouring the `"current-year"` sentinel from #257). This fixes #256 —
+ * - `range`: the resolved UPPER bound (latest year via {@link resolveRangeBound},
+ *   honouring the relative year tokens from #257 / #352). This fixes #256 —
  *   recency-style recipes (e.g. AWS What's New swept by year) were previously
  *   tested against the range START (oldest year, e.g. 2004), where current
  *   keywords can never match. Testing the latest year makes keyword tuning
@@ -630,8 +638,9 @@ function countFacetValues(facet: SourceFacet): number {
  */
 function pickDryRunFacetValue(facet: SourceFacet): string | number | null {
   if (facet.type === "range") {
-    const [start, rawEnd] = facet.range;
-    const end = resolveRangeEnd(rawEnd);
+    const [rawStart, rawEnd] = facet.range;
+    const start = resolveRangeBound(rawStart);
+    const end = resolveRangeBound(rawEnd);
     if (start > end) return null;
     // Walk down from `end` by `step` to land on a value the real sweep would
     // actually visit (the inclusive range may not include `end` itself when

@@ -321,23 +321,36 @@ export type SourceJsonApiSelectors = z.infer<typeof SourceJsonApiSelectorsSchema
  * GET disablement in facet sweep mode).
  */
 /**
- * Sentinel for a relative range upper bound (#257).
+ * Relative range bound sentinel (#257 / #352).
  *
- * When the `range` end element is the literal string `"current-year"` instead
- * of a number, the adapter resolves it to the current calendar year at fetch
- * time (`generateFacetValues`). This keeps year-axis facet recipes from
- * silently dropping new items at year boundaries: a hardcoded upper bound
- * (e.g. `[2004, 2026]`) stops querying `…#year#2027` once 2027 arrives, with
- * no error (out-of-range years simply return 0 items). The sentinel auto-
- * extends the swept range so coverage tracks wall-clock time without manual
- * recipe bumps.
+ * A `range` endpoint may be a literal number or a relative year token that the
+ * adapter resolves to a concrete calendar year at fetch time
+ * (`resolveRangeBound` in `json-api.ts`):
  *
- * Only the upper bound supports this today; the lower bound stays a literal
- * number (AWS's first announcement year is fixed at 2004).
+ * - `"current-year"`     → the current calendar year
+ * - `"current-year-<N>"` → N calendar years ago (N = non-negative integer)
+ *
+ * Relative bounds keep year-axis facet recipes from silently drifting at year
+ * boundaries: a hardcoded `[2004, 2026]` stops querying `…#year#2027` once 2027
+ * arrives, with no error (out-of-range years simply return 0 items). #257 added
+ * the sentinel to the UPPER bound; #352 generalizes it to BOTH bounds and adds
+ * the `-<N>` offset, so `["current-year", "current-year"]` ("this year only")
+ * and `["current-year-2", "current-year"]` ("the last 3 years") auto-track
+ * wall-clock time without manual recipe bumps.
  */
 export const FACET_RANGE_CURRENT_YEAR = "current-year";
-export const FacetRangeEndSchema = z.union([z.number(), z.literal(FACET_RANGE_CURRENT_YEAR)]);
-export type FacetRangeEnd = z.infer<typeof FacetRangeEndSchema>;
+/** Matches `current-year` or `current-year-<N>` (N = non-negative integer offset). */
+export const FACET_RANGE_RELATIVE_RE = /^current-year(?:-(\d+))?$/;
+export const FacetRangeBoundSchema = z.union([
+  z.number(),
+  z
+    .string()
+    .regex(
+      FACET_RANGE_RELATIVE_RE,
+      "expected a number or a relative year token ('current-year' / 'current-year-<N>')",
+    ),
+]);
+export type FacetRangeBound = z.infer<typeof FacetRangeBoundSchema>;
 
 export const SourceFacetRangeSchema = z
   .object({
@@ -352,12 +365,14 @@ export const SourceFacetRangeSchema = z
     /**
      * Inclusive `[start, end]` range — both endpoints are visited.
      *
-     * The `end` element accepts either a literal number (`[2004, 2026]`) or
-     * the sentinel string `"current-year"` (`[2004, "current-year"]`). The
-     * sentinel is resolved to the current calendar year at fetch time so the
-     * swept range tracks wall-clock time without manual recipe bumps (#257).
+     * EITHER endpoint accepts a literal number (`[2004, 2026]`) or a relative
+     * year token (`"current-year"` / `"current-year-<N>"`), resolved to a
+     * concrete year at fetch time so the swept range tracks wall-clock time
+     * without manual recipe bumps (#257 upper bound; #352 both bounds + offset).
+     * Examples: `[2004, "current-year"]`, `["current-year", "current-year"]`
+     * (this year only), `["current-year-2", "current-year"]` (the last 3 years).
      */
-    range: z.tuple([z.number(), FacetRangeEndSchema]),
+    range: z.tuple([FacetRangeBoundSchema, FacetRangeBoundSchema]),
     /** Step size (default 1). Must be a positive integer. */
     step: z.number().int().positive().default(1),
   })
@@ -369,11 +384,15 @@ export const SourceFacetRangeSchema = z
         message: "template must contain '{}' placeholder",
       });
     }
-    // `start > end` is only checkable when the upper bound is a literal
-    // number. The `"current-year"` sentinel resolves at fetch time and is
-    // assumed to be >= start (a recipe whose start is in the future is a
-    // degenerate config the adapter handles as a 0-iteration loop).
-    if (typeof value.range[1] === "number" && value.range[0] > value.range[1]) {
+    // `start > end` is only statically checkable when BOTH bounds are literal
+    // numbers. Relative tokens (`"current-year"` / `"current-year-<N>"`) resolve
+    // at fetch time; a range that resolves to start > end is a degenerate
+    // 0-iteration loop the adapter handles without error (#257 / #352).
+    if (
+      typeof value.range[0] === "number" &&
+      typeof value.range[1] === "number" &&
+      value.range[0] > value.range[1]
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["range"],
