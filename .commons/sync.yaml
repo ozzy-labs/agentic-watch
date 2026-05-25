@@ -25,3 +25,9 @@ pinned:
   - biome.json
   # release-please generates CHANGELOG.md with style that doesn't match MD012
   - .markdownlint-cli2.yaml
+  # PR #344 / #348: routine docs carry feedradar-specific `radar routine`
+  # content (generate / --prompt-mode bootstrap / fire / delete_branch_on_merge
+  # / custom network_access security guidance) absent from the generic commons
+  # baseline. Pin so commons sync (e.g. #351) does not revert them.
+  - .claude/routines/README.md
+  - .claude/routines/_template.yaml
