@@ -11,7 +11,11 @@ import {
   parseGeneratePipelineRoutineArgs,
   renderPipelineRoutineTemplate,
 } from "../../src/cli/routine/generate-pipeline.js";
-import { SUPPORTED_MODELS, type SupportedModel } from "../../src/cli/routine/generate-watch.js";
+import {
+  PROMPT_MODES,
+  SUPPORTED_MODELS,
+  type SupportedModel,
+} from "../../src/cli/routine/generate-watch.js";
 import { runRoutine } from "../../src/cli/routine.js";
 
 /**
@@ -65,6 +69,7 @@ describe("cli/routine/generate-pipeline", () => {
       expect(parsed.model).toBe("claude-sonnet-4-6");
       expect(parsed.maxItems).toBe(PIPELINE_DEFAULT_MAX_ITEMS);
       expect(parsed.outputMode).toBe("pr");
+      expect(parsed.promptMode).toBe("inline");
       expect(parsed.output).toBe(join(".claude", "routines", "feedradar-pipeline.yaml"));
       expect(parsed.force).toBe(false);
     });
@@ -135,6 +140,25 @@ describe("cli/routine/generate-pipeline", () => {
         /--output-mode expects one of: pr \| auto-merge/,
       );
       expect(() => parseGeneratePipelineRoutineArgs(["--output-mode"])).toThrow(/requires a value/);
+    });
+
+    it("accepts --prompt-mode bootstrap and rejects an unknown mode (#327)", () => {
+      expect(parseGeneratePipelineRoutineArgs(["--prompt-mode", "bootstrap"]).promptMode).toBe(
+        "bootstrap",
+      );
+      expect(parseGeneratePipelineRoutineArgs(["--prompt-mode", "inline"]).promptMode).toBe(
+        "inline",
+      );
+      expect(() => parseGeneratePipelineRoutineArgs(["--prompt-mode", "external"])).toThrow(
+        /--prompt-mode expects one of: inline \| bootstrap/,
+      );
+      expect(() => parseGeneratePipelineRoutineArgs(["--prompt-mode"])).toThrow(/requires a value/);
+    });
+
+    it("every PROMPT_MODES value parses (#327)", () => {
+      for (const m of PROMPT_MODES) {
+        expect(parseGeneratePipelineRoutineArgs(["--prompt-mode", m]).promptMode).toBe(m);
+      }
     });
   });
 
@@ -419,6 +443,47 @@ describe("cli/routine/generate-pipeline", () => {
       expect(joined).toContain("Allow unrestricted branch");
     });
 
+    it("inline prompt-mode (default) tells the user to yq the full instructions (#327)", async () => {
+      await run({ promptMode: "inline" });
+      const joined = logs.join("\n");
+      expect(joined).toContain("yq -r '.instructions'");
+      expect(joined).toContain("yq -r '.environment.setup_script'");
+      expect(joined).not.toContain("You are the `feedradar-pipeline` routine.");
+    });
+
+    it("bootstrap prompt-mode prints a SHORT prompt, not the full instructions (#327)", async () => {
+      await run({ promptMode: "bootstrap" });
+      const joined = logs.join("\n");
+      expect(joined).toContain("You are the `feedradar-pipeline` routine.");
+      expect(joined).toContain("Read `.claude/routines/feedradar-pipeline.yaml`");
+      expect(joined).toContain("`instructions:` block");
+      expect(joined).toContain("AskUserQuestion is NOT available");
+      expect(joined).toContain("no Web UI re-paste");
+      // Setup script field still extracted via yq; Instructions field is not.
+      expect(joined).toContain("yq -r '.environment.setup_script'");
+      expect(joined).not.toContain("yq -r '.instructions'");
+    });
+
+    it("bootstrap mode leaves the generated YAML instructions block intact (#327)", async () => {
+      await run({ promptMode: "bootstrap" });
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"),
+        "utf8",
+      );
+      // Full pipeline instructions must remain the runtime source of truth.
+      expect(written).toContain("instructions:");
+      expect(written).toContain("radar watch run");
+      expect(written).toContain("radar triage --apply");
+      expect(written).toContain("claude/pipeline/");
+      expect(written).not.toContain("no Web UI re-paste");
+    });
+
+    it("rejects an invalid promptMode at the core level (#327)", async () => {
+      await expect(run({ promptMode: "external" as unknown as "inline" })).rejects.toThrow(
+        /invalid --prompt-mode/,
+      );
+    });
+
     it("emits a file that passes #280's validate.py", async () => {
       await run();
       const dest = join(workdir, ".claude", "routines", "feedradar-pipeline.yaml");
@@ -534,6 +599,32 @@ describe("cli/routine/generate-pipeline", () => {
       expect(joined).toContain("routine generate pipeline");
       expect(joined).toContain("--output-mode <mode>");
       expect(joined).toContain("pr | auto-merge");
+      // #327: the new --prompt-mode option is documented in help.
+      expect(joined).toContain("--prompt-mode <mode>");
+      expect(joined).toContain("inline | bootstrap");
+    });
+
+    it("dispatches `generate pipeline --prompt-mode bootstrap` end-to-end (#327)", async () => {
+      const code = await runRoutine(
+        ["generate", "pipeline", "--repo", "acme/widgets", "--prompt-mode", "bootstrap"],
+        { cwd: workdir, io: io() },
+      );
+      expect(code, `stderr: ${errors.join("\n")}`).toBe(0);
+      expect(logs.join("\n")).toContain("You are the `feedradar-pipeline` routine.");
+      const written = await readFile(
+        join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"),
+        "utf8",
+      );
+      expect(written).toContain("radar watch run");
+    });
+
+    it("surfaces an unknown --prompt-mode through the dispatcher (exit 2) (#327)", async () => {
+      const code = await runRoutine(["generate", "pipeline", "--prompt-mode", "external"], {
+        cwd: workdir,
+        io: io(),
+      });
+      expect(code).toBe(2);
+      expect(errors.join("\n")).toContain("--prompt-mode expects one of: inline | bootstrap");
     });
   });
 });

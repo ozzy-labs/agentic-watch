@@ -699,6 +699,11 @@ Options:
   --timezone <tz>       Schedule timezone (default: "UTC")
   --model <name>        ${models}
                         (default: claude-sonnet-4-6)
+  --prompt-mode <mode>  inline | bootstrap (default: inline). 'bootstrap' makes the
+                        completion print a SHORT prompt to paste into the Web UI
+                        (the routine reads its instructions from the committed
+                        YAML at run time — no re-paste on edits). The generated
+                        YAML's instructions block is unchanged either way.
   --output <path>       Output file under .claude/routines/
                         (default: .claude/routines/<name>.yaml)
   --force, -f           Overwrite existing output file
@@ -733,6 +738,11 @@ Options:
   --output-mode <mode>  pr | auto-merge (default: pr). 'auto-merge' squash-merges
                         the routine's own PR to main (requires the Web UI 'Allow
                         unrestricted branch pushes' toggle).
+  --prompt-mode <mode>  inline | bootstrap (default: inline). 'bootstrap' makes the
+                        completion print a SHORT prompt to paste into the Web UI
+                        (the routine reads its instructions from the committed
+                        YAML at run time — no re-paste on edits). The generated
+                        YAML's instructions block is unchanged either way.
   --output <path>       Output file under .claude/routines/
                         (default: .claude/routines/<name>.yaml)
   --force, -f           Overwrite existing output file
@@ -1477,6 +1487,26 @@ Options:
     `       yq -r '.instructions'             ${path}`,
   "cli.routine.pasteYqSetupScript": ({ path }: { path: string }): string =>
     `       yq -r '.environment.setup_script' ${path}`,
+  // --prompt-mode bootstrap (#327): instead of pasting the full instructions
+  // into the Web UI Prompt field, paste a SHORT bootstrap prompt that tells the
+  // routine to read the committed YAML at run time. The generated YAML's
+  // `instructions:` block is unchanged (it stays the runtime source of truth);
+  // only the paste guidance differs. The bootstrap prompt body (lines 1-4) is
+  // the EXACT text to paste — it must read as a direct second-person command.
+  "cli.routine.pasteStep3Bootstrap":
+    "  3. For the Instructions field, paste this SHORT bootstrap prompt (prompt-mode bootstrap):",
+  "cli.routine.bootstrapPromptLine1": ({ name }: { name: string }): string =>
+    `       You are the \`${name}\` routine.`,
+  "cli.routine.bootstrapPromptLine2": ({ path }: { path: string }): string =>
+    `       Read \`${path}\` in this repository and faithfully execute its top-level`,
+  "cli.routine.bootstrapPromptLine3":
+    "       `instructions:` block. Run autonomously: AskUserQuestion is NOT available,",
+  "cli.routine.bootstrapPromptLine4":
+    "       and local MCP servers are NOT available in this environment.",
+  "cli.routine.pasteStep3BootstrapSetup":
+    "     For the multi-line Setup script field, extract it with yq:",
+  "cli.routine.bootstrapReuseNote":
+    "     (bootstrap prompt: future instructions edits land via repo commits — no Web UI re-paste needed.)",
   "cli.routine.pasteStep4":
     "  4. After registering, copy the issued routine_id (trig_xxxx) back into the YAML and set status: active.",
   "cli.routine.scheduleNote1":

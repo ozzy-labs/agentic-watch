@@ -85,6 +85,24 @@ radar routine generate pipeline --repo <owner>/<repo> --cron "0 */6 * * *" --max
 - type・オプション一覧・FeedRadar 固有の安全策は [`docs/user-guide.md` §routine workflow](../../docs/user-guide.md#routine-workflow) を参照。
 - 自分のリポでは GitHub の **`delete_branch_on_merge: true`** を有効にするのを推奨（auto-merge 構成で merged PR の `claude/*` ブランチが自動削除され、orphan ブランチの蓄積を防げる）。
 
+##### `--prompt-mode inline | bootstrap`（Web UI Prompt 欄に何を貼るか）
+
+`watch` / `pipeline` 共通のオプション。**生成される YAML の `instructions:` ブロックは変わらない**（どちらのモードでも実行時の正本としてファイルに残る）。変わるのは生成完了時に表示される「Web UI の Prompt（Instructions）欄に何を貼るか」の案内だけ。
+
+| モード                | Web UI Prompt 欄に貼るもの                                                                                     | 再貼り付け                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `inline`（既定）      | フル instructions（`yq -r '.instructions'` で抽出）                                                            | `instructions:` を更新するたびに **再貼り付けが必要**              |
+| `bootstrap`（opt-in） | 短い bootstrap 文（「`.claude/routines/<name>.yaml` を読み、その top-level `instructions:` を忠実に実行せよ」） | **不要**。instructions の更新はリポへのコミットだけで実行時に追随する |
+
+```bash
+# bootstrap モード: Web UI 再貼り付け不要の運用にしたいとき
+radar routine generate pipeline --repo <owner>/<repo> --prompt-mode bootstrap
+```
+
+- bootstrap の利点: `instructions:` を更新しても **Web UI への再貼り付けが不要**（実行時にルーティン自身が正本 YAML を読む）。Web UI の Prompt 欄が安定する。
+- トレードオフ: Web UI 上の Prompt が「YAML を読め」だけになり、**そのルーティンが何をするか一見では分からない**（self-contained 性が下がる。[ADR-0020](../../docs/adr/0020-claude-routines-generation.md) の「prompt 単体で自己完結」方針と一部相反する）。このため **既定は `inline` のまま・bootstrap は opt-in**。
+- どちらのモードでも `environment.setup_script` 欄は従来どおり `yq -r '.environment.setup_script'` で抽出して貼る。
+
 生成後は下記「[手動 / 生成 共通の続き](#手動--生成-共通の続き)」へ進む。
 
 #### 手動（`_template.yaml` から起こす）

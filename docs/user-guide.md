@@ -2908,6 +2908,7 @@ radar routine generate <type> [options]
 | `--cron <expression>` | `"0 * * * *"`（毎時） | 5-field cron。**最小間隔は 1 時間**。`*/5 * * * *` 等の sub-hourly は生成時に拒否される |
 | `--timezone <tz>` / `--tz` | `UTC` | スケジュールの timezone |
 | `--model <name>` | `claude-sonnet-4-6` | routine が使う Claude モデル |
+| `--prompt-mode <mode>` | `inline` | Web UI の Prompt 欄に何を貼るかの案内を切り替える。`inline`（既定）は フル instructions（`yq -r '.instructions'`）を貼る案内。**`bootstrap`**（opt-in）は短い bootstrap 文を貼る案内に切り替え、ルーティンが実行時に正本 YAML を読むため `instructions:` 更新時の **Web UI 再貼り付けが不要**になる。生成 YAML の `instructions:` ブロックはどちらのモードでも変わらない。後述「[`--prompt-mode bootstrap`（再貼り付け不要）](#--prompt-mode-bootstrap再貼り付け不要)」を参照 |
 | `--output <path>` | `.claude/routines/<name>.yaml` | 出力先 |
 | `--force` / `-f` | — | 既存ファイルを上書き |
 
@@ -2932,6 +2933,25 @@ radar routine generate pipeline \
   --cron "0 */6 * * *" \
   --output-mode auto-merge
 ```
+
+#### `--prompt-mode bootstrap`（再貼り付け不要）
+
+`watch` / `pipeline` 共通のオプション。生成される YAML の `instructions:` ブロック（Web UI の Prompt 欄に対応）はフルで ~220 行になることがあり、`instructions:` を更新するたびに **Web UI へ再貼り付け**する運用摩擦がある。`--prompt-mode bootstrap` はこの摩擦を opt-in で軽減する（[#327](https://github.com/ozzy-labs/feedradar/issues/327)）。
+
+| モード | Web UI の Prompt 欄に貼るもの | `instructions:` 更新時 |
+|---|---|---|
+| `inline`（既定） | フル instructions（`yq -r '.instructions'` で抽出） | **再貼り付けが必要** |
+| `bootstrap`（opt-in） | 短い bootstrap 文（「`.claude/routines/<name>.yaml` を読み、その top-level `instructions:` を忠実に実行せよ」） | **不要**（実行時にルーティンが正本 YAML を読む） |
+
+```bash
+# bootstrap モード: 以降の instructions 更新は repo コミットだけで実行時に追随する
+radar routine generate pipeline --repo myorg/feeds --prompt-mode bootstrap
+```
+
+- **不変条件**: `--prompt-mode` が変えるのは「Web UI の Prompt 欄に何を貼るか」の案内（生成完了時の stdout）**だけ**。生成 YAML の `instructions:` ブロックはどちらのモードでも実行時の正本としてそのまま残り、安全策（出力ゲート・件数上限など）にも影響しない。
+- **利点**（bootstrap）: `instructions:` を更新しても Web UI 再貼り付けが不要。Web UI の Prompt 欄が安定する。
+- **トレードオフ**（bootstrap）: Web UI 上の Prompt が「YAML を読め」だけになり、そのルーティンが何をするか一見では分からない（self-contained 性が下がる。[ADR-0020 D8](adr/0020-claude-routines-generation.md) のトレードオフ参照）。このため既定は `inline`、bootstrap は明示 opt-in。
+- どちらのモードでも `environment.setup_script` 欄は従来どおり `yq -r '.environment.setup_script'` で抽出して貼る。
 
 ### 適用手順（生成 → Web UI 反映 → 起動）
 

@@ -150,6 +150,23 @@ routine には GHA の `concurrency:` group 相当が無い。よって:
 - routine の出力ゲートが `claude/*` か PR（D3a）に限定されているため、複数 routine が同時に main へ push し合うレースは構造的に発生しにくいが、`claude/*` ブランチや items/state の commit 競合は起こり得る
 - [ADR-0019](./0019-host-agent-execution-mode.md) の「prepare→commit 間に同一 workspace の cron を重ねない」運用注意を routine でも継承する（`researching` ロック status は追加しない、ADR-0019 / [ADR-0008](./0008-status-state-machine.md)）
 
+### D8. Web UI Prompt の貼り付けモード — `--prompt-mode inline | bootstrap`（bootstrap は opt-in）
+
+routine の正本 YAML は宣言的 apply API を持たず、ユーザーが Web UI の各欄に手で貼る前提（D1）。なかでも `instructions:`（Web UI の Prompt 欄）はフルブロック（pipeline で ~220 行）であり、`instructions:` を更新するたびに **Web UI へ再貼り付け**する運用摩擦がある（[#327](https://github.com/ozzy-labs/feedradar/issues/327)）。
+
+`radar routine generate <type>` に `--prompt-mode inline | bootstrap`（既定 `inline`、`watch` / `pipeline` 共通）を追加し、**Web UI の Prompt 欄に何を貼るか**だけを切り替えられるようにする:
+
+- `inline`（既定・現状維持）: 生成完了時の案内が「`yq -r '.instructions'` でフル instructions を抽出して Prompt 欄に貼れ」。Web UI の Prompt 単体で自己完結する。
+- `bootstrap`（opt-in）: 生成完了時の案内が、短い bootstrap 文（「あなたは `<name>` routine。リポジトリの `.claude/routines/<name>.yaml` を読み、その top-level `instructions:` ブロックを忠実に実行せよ。autonomous・AskUserQuestion 不可・MCP 不可」）を貼れ、に変わる。実行時にルーティン自身が正本 YAML を読むため、`instructions:` の更新は **リポへのコミットだけで自動追随**し Web UI 再貼り付けが不要になる。
+
+重要な不変条件: **どちらのモードでも生成 YAML の `instructions:` ブロックはそのまま残す**（実行時の正本）。`--prompt-mode` が変えるのは生成完了時の stdout 案内（どの文字列を Web UI に貼るか）だけであり、ファイルの中身・安全策（D3a〜D3e）には一切影響しない。
+
+トレードオフと既定の根拠:
+
+- bootstrap だと Web UI 上の Prompt が「YAML を読め」だけになり、**routine が何をするか一見で分からない**（self-contained 性が下がる ＝ 本 ADR の「prompt 単体で自己完結」方針と一部相反する）。
+- モデルが正本 YAML の `instructions:` ブロックを読んで follow する前提で、instructions-as-prompt より僅かに間接的（end-to-end の動作は実証済みだが直接性は劣る）。
+- 以上より、**既定は `inline`（現状維持）・bootstrap は明示 opt-in** とする。bootstrap を選ぶかは「再貼り付け摩擦の削減」と「Prompt 欄の self-contained 性」のどちらを取るかのユーザー判断に委ねる。
+
 ### triage 自セッション入口の payload / commit 契約
 
 triage には自セッション入口が無い（spawn 専用、[ADR-0018](./0018-triage-extension.md)）。routine の `pipeline` type が triage を自セッションで回すには、research / review と同型の prepare / commit 2-call を triage にも新設する（[#279](https://github.com/ozzy-labs/feedradar/issues/279)）。ただし triage は **per-item の `TriageDecision` を書く別形**であり、research のレポートファイル契約とは異なるため、本 ADR で形を確定させる:
@@ -185,7 +202,7 @@ triage には自セッション入口が無い（spawn 専用、[ADR-0018](./001
 - **routine では別 AI による review が失われる** — Claude 単独のため、GHA の cross-agent review に相当する独立観点が無い。type 名（`pipeline`）でこれを誤認させない（D5）が、品質面の制約は残る
 - **自セッション処理は 1 件ずつ** — `--emit-payload` が `--batch` 非両立のため、件数が多いと 1 routine 実行で処理しきれず次回に持ち越す（D3e の cap と相まって意図的に総量を絞る）
 - **並行レース運用注意** — `concurrency:` 相当が無いため、routine 同士 / routine ＋ GHA を同一 workspace に向けない運用注意が必要（D7）
-- **正本→Web UI 手適用の手間** — 宣言的流し込み API が無いため、生成した正本をユーザーが Web UI に手で反映する 1 ステップが残る
+- **正本→Web UI 手適用の手間** — 宣言的流し込み API が無いため、生成した正本をユーザーが Web UI に手で反映する 1 ステップが残る。`--prompt-mode bootstrap`（D8）でこの再貼り付け摩擦は軽減できるが、その代わり Web UI 上の Prompt 欄から routine の挙動が一見で読み取れなくなる（self-contained 性が下がる）トレードオフを負う。bootstrap は opt-in に留め、既定は self-contained な `inline` を維持する
 - **triage 自セッション入口の新設コスト** — research / review と別形の prepare / commit を triage に足す実装が前提（[#279](https://github.com/ozzy-labs/feedradar/issues/279)）
 
 ### 中立
