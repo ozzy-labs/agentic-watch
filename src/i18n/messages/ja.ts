@@ -1395,7 +1395,7 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   "cli.routine.outputGateBranchPr":
     "出力ゲート: この routine は claude/* ブランチ / PR にのみ書き込みます — main へは直接書き込みません。",
   "cli.routine.outputGateAutoMerge":
-    "出力ゲート: この routine は claude/* PR を開いてから main へ squash-merge します (手順 5 のレビューでレビュー完了)。",
+    "出力ゲート: この routine は claude/* PR を開いてから main へ squash-merge します (手順 6 のレビューでレビュー完了)。",
   "cli.routine.pipelineNoSpawn1":
     "単一の Claude セッション、spawn なし: GHA combined-with-triage ワークフローと異なり、",
   "cli.routine.pipelineNoSpawn2":

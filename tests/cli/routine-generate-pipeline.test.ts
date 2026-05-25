@@ -224,10 +224,20 @@ describe("cli/routine/generate-pipeline", () => {
       expect(written).toContain("radar watch run");
       expect(written).toContain("radar triage --apply --max-items 10");
       expect(written).toContain("radar items list --status triaged_research --limit 10 --field id");
-      // Review enumerates research-ids (report basenames), NOT item ids: the
-      // <research-id> argument is the basename of research/<id>.md, which is
-      // distinct from the item id `items list --field id` would emit.
-      expect(written).toContain("head -n 10");
+      // #331: the digest step research-es triaged_digest items per triage.group,
+      // and the unsure step surfaces (never dismisses) the triaged_unsure queue.
+      expect(written).toContain("radar items list --status triaged_digest --field triage.group");
+      // The digest commands carry literal `${GROUP}` / `${IDS}` shell vars in the
+      // emitted YAML; match via regex (escaped `$`) to sidestep biome's
+      // noTemplateCurlyInString on a string literal.
+      expect(written).toMatch(
+        /radar items list --triage-group "\$\{GROUP\}" --status triaged_digest --field id/,
+      );
+      expect(written).toMatch(/radar research --digest \$\{IDS\} --triage-group "\$\{GROUP\}"/);
+      expect(written).toContain("radar items list --status triaged_unsure --json | jq length");
+      // The review step reviews EVERY report (per-item + digest), so the old
+      // `head -n {{maxItems}}` cap is gone — a digest must never be starved.
+      expect(written).not.toContain("head -n 10");
       // The `${RID}` here is a literal shell variable in the generated YAML,
       // not a JS template placeholder.
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell var in the asserted YAML string
@@ -281,6 +291,13 @@ describe("cli/routine/generate-pipeline", () => {
         expect(yaml).toContain("radar triage --apply --max-items 10");
         expect(yaml).toContain("allow_unrestricted_git_push: false");
         expect(yaml).not.toMatch(/radar\s+\w+[^\n]*--batch/);
+        // #331: the digest + unsure steps' commands are functional, so they are
+        // locale-independent too. Match the `${IDS}`/`${GROUP}` shell vars via
+        // regex (escaped `$`) to sidestep biome's noTemplateCurlyInString.
+        expect(yaml).toContain("radar items list --status triaged_digest --field triage.group");
+        expect(yaml).toMatch(/radar research --digest \$\{IDS\} --triage-group "\$\{GROUP\}"/);
+        expect(yaml).toContain("radar items list --status triaged_unsure --json | jq length");
+        expect(yaml).not.toMatch(/head -n \d+/);
       }
     });
 
@@ -292,8 +309,10 @@ describe("cli/routine/generate-pipeline", () => {
       );
       expect(written).toContain("radar triage --apply --max-items 3");
       expect(written).toContain("--limit 3");
-      // The review loop cap mirrors the research cap via `head -n {{maxItems}}`.
-      expect(written).toContain("head -n 3");
+      // #331: the review step no longer mirrors the research cap (it reviews
+      // every per-item AND digest report), so no `head -n N` cap is emitted.
+      expect(written).not.toContain("head -n 3");
+      expect(written).not.toMatch(/head -n \d+/);
       expect(written).not.toContain("--max-items 10");
     });
 

@@ -41,7 +41,7 @@ import {
 export const PIPELINE_DEFAULT_MAX_ITEMS = 10;
 
 /**
- * Landing / output modes for the pipeline routine's step-6 commit (#301).
+ * Landing / output modes for the pipeline routine's step-8 commit (#301).
  *
  * Symmetric with the GHA `combined-with-triage --output-mode pr|direct-commit`
  * (#258), but the names differ because the mechanics differ:
@@ -52,7 +52,7 @@ export const PIPELINE_DEFAULT_MAX_ITEMS = 10;
  * - `auto-merge`: open the same `claude/pipeline/...` PR, then immediately
  *   `gh pr merge --squash` it so the output lands on `main`. Distinct from the
  *   GHA `direct-commit` (which pushes to main with NO PR at all); here a PR is
- *   always created first. Opt-in because the step-5 self-review makes the PR
+ *   always created first. Opt-in because the step-6 self-review makes the PR
  *   review-complete (ADR-0020 D3a opt-in auto-merge).
  *
  * NB: `--auto` (vs immediate `--squash`) is intentionally NOT used — on a repo
@@ -63,7 +63,7 @@ export const OUTPUT_MODES = ["pr", "auto-merge"] as const;
 export type OutputMode = (typeof OUTPUT_MODES)[number];
 
 /**
- * Build the instructions step-6 commit/landing block for the given output mode.
+ * Build the instructions step-8 commit/landing block for the given output mode.
  *
  * - `pr`: open a `claude/pipeline/...` branch + PR and stop (the current,
  *   pre-#301 behavior).
@@ -97,14 +97,14 @@ export function buildPipelineLandingStep(mode: OutputMode, locale: Locale = "en"
     const prose =
       locale === "ja"
         ? [
-            "  6. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
+            "  8. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
             "     コミットし、プルリクエストを開き、`main` へ squash-merge する（auto-merge は",
-            "     ここではオプトイン — 手順 5 のレビューが PR をレビュー完了にする）:",
+            "     ここではオプトイン — 手順 6 のレビューが PR をレビュー完了にする）:",
           ]
         : [
-            "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+            "  8. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
             "     branch, open a pull request, then squash-merge it to `main` (auto-merge is",
-            "     opt-in here — the step-5 review makes the PR review-complete):",
+            "     opt-in here — the step-6 review makes the PR review-complete):",
           ];
     const mergeComment =
       locale === "ja"
@@ -136,11 +136,11 @@ export function buildPipelineLandingStep(mode: OutputMode, locale: Locale = "en"
   const prose =
     locale === "ja"
       ? [
-          "  6. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
+          "  8. `items/`・`state/`・`research/` が変わったら、それらを `claude/*` ブランチへ",
           "     コミットし、プルリクエストを開く（`main` へは push しない）:",
         ]
       : [
-          "  6. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
+          "  8. If `items/`, `state/`, or `research/` changed, commit them to a `claude/*`",
           "     branch and open a pull request (do NOT push to `main`):",
         ];
   return [
@@ -161,7 +161,7 @@ export function buildPipelineLandingStep(mode: OutputMode, locale: Locale = "en"
  *   constraint (ADR-0020 D3a, no auto-merge).
  * - `auto-merge`: flips the constraint to say auto-merge is intentional — the
  *   routine opens a `claude/pipeline/...` PR then squash-merges it, and the
- *   step-5 review is what makes the PR review-complete (ADR-0020 D3a opt-in
+ *   step-6 review is what makes the PR review-complete (ADR-0020 D3a opt-in
  *   auto-merge).
  *
  * Exported for unit testing (mirrors the GHA generator's exported builders).
@@ -171,12 +171,12 @@ export function buildOutputGateConstraint(mode: OutputMode, locale: Locale = "en
     if (locale === "ja") {
       return [
         "  - auto-merge はここでは意図的: この routine は `claude/pipeline/...` PR を開いてから",
-        "    `main` へ squash-merge する。手順 5 のレビューが PR をレビュー完了にする。",
+        "    `main` へ squash-merge する。手順 6 のレビューが PR をレビュー完了にする。",
       ].join("\n");
     }
     return [
       "  - Auto-merge is intentional here: this routine opens a `claude/pipeline/...`",
-      "    PR then squash-merges it to `main`. The step-5 review makes the PR",
+      "    PR then squash-merges it to `main`. The step-6 review makes the PR",
       "    review-complete.",
     ].join("\n");
   }
@@ -201,14 +201,14 @@ export function buildOutputGateNote(mode: OutputMode, locale: Locale = "en"): st
     if (locale === "ja") {
       return [
         "  出力は `claude/*` ブランチ / PR にコミットされ、その後 main へ squash-merge される",
-        "  （auto-merge はオプトイン。手順 5 のレビューが PR をレビュー完了にする）。",
+        "  （auto-merge はオプトイン。手順 6 のレビューが PR をレビュー完了にする）。",
         "  単一の Claude セッション、spawn なし: GHA パイプラインのクロスエージェント",
         "  レビューはここには存在しない。",
       ].join("\n");
     }
     return [
       "  Output is committed to a `claude/*` branch / PR, then squash-merged to main",
-      "  (auto-merge is opt-in; the step-5 review makes the PR review-complete).",
+      "  (auto-merge is opt-in; the step-6 review makes the PR review-complete).",
       "  Single Claude session, no spawn: the cross-agent review",
       "  of the GHA pipeline is NOT present here.",
     ].join("\n");
@@ -297,7 +297,7 @@ export interface GeneratePipelineRoutineOptions {
   timezone: string;
   model: SupportedModel;
   maxItems: number;
-  /** Landing mode for the step-6 commit (#301). Defaults to `pr`. */
+  /** Landing mode for the step-8 commit (#301). Defaults to `pr`. */
   outputMode: OutputMode;
   output: string;
   force: boolean;

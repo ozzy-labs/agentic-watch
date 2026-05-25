@@ -1495,7 +1495,7 @@ Options:
   "cli.routine.outputGateBranchPr":
     "Output gate: this routine writes to a claude/* branch / PR only — never main directly.",
   "cli.routine.outputGateAutoMerge":
-    "Output gate: this routine opens a claude/* PR then squash-merges it to main (review-complete via step 5).",
+    "Output gate: this routine opens a claude/* PR then squash-merges it to main (review-complete via step 6).",
   "cli.routine.pipelineNoSpawn1":
     "Single Claude session, no spawn: unlike the GHA combined-with-triage",
   "cli.routine.pipelineNoSpawn2":
