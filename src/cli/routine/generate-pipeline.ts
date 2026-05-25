@@ -5,6 +5,7 @@ import type { Locale } from "../../core/locale.js";
 import { createTranslator, type Translator } from "../../i18n/index.js";
 import { LangFlagError, parseLangFlag, resolveWorkspaceLocale } from "../_locale.js";
 import {
+  buildBootstrapPrompt,
   collectSourceHosts,
   isSafeRoutinePath,
   isSubHourlyCron,
@@ -467,6 +468,13 @@ interface ParsedFlags {
   promptMode: PromptMode;
   output: string;
   force: boolean;
+  /**
+   * `--emit-bootstrap-prompt` (#365): print ONLY the bootstrap prompt body to
+   * stdout and exit, writing no YAML and printing no paste guidance. Mirrors
+   * the `watch` generator so the `routine-setup` Claude skill can fetch the
+   * single-sourced prompt for either routine type (epic #363 G3).
+   */
+  emitBootstrapPrompt: boolean;
   help: boolean;
 }
 
@@ -487,12 +495,17 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
   let promptMode: PromptMode = "inline";
   let output: string | undefined;
   let force = false;
+  let emitBootstrapPrompt = false;
   let help = false;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-h" || a === "--help") {
       help = true;
+      continue;
+    }
+    if (a === "--emit-bootstrap-prompt") {
+      emitBootstrapPrompt = true;
       continue;
     }
     if (a === "--name") {
@@ -589,6 +602,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
     promptMode,
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
+    emitBootstrapPrompt,
     help,
   };
 }
@@ -646,6 +660,16 @@ export async function runGeneratePipelineRoutine(
 
   if (parsed.help) {
     printGeneratePipelineRoutineHelp(t, log);
+    return 0;
+  }
+
+  // --emit-bootstrap-prompt (#365): print ONLY the bootstrap prompt body
+  // (read-only — no YAML written, no paste guidance), single-sourced from
+  // `buildBootstrapPrompt` so it matches the generator's bootstrap paste output
+  // byte-for-byte (epic #363 G3). `path` matches the generator's `destRel`.
+  if (parsed.emitBootstrapPrompt) {
+    const promptPath = isAbsolute(parsed.output) ? relative(cwd, parsed.output) : parsed.output;
+    log(buildBootstrapPrompt({ name: parsed.name, path: promptPath }, t));
     return 0;
   }
 

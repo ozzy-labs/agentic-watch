@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildBootstrapPrompt,
   collectSourceHosts,
   generateWatchRoutine,
   isSafeRoutinePath,
@@ -10,12 +11,14 @@ import {
   isValidCron,
   PROMPT_MODES,
   parseGenerateWatchRoutineArgs,
+  printPromptModePaste,
   renderNetworkAccessBlock,
   renderWatchRoutineTemplate,
   SUPPORTED_MODELS,
   type SupportedModel,
 } from "../../src/cli/routine/generate-watch.js";
 import { runRoutine } from "../../src/cli/routine.js";
+import { createTranslator } from "../../src/i18n/index.js";
 
 /**
  * Coverage for `radar routine generate watch` (ADR-0020 D5 `watch` / #280).
@@ -250,6 +253,46 @@ describe("cli/routine/generate-watch", () => {
     it("every PROMPT_MODES value parses (#327)", () => {
       for (const m of PROMPT_MODES) {
         expect(parseGenerateWatchRoutineArgs(["--prompt-mode", m]).promptMode).toBe(m);
+      }
+    });
+
+    it("--emit-bootstrap-prompt is a boolean flag, default false (#365)", () => {
+      expect(parseGenerateWatchRoutineArgs([]).emitBootstrapPrompt).toBe(false);
+      expect(parseGenerateWatchRoutineArgs(["--emit-bootstrap-prompt"]).emitBootstrapPrompt).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("buildBootstrapPrompt (single source of truth, #365)", () => {
+    it("renders the 4 bootstrap lines with name / path interpolated (en)", () => {
+      const t = createTranslator("en");
+      const prompt = buildBootstrapPrompt(
+        { name: "feedradar-watch", path: ".claude/routines/feedradar-watch.yaml" },
+        t,
+      );
+      const lines = prompt.split("\n");
+      expect(lines).toHaveLength(4);
+      expect(prompt).toContain("You are the `feedradar-watch` routine.");
+      expect(prompt).toContain("Read `.claude/routines/feedradar-watch.yaml`");
+      expect(prompt).toContain("`instructions:` block");
+      expect(prompt).toContain("AskUserQuestion is NOT available");
+    });
+
+    it("matches the bootstrap paste-mode block byte-for-byte (en + ja) (#365)", () => {
+      for (const locale of ["en", "ja"] as const) {
+        const t = createTranslator(locale);
+        const values = { name: "feedradar-watch", path: ".claude/routines/feedradar-watch.yaml" };
+        const emitted = buildBootstrapPrompt(values, t);
+
+        // Reconstruct exactly the lines printPromptModePaste logs for the prompt
+        // body (the 4 lines between the two blank separators).
+        const pasteLines: string[] = [];
+        printPromptModePaste("bootstrap", values, t, (m) => pasteLines.push(m));
+        const blanks = pasteLines.map((l, i) => (l === "" ? i : -1)).filter((i) => i >= 0);
+        const body = pasteLines.slice(blanks[0] + 1, blanks[1]).join("\n");
+
+        expect(body).toBe(emitted);
       }
     });
   });
@@ -533,6 +576,65 @@ describe("cli/routine/generate-watch", () => {
       });
       expect(code).toBe(2);
       expect(errors.join("\n")).toContain("--prompt-mode expects one of: inline | bootstrap");
+    });
+
+    it("--emit-bootstrap-prompt prints ONLY the prompt body, writes no YAML (#365)", async () => {
+      const code = await runRoutine(["generate", "watch", "--emit-bootstrap-prompt"], {
+        cwd: workdir,
+        io: io(),
+      });
+      expect(code, `stderr: ${errors.join("\n")}`).toBe(0);
+      const joined = logs.join("\n");
+      // Just the bootstrap body — no paste guidance / schedule notes / YAML path.
+      expect(joined).toContain("You are the `feedradar-watch` routine.");
+      expect(joined).not.toContain("yq -r");
+      expect(joined).not.toContain("/schedule");
+      expect(joined).not.toMatch(/Wrote|generated|claude\.ai/);
+      // Read-only: no file is created.
+      await expect(
+        readFile(join(workdir, ".claude", "routines", "feedradar-watch.yaml"), "utf8"),
+      ).rejects.toThrow();
+    });
+
+    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body (en + ja) (#365)", async () => {
+      for (const lang of ["en", "ja"] as const) {
+        // 1. Capture the --emit-bootstrap-prompt output.
+        const emitLogs: string[] = [];
+        const emitCode = await runRoutine(
+          ["generate", "watch", "--lang", lang, "--emit-bootstrap-prompt", "--name", "my-routine"],
+          { cwd: workdir, io: { log: (m) => emitLogs.push(m), error: () => {} } },
+        );
+        expect(emitCode).toBe(0);
+        const emitted = emitLogs.join("\n");
+
+        // 2. Run the real generator in bootstrap paste mode and extract the body.
+        const genLogs: string[] = [];
+        const genWorkdir = await mkdtemp(join(tmpdir(), "feedradar-routine-emit-"));
+        const genCode = await runRoutine(
+          [
+            "generate",
+            "watch",
+            "--lang",
+            lang,
+            "--prompt-mode",
+            "bootstrap",
+            "--name",
+            "my-routine",
+          ],
+          { cwd: genWorkdir, io: { log: (m) => genLogs.push(m), warn: () => {}, error: () => {} } },
+        );
+        expect(genCode).toBe(0);
+        // The bootstrap body is the 4 lines following the blank line right after
+        // the "paste this SHORT bootstrap prompt" step header.
+        const t = createTranslator(lang);
+        const stepIdx = genLogs.indexOf(t("cli.routine.pasteStep3Bootstrap"));
+        expect(stepIdx).toBeGreaterThanOrEqual(0);
+        // genLogs[stepIdx + 1] is the blank separator; the body is the next 4.
+        const pasteBody = genLogs.slice(stepIdx + 2, stepIdx + 6).join("\n");
+
+        // 3. The emit output must equal the paste body byte-for-byte.
+        expect(emitted).toBe(pasteBody);
+      }
     });
   });
 });

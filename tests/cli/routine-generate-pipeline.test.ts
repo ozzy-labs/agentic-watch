@@ -17,6 +17,7 @@ import {
   type SupportedModel,
 } from "../../src/cli/routine/generate-watch.js";
 import { runRoutine } from "../../src/cli/routine.js";
+import { createTranslator } from "../../src/i18n/index.js";
 
 /**
  * Coverage for `radar routine generate pipeline` (ADR-0020 D5 `pipeline` /
@@ -159,6 +160,13 @@ describe("cli/routine/generate-pipeline", () => {
       for (const m of PROMPT_MODES) {
         expect(parseGeneratePipelineRoutineArgs(["--prompt-mode", m]).promptMode).toBe(m);
       }
+    });
+
+    it("--emit-bootstrap-prompt is a boolean flag, default false (#365)", () => {
+      expect(parseGeneratePipelineRoutineArgs([]).emitBootstrapPrompt).toBe(false);
+      expect(
+        parseGeneratePipelineRoutineArgs(["--emit-bootstrap-prompt"]).emitBootstrapPrompt,
+      ).toBe(true);
     });
   });
 
@@ -631,6 +639,61 @@ describe("cli/routine/generate-pipeline", () => {
       });
       expect(code).toBe(2);
       expect(errors.join("\n")).toContain("--prompt-mode expects one of: inline | bootstrap");
+    });
+
+    it("--emit-bootstrap-prompt prints ONLY the prompt body, writes no YAML (#365)", async () => {
+      const code = await runRoutine(["generate", "pipeline", "--emit-bootstrap-prompt"], {
+        cwd: workdir,
+        io: io(),
+      });
+      expect(code, `stderr: ${errors.join("\n")}`).toBe(0);
+      const joined = logs.join("\n");
+      expect(joined).toContain("You are the `feedradar-pipeline` routine.");
+      expect(joined).not.toContain("yq -r");
+      expect(joined).not.toContain("/schedule");
+      // Read-only: no file is created.
+      await expect(
+        readFile(join(workdir, ".claude", "routines", "feedradar-pipeline.yaml"), "utf8"),
+      ).rejects.toThrow();
+    });
+
+    it("--emit-bootstrap-prompt output equals the generator's bootstrap paste body (en + ja) (#365)", async () => {
+      for (const lang of ["en", "ja"] as const) {
+        // 1. Capture the --emit-bootstrap-prompt output.
+        const emitLogs: string[] = [];
+        const emitCode = await runRoutine(
+          ["generate", "pipeline", "--lang", lang, "--emit-bootstrap-prompt", "--name", "my-pipe"],
+          { cwd: workdir, io: { log: (m) => emitLogs.push(m), error: () => {} } },
+        );
+        expect(emitCode).toBe(0);
+        const emitted = emitLogs.join("\n");
+
+        // 2. Run the real generator in bootstrap paste mode and extract the body.
+        const genLogs: string[] = [];
+        const genWorkdir = await mkdtemp(join(tmpdir(), "feedradar-routine-emit-pipe-"));
+        const genCode = await runRoutine(
+          [
+            "generate",
+            "pipeline",
+            "--lang",
+            lang,
+            "--prompt-mode",
+            "bootstrap",
+            "--name",
+            "my-pipe",
+          ],
+          { cwd: genWorkdir, io: { log: (m) => genLogs.push(m), warn: () => {}, error: () => {} } },
+        );
+        expect(genCode).toBe(0);
+        const t = createTranslator(lang);
+        const stepIdx = genLogs.indexOf(t("cli.routine.pasteStep3Bootstrap"));
+        expect(stepIdx).toBeGreaterThanOrEqual(0);
+        // genLogs[stepIdx + 1] is the blank separator; the body is the next 4.
+        const pasteBody = genLogs.slice(stepIdx + 2, stepIdx + 6).join("\n");
+
+        // 3. The emit output must equal the paste body byte-for-byte.
+        expect(emitted).toBe(pasteBody);
+      }
     });
   });
 });
