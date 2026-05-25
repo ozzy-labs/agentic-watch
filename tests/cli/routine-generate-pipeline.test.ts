@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildLocaleOutputDirective,
   buildOutputGateConstraint,
   buildPipelineLandingStep,
   generatePipelineRoutine,
@@ -47,6 +48,7 @@ describe("cli/routine/generate-pipeline", () => {
         landingStep: "  6. land",
         outputGateConstraint: "  - gate",
         outputGateNote: "  note",
+        localeOutputDirective: "",
         allowUnrestrictedGitPush: false,
       });
       expect(out).toContain("name: my-pipe");
@@ -196,6 +198,29 @@ describe("cli/routine/generate-pipeline", () => {
     });
   });
 
+  // #376: the agent-authored user-facing prose (PR title/body, run summary,
+  // commit message body) must follow the configured locale. The directive is a
+  // hard-constraint bullet emitted ONLY for locale != en (en is already the
+  // default output language); the Conventional Commits subject stays English.
+  describe("buildLocaleOutputDirective", () => {
+    it("returns an empty string for locale 'en' (no directive — en is the default)", () => {
+      expect(buildLocaleOutputDirective("en", createTranslator("en"))).toBe("");
+    });
+
+    it("emits a localized hard-constraint bullet for locale 'ja'", () => {
+      const directive = buildLocaleOutputDirective("ja", createTranslator("ja"));
+      // Leading hard-constraint bullet indentation.
+      expect(directive.startsWith("  - ")).toBe(true);
+      // Targets the agent-authored free-form output.
+      expect(directive).toContain("PR");
+      expect(directive).toContain("実行サマリー");
+      expect(directive).toContain("commit");
+      // Conventional Commits subject line stays English.
+      expect(directive).toContain("chore(pipeline):");
+      expect(directive).toContain("英語");
+    });
+  });
+
   describe("generatePipelineRoutine (file emission)", () => {
     let workdir: string;
     let logs: string[];
@@ -316,6 +341,24 @@ describe("cli/routine/generate-pipeline", () => {
       expect(en).toContain("This is a fully autonomous run");
       expect(en).toContain("Do NOT push to `main` directly");
       expect(ja).not.toContain("This is a fully autonomous run");
+
+      // #376: the ja instructions carry the locale-output directive telling the
+      // agent to author its free-form user-facing prose (PR title/body, run
+      // summary, commit message body) in Japanese, while the en instructions do
+      // NOT (en is already the default output language). The directive sits in
+      // the hard-constraints block after the Conventional Commits bullet.
+      const jaDirective = createTranslator("ja")("cli.routine.localeOutputDirective");
+      expect(ja).toContain(jaDirective);
+      expect(ja).toContain("実行サマリー");
+      // en carries neither the en nor the ja directive text.
+      expect(en).not.toContain(createTranslator("en")("cli.routine.localeOutputDirective"));
+      expect(en).not.toContain(jaDirective);
+      // The en instructions must not leave a spurious blank line where the
+      // (empty) directive would have gone: the Conventional Commits bullet is
+      // immediately followed by the `# Web UI: Model` section comment.
+      expect(en).toMatch(
+        /Use Conventional Commits with the `chore\(pipeline\):` prefix\.\n\n# Web UI: Model/,
+      );
 
       // Functional fields are locale-independent.
       for (const yaml of [en, ja]) {

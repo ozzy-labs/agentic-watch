@@ -1448,6 +1448,13 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
     "ここにクロスエージェントレビューはありません — 1 つの Claude が全ステップを実行します。",
   "cli.routine.pipelineItemCaps": ({ maxItems }: { maxItems: number }): string =>
     `アイテム上限は CLI で強制されます: triage --max-items ${maxItems} / items --limit ${maxItems}。`,
+  // ロケール出力ディレクティブ (#376): locale != en のときだけ生成 `instructions:` の
+  // 厳守事項ブロックに差し込まれる。bootstrap プロンプトは言語ニュートラル (#365 / ADR-0021) で、
+  // レポート本文のロケールディレクティブ (#358) は agent が自由文として綴る user-facing 出力を
+  // カバーしないため。en の値はカタログ parity 用で emit されない (en は既に既定の出力言語)。
+  // この文字列はローカライズ済み instructions にそのまま入るため、対象ロケールの言語で記述する。
+  "cli.routine.localeOutputDirective":
+    "あなた自身が綴る user-facing な散文 — PR のタイトルと本文、実行サマリー、commit メッセージ本文 — は、設定されたワークスペースのロケール言語で書く（research / review レポート本文を駆動するのと同じロケール）。Conventional Commits の subject 行（例: `chore(pipeline): ...`）は英語のまま。本文とその他の自由文だけがロケールに従う。",
   "cli.routine.fireTriggered": ({
     routineId,
     status,
