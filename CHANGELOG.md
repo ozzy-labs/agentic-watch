@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.7](https://github.com/ozzy-labs/feedradar/compare/v0.2.6...v0.2.7) (2026-05-25)
+
+
+### Features
+
+* **routine:** add --localize-session opt-in for session narration ([#382](https://github.com/ozzy-labs/feedradar/issues/382)) ([#383](https://github.com/ozzy-labs/feedradar/issues/383)) ([862fd82](https://github.com/ozzy-labs/feedradar/commit/862fd828230d4cdcbd820d09d46bf55856753c5d))
+
 ## [0.2.6](https://github.com/ozzy-labs/feedradar/compare/v0.2.5...v0.2.6) (2026-05-25)
 
 
