@@ -371,6 +371,38 @@ describe("core/feeds/json-api — facet sweep (ADR-0017)", () => {
     expect(result.items).toHaveLength(1);
   });
 
+  it("dry-run resolves a relative LOWER bound for the facetSweep diag (#352)", async () => {
+    // `source test` (dryRun) probes a single value and reports `testedValue` /
+    // `totalValues` via the facetSweep diag — these come from
+    // pickDryRunFacetValue / countFacetValues, which must resolve a RELATIVE
+    // lower bound (not just the numeric forms the other dry-run tests cover).
+    const currentYear = new Date().getFullYear();
+    const source = makeSource({
+      facets: {
+        year: {
+          type: "range",
+          range: ["current-year", "current-year"],
+          step: 1,
+          param: "tags.id",
+          template: "y-{}",
+        },
+      },
+    });
+    const calls: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      calls.push(urlStr);
+      return { status: 200, headers: { get: () => null }, text: async () => itemBody("cur", 1) };
+    };
+    const result = await jsonApiAdapter.fetch(source, { fetch: fetchImpl, dryRun: true });
+    // Probes exactly the resolved current year, and the diag denominator counts
+    // the 1-year resolved range (a [start>end] resolution bug would surface here).
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(`y-${currentYear}`);
+    expect(result.diag?.facetSweep?.testedValue).toBe(currentYear);
+    expect(result.diag?.facetSweep?.totalValues).toBe(1);
+  });
+
   it("resolves a relative lower bound `current-year-2` to N years ago (#352)", async () => {
     // `[current-year-2, current-year]` → the last 3 calendar years, auto-tracking
     // wall-clock time. The `-<N>` offset applies to either endpoint.
