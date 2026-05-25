@@ -260,6 +260,34 @@ export function buildLocaleOutputDirective(locale: Locale, t: Translator): strin
 }
 
 /**
+ * Build the OPT-IN session-locale directive bullet (#382).
+ *
+ * `buildLocaleOutputDirective` (#376) localizes the agent's free-form OUTPUT
+ * artifacts (PR body, run summary, commit body) and is applied automatically for
+ * locale != en. This directive goes one step further — it asks the running
+ * session to also conduct its OWN progress narration, status logs, and visible
+ * reasoning in the workspace locale's language — but it is **opt-in** because
+ * ADR-0021 intentionally keeps the bootstrap prompt English (English is the most
+ * reliable instruction language and keeps the run's reasoning predictable).
+ *
+ * Emitted ONLY when the user passes `--localize-session` AND locale != en. For
+ * `en` (the default session language) or when the flag is off, returns `""` so
+ * the placeholder line collapses — the default English-narration behavior and the
+ * English-canonical bootstrap prompt are both preserved untouched.
+ *
+ * Returns the bullet with the `## Hard constraints` list indentation and leading
+ * `- `, or `""`. Exported for unit testing (mirrors the other builders).
+ */
+export function buildSessionLocaleDirective(
+  locale: Locale,
+  t: Translator,
+  localizeSession: boolean,
+): string {
+  if (!localizeSession || locale === "en") return "";
+  return `  - ${t("cli.routine.sessionLocaleDirective")}`;
+}
+
+/**
  * Resolve the directory holding the bundled routine templates.
  *
  * Mirrors `resolveTemplatesRoot` in `generate-watch.ts`: the compiled CLI lives
@@ -305,6 +333,7 @@ export function renderPipelineRoutineTemplate(
     outputGateConstraint: string;
     outputGateNote: string;
     localeOutputDirective: string;
+    sessionLocaleDirective: string;
     allowUnrestrictedGitPush: boolean;
   },
 ): string {
@@ -327,6 +356,12 @@ export function renderPipelineRoutineTemplate(
       .replace(
         /\{\{localeOutputDirective\}\}\n?/g,
         values.localeOutputDirective === "" ? "" : `${values.localeOutputDirective}\n`,
+      )
+      // Opt-in session-locale directive (#382). Same empty-line-stripping rule as
+      // localeOutputDirective: collapse the whole placeholder line when unset.
+      .replace(
+        /\{\{sessionLocaleDirective\}\}\n?/g,
+        values.sessionLocaleDirective === "" ? "" : `${values.sessionLocaleDirective}\n`,
       )
       .replace(/\{\{allowUnrestrictedGitPush\}\}/g, String(values.allowUnrestrictedGitPush))
   );
@@ -355,6 +390,13 @@ export interface GeneratePipelineRoutineOptions {
    * code-rendered landing step / output-gate blocks. Defaults to `en` (#315).
    */
   locale?: Locale;
+  /**
+   * Opt-in (#382): also localize the running session's OWN progress narration /
+   * logs / visible reasoning to the workspace locale. Defaults to `false` (the
+   * bootstrap prompt and session reasoning stay English per ADR-0021). Only has
+   * an effect when `locale != en`.
+   */
+  localizeSession?: boolean;
   /** Test seam: override the templates root location. */
   templatesRoot?: string;
   io?: RoutineIO;
@@ -440,6 +482,11 @@ export async function generatePipelineRoutine(
     outputGateConstraint: buildOutputGateConstraint(outputMode, locale),
     outputGateNote: buildOutputGateNote(outputMode, locale),
     localeOutputDirective: buildLocaleOutputDirective(locale, t),
+    sessionLocaleDirective: buildSessionLocaleDirective(
+      locale,
+      t,
+      options.localizeSession ?? false,
+    ),
     allowUnrestrictedGitPush: outputMode === "auto-merge",
   });
 
@@ -519,6 +566,12 @@ interface ParsedFlags {
    * single-sourced prompt for either routine type (epic #363 G3).
    */
   emitBootstrapPrompt: boolean;
+  /**
+   * `--localize-session` (#382): opt into localizing the session's OWN narration
+   * / logs / reasoning (not just output artifacts) to the workspace locale.
+   * Default false; only effective when locale != en.
+   */
+  localizeSession: boolean;
   help: boolean;
 }
 
@@ -540,6 +593,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
   let output: string | undefined;
   let force = false;
   let emitBootstrapPrompt = false;
+  let localizeSession = false;
   let help = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -550,6 +604,10 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
     }
     if (a === "--emit-bootstrap-prompt") {
       emitBootstrapPrompt = true;
+      continue;
+    }
+    if (a === "--localize-session") {
+      localizeSession = true;
       continue;
     }
     if (a === "--name") {
@@ -647,6 +705,7 @@ export function parseGeneratePipelineRoutineArgs(args: string[]): ParsedFlags {
     output: output ?? join(".claude", "routines", `${name}.yaml`),
     force,
     emitBootstrapPrompt,
+    localizeSession,
     help,
   };
 }
@@ -732,6 +791,7 @@ export async function runGeneratePipelineRoutine(
       output: parsed.output,
       force: parsed.force,
       locale,
+      localizeSession: parsed.localizeSession,
       io,
     });
     return 0;

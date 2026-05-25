@@ -681,7 +681,9 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
                         (デフォルト: .claude/routines/<name>.yaml)
   --force, -f           既存の出力ファイルを上書きする
   --lang <en|ja>        生成される YAML のメモ / 手順 / コメントの言語
-                        (デフォルト: en; RADAR_LANG と config.locale も参照)`,
+                        (デフォルト: en; RADAR_LANG と config.locale も参照)
+  --localize-session    実行セッション自身のナレーション / ログ / 推論もロケール言語にする
+                        (opt-in; 既定は英語推論)。--lang en では無効。`,
   "cli.routine.fireHelp": ({ tokenEnv }: { tokenEnv: string }): string =>
     `使い方: radar routine fire <trig_id> [options]
 
@@ -1459,6 +1461,13 @@ type 別のオプションは \`radar routine generate <type> --help\` を参照
   // この文字列はローカライズ済み instructions にそのまま入るため、対象ロケールの言語で記述する。
   "cli.routine.localeOutputDirective":
     "あなた自身が綴る user-facing な散文 — PR のタイトルと本文、実行サマリー、commit メッセージ本文 — は、設定されたワークスペースのロケール言語で書く（research / review レポート本文を駆動するのと同じロケール）。Conventional Commits の subject 行（例: `chore(pipeline): ...`）は英語のまま。本文とその他の自由文だけがロケールに従う。",
+  // --localize-session opt-in ディレクティブ (#382): `--localize-session` 指定かつ
+  // locale != en のときのみ emit。locale 追従を出力成果物 (localeOutputDirective) から
+  // セッション自身のナレーションまで広げる。en 値は parity 用で emit されない (英語が
+  // 既定のセッション言語かつ最も確実な指示言語 — ADR-0021)。ローカライズ済み
+  // instructions にそのまま入るため対象ロケールの言語で記述する。
+  "cli.routine.sessionLocaleDirective":
+    "このセッション自身の進捗ナレーション・状態ログ・推論の表出も、設定されたワークスペースのロケール言語で行う — 出力成果物だけでなく。（bootstrap プロンプト自体は設計上英語のままでよい。本指示は実行中セッションのナレーションをロケール言語に切り替えるためのもの。）",
   "cli.routine.fireTriggered": ({
     routineId,
     status,

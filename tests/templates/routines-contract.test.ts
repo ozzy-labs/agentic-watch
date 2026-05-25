@@ -9,6 +9,7 @@ import {
   buildOutputGateConstraint,
   buildOutputGateNote,
   buildPipelineLandingStep,
+  buildSessionLocaleDirective,
   type OutputMode,
   renderPipelineRoutineTemplate,
 } from "../../src/cli/routine/generate-pipeline.js";
@@ -138,6 +139,9 @@ describe.each<Locale>([
       outputGateConstraint: buildOutputGateConstraint(mode, locale),
       outputGateNote: buildOutputGateNote(mode, locale),
       localeOutputDirective: buildLocaleOutputDirective(locale, createTranslator(locale)),
+      // Exercise the #382 opt-in directive on (locale != en) so validate.py also
+      // covers the session-locale bullet in the rendered contract.
+      sessionLocaleDirective: buildSessionLocaleDirective(locale, createTranslator(locale), true),
       allowUnrestrictedGitPush: mode === "auto-merge",
     });
     expect(rendered).not.toMatch(/\{\{[a-zA-Z]+\}\}/);

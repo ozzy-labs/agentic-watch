@@ -758,7 +758,10 @@ Options:
                         (default: .claude/routines/<name>.yaml)
   --force, -f           Overwrite existing output file
   --lang <en|ja>        Language for the generated YAML's notes / instructions / comments
-                        (default: en; also honors RADAR_LANG and config.locale)`,
+                        (default: en; also honors RADAR_LANG and config.locale)
+  --localize-session    Also localize the running session's OWN narration / logs /
+                        reasoning to the locale (opt-in; default English reasoning).
+                        No effect for --lang en.`,
   "cli.routine.fireHelp": ({ tokenEnv }: { tokenEnv: string }): string =>
     `Usage: radar routine fire <trig_id> [options]
 
@@ -1568,6 +1571,14 @@ Options:
   // language (it lands verbatim inside the localized instructions).
   "cli.routine.localeOutputDirective":
     "Write the user-facing prose you author yourself — the PR title and body, the run summary, and the commit message body — in the configured workspace locale's language (the same locale that drives the research / review report bodies). The Conventional Commits subject line (e.g. `chore(pipeline): ...`) STAYS in English; only its body and the other free-form output follow the locale.",
+  // --localize-session opt-in directive (#382): emitted ONLY when the user passes
+  // `--localize-session` AND the locale != en. Extends locale-following from the
+  // output artifacts (localeOutputDirective) to the session's OWN narration. The
+  // en value is parity-only (not emitted; English is the default session language
+  // and the most reliable instruction language — ADR-0021). Authored in the target
+  // locale's language because it lands verbatim inside the localized instructions.
+  "cli.routine.sessionLocaleDirective":
+    "Conduct this session's own progress narration, status logging, and visible reasoning in the configured workspace locale's language as well — not just the user-facing output artifacts. (The bootstrap prompt itself stays English by design; this directive opts the running session's narration into the locale language.)",
   // routine fire result notification (#342 A2-adjacent: fire completion lines)
   "cli.routine.fireTriggered": ({
     routineId,
