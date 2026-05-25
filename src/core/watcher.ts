@@ -263,6 +263,36 @@ export function shouldEnableProgress(sources: Source[], backfill: boolean): bool
 }
 
 /**
+ * 前回 on-disk state（`prev`）と今回書き込もうとしている state（`next`）を比較し、
+ * `lastFetchedAt` 以外に意味のある差分があるかを返す。
+ *
+ * 背景（#326）: `lastFetchedAt` は表示専用のタイムスタンプ（`radar source list -v`）で、
+ * fetch ロジック（conditional GET の `etag` / `lastModified`）には使われない。新着 0 件の
+ * 静かな run でも毎回更新されるため、これだけが変わった state を保存すると routine/workflow の
+ * 自動コミットガード（`git diff --quiet state/`）が毎回発火し、no-op コミット/PR/merge が積もる。
+ *
+ * そこで「`lastFetchedAt` 以外の機能的フィールド（`lastEtag` / `lastModified` /
+ * `lastSeenIds`）に差分があるときだけ保存する」ための判定をここに集約する。`true` を返した
+ * 場合のみ呼び出し側は `saveSourceState` する。
+ *
+ * 注: `result.states` には従来どおり projected state を入れるため、`source test` などの
+ * イントロスペクションは影響を受けない（保存の有無のみを切り替える）。
+ */
+export function stateChangedBeyondLastFetchedAt(prev: SourceState, next: SourceState): boolean {
+  if (prev.lastEtag !== next.lastEtag) return true;
+  if (prev.lastModified !== next.lastModified) return true;
+  const prevIds = prev.lastSeenIds;
+  const nextIds = next.lastSeenIds;
+  if (prevIds.length !== nextIds.length) return true;
+  // lastSeenIds は順序も含めて比較する（loadSourceState で読んだ並びを再書き込みする
+  // だけなら不変。新規 id の追加は必ず末尾に積まれるので長さ差で先に検出される）。
+  for (let i = 0; i < prevIds.length; i++) {
+    if (prevIds[i] !== nextIds[i]) return true;
+  }
+  return false;
+}
+
+/**
  * Execute one full watch cycle.
  *
  * Per source:
@@ -547,7 +577,14 @@ export async function watchRun(options: WatchRunOptions): Promise<WatchRunResult
     // In dry-run mode we still surface the would-be state through
     // `result.states` so callers can introspect the projected delta, but we
     // never persist it.
-    if (!options.dryRun) {
+    //
+    // 静かな run の no-op コミット抑制（#326）: 前回 on-disk state との差分が
+    // `lastFetchedAt` のみなら保存をスキップする。`lastFetchedAt` は表示専用で
+    // fetch ロジック不参照のため、これだけ更新しても機能的な意味はない。書き込みを
+    // 止めることで routine/workflow の `git diff --quiet state/` ガードが発火せず、
+    // 新着 0 件 run のたびに no-op コミット/PR/merge が積もる問題を根絶する。
+    // bootstrap は `lastSeenIds` が必ず増えるのでこの分岐に入らない。
+    if (!options.dryRun && stateChangedBeyondLastFetchedAt(previousState, nextState)) {
       await saveSourceState(paths.stateDir, nextState);
     }
     result.detected[source.id] = detectedItems;
