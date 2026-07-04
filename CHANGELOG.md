@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.8](https://github.com/ozzy-labs/feedradar/compare/v0.2.7...v0.2.8) (2026-07-04)
+
+
+### Bug Fixes
+
+* gate pre-commit trivy on HIGH/CRITICAL severity ([#396](https://github.com/ozzy-labs/feedradar/issues/396)) ([900b1c4](https://github.com/ozzy-labs/feedradar/commit/900b1c4ccafa1009b25b3a7edaf391947eded911))
+
 ## [0.2.7](https://github.com/ozzy-labs/feedradar/compare/v0.2.6...v0.2.7) (2026-05-25)
 
 
